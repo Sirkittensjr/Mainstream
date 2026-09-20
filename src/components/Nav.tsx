@@ -1,0 +1,234 @@
+'use client';
+
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import type { ReactNode } from 'react';
+import {
+  BellIcon,
+  ChartIcon,
+  CompassIcon,
+  HomeIcon,
+  PlusIcon,
+  SearchIcon,
+  ShieldIcon,
+  TrophyIcon,
+  UserIcon,
+} from './Icons';
+
+export interface NavUser {
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+  level: number;
+  isAdmin: boolean;
+  unread: number;
+}
+
+const PRIMARY = [
+  { href: '/home', label: 'Home', icon: HomeIcon },
+  { href: '/discover', label: 'Discover', icon: CompassIcon },
+  { href: '/create', label: 'Create', icon: PlusIcon },
+  { href: '/challenges', label: 'Challenges', icon: TrophyIcon },
+] as const;
+
+function isActive(pathname: string, href: string): boolean {
+  if (href === '/home') return pathname === '/home';
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+/** Bottom navigation — the primary way around RISE on a phone. */
+export function BottomNav({ user }: { user: NavUser | null }) {
+  const pathname = usePathname();
+  const profileHref = user ? `/u/${user.username}` : '/login';
+  const profileActive = user ? pathname === profileHref : pathname === '/login';
+
+  return (
+    <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-white/[0.07] bg-ink-950/85 pt-1 backdrop-blur-xl lg:hidden">
+      <ul className="mx-auto flex max-w-lg items-end justify-around px-2">
+        {PRIMARY.map((item) => {
+          const active = isActive(pathname, item.href);
+          if (item.href === '/create') {
+            return (
+              <li key={item.href} className="-mt-5">
+                <Link
+                  href={user ? '/create' : '/login?next=/create'}
+                  aria-label="Create"
+                  className="flex h-14 w-14 items-center justify-center rounded-2xl shadow-glow transition active:scale-95"
+                  style={{
+                    backgroundImage: 'linear-gradient(135deg,#FFC93C,#FF5C39 60%,#FF3D6E)',
+                  }}
+                >
+                  <PlusIcon width={26} height={26} className="text-ink-950" strokeWidth={2.4} />
+                </Link>
+              </li>
+            );
+          }
+          return (
+            <li key={item.href}>
+              <NavTab href={item.href} label={item.label} active={active}>
+                <item.icon />
+              </NavTab>
+            </li>
+          );
+        })}
+        <li>
+          <NavTab href={profileHref} label="Profile" active={profileActive}>
+            <UserIcon />
+          </NavTab>
+        </li>
+      </ul>
+    </nav>
+  );
+}
+
+function NavTab({
+  href,
+  label,
+  active,
+  children,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      aria-current={active ? 'page' : undefined}
+      className={`flex w-16 flex-col items-center gap-1 py-2 text-[10px] font-semibold tracking-wide transition ${
+        active ? 'text-white' : 'text-white/40'
+      }`}
+    >
+      <span className={active ? 'text-ember' : ''}>{children}</span>
+      {label}
+    </Link>
+  );
+}
+
+/** Desktop sidebar. */
+export function Sidebar({ user }: { user: NavUser | null }) {
+  const pathname = usePathname();
+  const items = [
+    ...PRIMARY.map((item) => ({ ...item, icon: item.icon as typeof HomeIcon })),
+    { href: '/leaderboards', label: 'Leaderboards', icon: ChartIcon },
+    { href: '/search', label: 'Search', icon: SearchIcon },
+    { href: '/notifications', label: 'Notifications', icon: BellIcon },
+  ];
+  if (user?.isAdmin) items.push({ href: '/admin', label: 'Admin', icon: ShieldIcon });
+
+  return (
+    <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-white/[0.06] px-4 py-6 lg:flex xl:w-72">
+      <Link href="/home" className="mb-8 flex items-center gap-2 px-3">
+        <Logo />
+      </Link>
+      <ul className="space-y-1">
+        {items.map((item) => {
+          const active = isActive(pathname, item.href);
+          return (
+            <li key={item.href}>
+              <Link
+                href={item.href}
+                className={`flex items-center gap-3 rounded-2xl px-3 py-2.5 text-[15px] font-medium transition ${
+                  active ? 'bg-white/[0.08] text-white' : 'text-white/55 hover:bg-white/[0.04] hover:text-white'
+                }`}
+              >
+                <span className={active ? 'text-ember' : ''}>
+                  <item.icon />
+                </span>
+                {item.label}
+                {item.href === '/notifications' && user && user.unread > 0 && (
+                  <span className="ml-auto rounded-full bg-ember px-2 py-0.5 text-[11px] font-bold text-ink-950">
+                    {user.unread > 9 ? '9+' : user.unread}
+                  </span>
+                )}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+
+      <div className="mt-6">
+        <Link href={user ? '/create' : '/login?next=/create'} className="btn-primary w-full">
+          <PlusIcon width={18} height={18} strokeWidth={2.4} /> Create
+        </Link>
+      </div>
+
+      <div className="mt-auto">
+        {user ? (
+          <Link
+            href={`/u/${user.username}`}
+            className="flex items-center gap-3 rounded-2xl px-3 py-3 transition hover:bg-white/[0.04]"
+          >
+            <span
+              className="flex h-10 w-10 items-center justify-center rounded-full font-display text-sm font-bold text-ink-950"
+              style={{ backgroundImage: 'linear-gradient(135deg,#FF5C39,#FFC93C)' }}
+            >
+              {user.displayName.slice(0, 2).toUpperCase()}
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-semibold">{user.displayName}</span>
+              <span className="block truncate text-xs text-white/40">
+                Level {user.level} · @{user.username}
+              </span>
+            </span>
+          </Link>
+        ) : (
+          <div className="space-y-2 px-1">
+            <Link href="/signup" className="btn-primary w-full">
+              Join RISE
+            </Link>
+            <Link href="/login" className="btn-ghost w-full">
+              Sign in
+            </Link>
+          </div>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+/** Mobile top bar. */
+export function TopBar({ user, title }: { user: NavUser | null; title?: string }) {
+  return (
+    <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-white/[0.06] bg-ink-950/80 px-4 py-3 backdrop-blur-xl lg:hidden">
+      {title ? (
+        <h1 className="font-display text-lg font-bold tracking-tight">{title}</h1>
+      ) : (
+        <Link href="/home">
+          <Logo small />
+        </Link>
+      )}
+      <div className="ml-auto flex items-center gap-1">
+        <Link href="/search" aria-label="Search" className="p-2 text-white/60 hover:text-white">
+          <SearchIcon />
+        </Link>
+        <Link
+          href={user ? '/notifications' : '/login?next=/notifications'}
+          aria-label="Notifications"
+          className="relative p-2 text-white/60 hover:text-white"
+        >
+          <BellIcon />
+          {user && user.unread > 0 && (
+            <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-ember ring-2 ring-ink-950" />
+          )}
+        </Link>
+        {!user && (
+          <Link href="/signup" className="btn-primary ml-1 px-4 py-2 text-sm">
+            Join
+          </Link>
+        )}
+      </div>
+    </header>
+  );
+}
+
+export function Logo({ small = false }: { small?: boolean }) {
+  return (
+    <span
+      className={`font-display font-extrabold tracking-tight ${small ? 'text-xl' : 'text-2xl'}`}
+    >
+      <span className="gradient-text">RISE</span>
+    </span>
+  );
+}

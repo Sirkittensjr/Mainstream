@@ -1,0 +1,36 @@
+{
+  "name": "rise",
+  "version": "0.1.0",
+  "private": true,
+  "description": "RISE — everyone starts at zero. A social platform for people who are still becoming somebody.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint src scripts",
+    "typecheck": "tsc --noEmit",
+    "seed": "tsx scripts/seed.ts",
+    "reset": "rm -rf .data && npm run seed"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.58.0",
+    "next": "15.5.25",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "server-only": "^0.0.1"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.7",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "autoprefixer": "^10.4.20",
+    "dotenv": "^18.0.1",
+    "eslint": "^9.17.0",
+    "eslint-config-next": "15.5.25",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.19",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
