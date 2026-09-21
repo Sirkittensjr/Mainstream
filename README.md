@@ -218,9 +218,19 @@ docker run -p 3000:3000 \
   faytarra
 ```
 
-**Platform-managed Next.js** (Vercel, Netlify, Amplify, Firebase App Hosting)
-— these detect Next.js and build it themselves; point them at the repo, set
-the environment variables below, and ignore the standalone output.
+**Vercel** — connect the repo and it detects Next.js automatically; no
+`vercel.json` is needed. Two things matter:
+
+- **Deploy the branch that has the app.** Vercel builds your *production
+  branch* (`main` by default). Pointing a domain at a branch that does not
+  contain the project produces a "Ready" deployment that 404s on every route,
+  including `/`.
+- **Set the environment variables below.** Vercel's filesystem is read-only
+  apart from `/tmp`, so without Supabase the app runs per-instance and
+  ephemerally: it serves fine and says so in the logs, but nothing is saved.
+
+**Netlify, Amplify, Firebase App Hosting** — these also detect Next.js and
+build it themselves; set the same variables and ignore the standalone output.
 
 ### Before the first production deploy
 

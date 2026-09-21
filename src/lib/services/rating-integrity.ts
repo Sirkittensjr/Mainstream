@@ -1,7 +1,10 @@
 import 'server-only';
 import { db } from '@/lib/db';
 import { DAY } from '@/lib/time';
-import type { ID, Rating, User } from '@/lib/types';
+import type { ID, Rating } from '@/lib/types';
+
+// The weighting itself is pure, lives on its own, and is unit tested.
+export { raterWeight, type WeightBreakdown } from '@/lib/rating-weight';
 
 /**
  * Rating integrity.
@@ -13,83 +16,6 @@ import type { ID, Rating, User } from '@/lib/types';
  */
 
 export const RATE_LIMITS = { perHour: 25, perDay: 80 };
-
-/** Ratings toward one creator before a rater's weight starts collapsing. */
-const CONCENTRATION_SOFT = 3;
-const CONCENTRATION_HARD = 6;
-
-export interface WeightBreakdown {
-  weight: number;
-  reasons: string[];
-}
-
-/**
- * How much a rater's opinion counts, 0–1.
- *
- * A brand new account with no activity is not silenced — it is quiet. It earns
- * full weight by being a real participant, which is exactly the cost a bot
- * farm cannot pay at scale.
- */
-export function raterWeight(
-  rater: User,
-  ratingsGiven: Rating[],
-  targetOwnerId: ID,
-  now: number = Date.now(),
-): WeightBreakdown {
-  const reasons: string[] = [];
-  if (rater.status !== 'active') return { weight: 0, reasons: ['account not active'] };
-  if (!rater.trusted) return { weight: 0, reasons: ['flagged by a moderator'] };
-
-  let weight = 1;
-  const ageDays = (now - new Date(rater.created_at).getTime()) / DAY;
-  if (ageDays < 1) {
-    weight *= 0.25;
-    reasons.push('account is less than a day old');
-  } else if (ageDays < 7) {
-    weight *= 0.6;
-    reasons.push('account is less than a week old');
-  }
-
-  if (rater.points < 20) {
-    weight *= 0.7;
-    reasons.push('little activity on the account');
-  }
-
-  if (ratingsGiven.length >= 10) {
-    const high = ratingsGiven.filter((rating) => rating.score >= 9).length / ratingsGiven.length;
-    const low = ratingsGiven.filter((rating) => rating.score <= 2).length / ratingsGiven.length;
-    if (high > 0.9) {
-      weight *= 0.4;
-      reasons.push('rates almost everything 9 or 10');
-    } else if (low > 0.9) {
-      weight *= 0.4;
-      reasons.push('rates almost everything 1 or 2');
-    }
-  }
-
-  const towardOwner = ratingsGiven.filter((rating) => rating.owner_id === targetOwnerId).length;
-  if (towardOwner >= CONCENTRATION_HARD) {
-    weight *= 0.25;
-    reasons.push('has rated this creator many times');
-  } else if (towardOwner >= CONCENTRATION_SOFT) {
-    weight *= 0.7;
-    reasons.push('has rated this creator several times');
-  }
-
-  if (ratingsGiven.length >= 8) {
-    const perOwner = new Map<ID, number>();
-    for (const rating of ratingsGiven) {
-      perOwner.set(rating.owner_id, (perOwner.get(rating.owner_id) ?? 0) + 1);
-    }
-    const share = Math.max(...perOwner.values()) / ratingsGiven.length;
-    if (share > 0.5) {
-      weight *= 0.35;
-      reasons.push('most of their ratings go to one creator');
-    }
-  }
-
-  return { weight: Math.round(Math.max(0, Math.min(1, weight)) * 100) / 100, reasons };
-}
 
 export type LimitResult = { ok: true } | { ok: false; error: string };
 

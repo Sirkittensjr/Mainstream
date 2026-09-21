@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { Driver, QueryOptions, Row, Schema, TableName } from './types';
 
@@ -15,6 +16,13 @@ import type { Driver, QueryOptions, Row, Schema, TableName } from './types';
 function resolveDataDir(): string {
   const override = process.env.FAYTARRA_DATA_DIR;
   if (override) return path.resolve(override);
+
+  // Serverless platforms ship a read-only bundle with a writable temp dir.
+  // Writing there keeps a warm instance working; it is still per-instance and
+  // ephemeral, which is why production wants Supabase.
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    return path.join(os.tmpdir(), 'faytarra-data');
+  }
 
   const cwd = process.cwd();
   const standaloneSuffix = path.join('.next', 'standalone');
@@ -56,6 +64,8 @@ class LocalDriver implements Driver {
   private loading: Promise<Store> | null = null;
   private writeChain: Promise<void> = Promise.resolve();
   private pending: Promise<void> | null = null;
+  /** Set once the filesystem has refused a write; we then serve from memory. */
+  private persistenceDisabled = false;
 
   private async load(): Promise<Store> {
     if (this.store) return this.store;
@@ -89,8 +99,20 @@ class LocalDriver implements Driver {
         const snapshot = JSON.stringify(this.store);
         this.writeChain = this.writeChain
           .then(async () => {
-            await fs.mkdir(DATA_DIR, { recursive: true });
-            await fs.writeFile(DB_FILE, snapshot, 'utf8');
+            if (this.persistenceDisabled) return;
+            try {
+              await fs.mkdir(DATA_DIR, { recursive: true });
+              await fs.writeFile(DB_FILE, snapshot, 'utf8');
+            } catch (error) {
+              // A read-only filesystem must not take the whole site down: keep
+              // serving from memory and say so once, loudly.
+              this.persistenceDisabled = true;
+              console.warn(
+                `[faytarra] Cannot write to ${DATA_DIR} (${(error as Error).message}). ` +
+                  'Serving from memory only — nothing will be saved. Configure Supabase ' +
+                  'to persist data.',
+              );
+            }
           })
           .then(resolve, reject);
       }, 0);
