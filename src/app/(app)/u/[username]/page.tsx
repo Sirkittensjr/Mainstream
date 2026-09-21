@@ -5,11 +5,13 @@ import { Avatar } from '@/components/Avatar';
 import { EmptyState } from '@/components/EmptyState';
 import { FollowButton } from '@/components/FollowButton';
 import { Journey } from '@/components/Journey';
-import { LevelBadge, RiseMeter } from '@/components/LevelBadge';
+import { LevelBadge, LevelMeter } from '@/components/LevelBadge';
 import { PageTopBar } from '@/components/PageTopBar';
 import { PostList } from '@/components/PostList';
 import { ProfileMenu } from '@/components/ProfileMenu';
-import { formatCount, levelFor } from '@/lib/rise';
+import { RatingPill, ReactionBar } from '@/components/RatingPill';
+import { RateButton } from '@/components/RateSheet';
+import { formatCount, levelFor } from '@/lib/progression';
 import { hydratePosts, postsByAuthor } from '@/lib/services/posts';
 import {
   getJourney,
@@ -19,6 +21,9 @@ import {
   isFollowing,
 } from '@/lib/services/users';
 import { db } from '@/lib/db';
+import { myRating, userRating } from '@/lib/services/ratings';
+import { rankHistory, userRanks } from '@/lib/services/rankings';
+import { topReactions } from '@/lib/ratings';
 import { getViewer } from '@/lib/session';
 import { formatMonthYear } from '@/lib/time';
 
@@ -58,18 +63,23 @@ export default async function ProfilePage({
 
   if (user.status === 'banned' && !isSelf && viewer?.role !== 'admin') notFound();
 
-  const [stats, following, allPosts, journey, challenges] = await Promise.all([
-    getUserStats(user.id),
-    viewer && !isSelf ? isFollowing(viewer.id, user.id) : Promise.resolve(false),
-    postsByAuthor(user.id),
-    getJourney(user),
-    db().query('challenges'),
-  ]);
+  const [stats, following, allPosts, journey, challenges, rating, ranks, history, mine] =
+    await Promise.all([
+      getUserStats(user.id),
+      viewer && !isSelf ? isFollowing(viewer.id, user.id) : Promise.resolve(false),
+      postsByAuthor(user.id),
+      getJourney(user),
+      db().query('challenges'),
+      userRating(user.id),
+      userRanks(user.id),
+      rankHistory(user.id),
+      myRating(viewer?.id ?? null, 'user', user.id),
+    ]);
 
   const challengeById = new Map(challenges.map((entry) => [entry.id, entry]));
   const shown = tab === 'challenges' ? allPosts.filter((post) => post.challenge_id) : allPosts;
   const posts = blocked ? [] : await hydratePosts(shown.slice(0, 40), viewer?.id ?? null);
-  const level = levelFor(user.rise_points);
+  const level = levelFor(user.points);
 
   return (
     <>
@@ -94,7 +104,7 @@ export default async function ProfilePage({
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <LevelBadge level={level.level} name={level.name} />
                 {user.status === 'suspended' && (
-                  <span className="chip border-ember/40 bg-ember/10 text-ember">Suspended</span>
+                  <span className="chip border-fay/40 bg-fay/10 text-fay">Suspended</span>
                 )}
               </div>
             </div>
@@ -119,14 +129,55 @@ export default async function ProfilePage({
             <Stat label="Views" value={formatCount(stats.views)} />
           </dl>
 
+          <div className="mt-5 grid grid-cols-2 gap-3">
+            <div className="rounded-2xl border border-white/[0.07] bg-black/20 p-4">
+              <p className="label">Overall</p>
+              <div className="mt-2">
+                <RatingPill value={rating.overall} size="lg" count={rating.ratingsReceived} />
+              </div>
+              <p className="mt-2 text-xs text-white/35">
+                {rating.ratingsReceived} rating{rating.ratingsReceived === 1 ? '' : 's'} ·{' '}
+                {rating.raters} people
+              </p>
+            </div>
+            <div className="rounded-2xl border border-white/[0.07] bg-black/20 p-4">
+              <p className="label">Current · 30d</p>
+              <div className="mt-2">
+                <RatingPill value={rating.current} trend={rating.trend} size="lg" />
+              </div>
+              <p className="mt-2 text-xs text-white/35">
+                {rating.delta === 0 && 'holding steady'}
+                {rating.delta !== 0 && (
+                  <span className={rating.delta > 0 ? 'text-mint' : 'text-fay-soft'}>
+                    {rating.delta > 0 ? '+' : ''}
+                    {rating.delta.toFixed(1)} vs previous 30 days
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+
+          <p className="label mt-5">Rank of {ranks.total.toLocaleString()} creators</p>
+          <dl className="mt-2 grid grid-cols-3 gap-2">
+            <RankCell label="Overall" value={ranks.overall} />
+            <RankCell label="Current" value={ranks.current} />
+            <RankCell label="Rising" value={ranks.rising} />
+          </dl>
+
+          {topReactions(rating.reactions, 4).length > 0 && (
+            <div className="mt-3">
+              <ReactionBar reactions={topReactions(rating.reactions, 4)} />
+            </div>
+          )}
+
           <div className="mt-5">
             <div className="mb-2 flex items-baseline justify-between">
               <p className="text-sm font-semibold">
-                RISE Level {level.level} — {level.name}
+                Level {level.level} — {level.name}
               </p>
-              <p className="text-xs text-white/40">{user.rise_points.toLocaleString()} pts</p>
+              <p className="text-xs text-white/40">{user.points.toLocaleString()} pts</p>
             </div>
-            <RiseMeter points={user.rise_points} />
+            <LevelMeter points={user.points} />
             <p className="mt-3 text-sm text-white/55">
               Goal: <span className="font-semibold text-white">{user.goal}</span>
             </p>
@@ -149,6 +200,16 @@ export default async function ProfilePage({
                   initialFollowing={following}
                   size="lg"
                   signedIn={Boolean(viewer)}
+                />
+                <RateButton
+                  targetType="user"
+                  targetId={user.id}
+                  rating={rating.overall}
+                  count={rating.ratingsReceived}
+                  myScore={mine?.score ?? null}
+                  myReactions={mine?.reactions ?? []}
+                  signedIn={Boolean(viewer)}
+                  subject={`@${user.username}`}
                 />
                 {viewer && (
                   <ProfileMenu userId={user.id} username={user.username} blocked={blocked} />
@@ -179,7 +240,36 @@ export default async function ProfilePage({
             />
           ) : tab === 'about' ? (
             <>
-              <Journey name={user.display_name} journey={journey} />
+              <Journey name={user.display_name} journey={journey} history={history} />
+              <section className="card p-6">
+                <h2 className="font-display text-lg font-bold">What feeds this rating</h2>
+                <p className="mt-1 text-sm text-white/45">
+                  Ratings from the community are most of it. The rest is what the account
+                  actually does.
+                </p>
+                <ul className="mt-4 space-y-3">
+                  {[
+                    { label: 'Consistency', value: rating.signals.consistency },
+                    { label: 'Engagement', value: rating.signals.engagement },
+                    { label: 'Follower growth', value: rating.signals.growth },
+                    { label: 'Community participation', value: rating.signals.participation },
+                    { label: 'Account history', value: rating.signals.history },
+                  ].map((signal) => (
+                    <li key={signal.label} className="flex items-center gap-3 text-sm">
+                      <span className="w-44 shrink-0 text-white/55">{signal.label}</span>
+                      <span className="h-2 flex-1 overflow-hidden rounded-full bg-white/[0.07]">
+                        <span
+                          className="block h-full rounded-full bg-gradient-to-r from-aura to-fay"
+                          style={{ width: `${Math.round(signal.value * 10)}%` }}
+                        />
+                      </span>
+                      <span className="w-8 text-right tabular-nums text-white/40">
+                        {signal.value.toFixed(1)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
               <section className="card p-6">
                 <h2 className="font-display text-lg font-bold">About</h2>
                 <dl className="mt-4 space-y-3 text-sm">
@@ -223,7 +313,7 @@ export default async function ProfilePage({
                     }
                     body={
                       isSelf
-                        ? 'Your first post earns 10 RISE points and goes straight into Discover.'
+                        ? 'Your first post earns 10 FayTarra points and goes straight into Discover.'
                         : `${user.display_name} has not posted here yet. Follow to be there when they do.`
                     }
                     cta={isSelf ? { href: '/create', label: 'Create a post' } : undefined}
@@ -235,6 +325,17 @@ export default async function ProfilePage({
         </div>
       </div>
     </>
+  );
+}
+
+function RankCell({ label, value }: { label: string; value: number | null }) {
+  return (
+    <div className="rounded-2xl border border-white/[0.07] bg-black/20 px-3 py-2.5 text-center">
+      <dt className="text-[10px] uppercase tracking-wide text-white/40">{label}</dt>
+      <dd className="mt-0.5 font-display text-base font-extrabold tabular-nums">
+        {value ? `#${value.toLocaleString()}` : '—'}
+      </dd>
+    </div>
   );
 }
 

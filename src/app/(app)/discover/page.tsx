@@ -106,10 +106,10 @@ export default async function DiscoverPage({
             }
           />
           {tab === 'shots' && (
-            <p className="mb-4 rounded-2xl border border-ember/20 bg-ember/[0.07] px-4 py-3 text-sm text-white/60">
-              Nobody is promised a viral post. What RISE promises is a turn — every shot post
+            <p className="mb-4 rounded-2xl border border-fay/20 bg-fay/[0.07] px-4 py-3 text-sm text-white/60">
+              Nobody is promised a viral post. What FayTarra promises is a turn — every shot post
               rotates through this page, and new posts start near the front.{' '}
-              <Link href="/create" className="font-semibold text-ember hover:underline">
+              <Link href="/create" className="font-semibold text-fay hover:underline">
                 Ask for yours
               </Link>
               .

@@ -3,11 +3,11 @@ import Link from 'next/link';
 import { EmptyState } from '@/components/EmptyState';
 import { PageTopBar } from '@/components/PageTopBar';
 import { PostList } from '@/components/PostList';
-import { RiseMeter } from '@/components/LevelBadge';
+import { LevelMeter } from '@/components/LevelBadge';
 import { homeFeed } from '@/lib/services/feed';
 import { hydratePosts, visiblePosts } from '@/lib/services/posts';
 import { followingIds } from '@/lib/services/users';
-import { levelFor } from '@/lib/rise';
+import { levelFor } from '@/lib/progression';
 import { getViewer } from '@/lib/session';
 
 export const metadata: Metadata = { title: 'Home' };
@@ -23,7 +23,7 @@ export default async function HomePage({
   const onlyFollowing = tab === 'following';
 
   const posts = onlyFollowing && viewer ? await followingFeed(viewer.id) : await homeFeed(viewer);
-  const level = viewer ? levelFor(viewer.rise_points) : null;
+  const level = viewer ? levelFor(viewer.points) : null;
 
   return (
     <>
@@ -33,7 +33,7 @@ export default async function HomePage({
         <div className="mb-5 hidden lg:block">
           <h1 className="font-display text-3xl font-extrabold tracking-tight">Your feed</h1>
           <p className="mt-1 text-white/45">
-            People you follow, plus creators RISE thinks you should see before anyone else does.
+            People you follow, plus creators FayTarra thinks you should see before anyone else does.
           </p>
         </div>
 
@@ -43,9 +43,9 @@ export default async function HomePage({
               <p className="font-display text-base font-bold">
                 Level {level.level} — {level.name}
               </p>
-              <p className="text-xs text-white/40">{viewer.rise_points.toLocaleString()} pts</p>
+              <p className="text-xs text-white/40">{viewer.points.toLocaleString()} pts</p>
             </div>
-            <RiseMeter points={viewer.rise_points} />
+            <LevelMeter points={viewer.points} />
           </div>
         ) : (
           !viewer && (
@@ -53,7 +53,7 @@ export default async function HomePage({
               <div className="min-w-0">
                 <p className="font-display text-lg font-bold">You are browsing as a guest.</p>
                 <p className="text-sm text-white/50">
-                  Join to post, follow and start your own RISE level.
+                  Join to post, follow and start your own FayTarra level.
                 </p>
               </div>
               <Link href="/signup" className="btn-primary ml-auto shrink-0 px-5 py-2.5 text-sm">

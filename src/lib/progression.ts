@@ -1,5 +1,5 @@
 /**
- * The RISE progression system.
+ * The FayTarra progression system.
  *
  * Points come from participation only — there is no way to buy them. Every
  * award is written to the `activity` table so a creator can always see exactly
@@ -33,7 +33,7 @@ export const LEVELS: Level[] = [
   { level: 2, name: 'Rising', minPoints: 100, blurb: 'People are starting to notice.' },
   { level: 3, name: 'Breakout', minPoints: 400, blurb: 'Your posts are travelling.' },
   { level: 4, name: 'Creator', minPoints: 1000, blurb: 'You show up and it shows.' },
-  { level: 5, name: 'Featured', minPoints: 2500, blurb: 'RISE puts you in front of people.' },
+  { level: 5, name: 'Featured', minPoints: 2500, blurb: 'FayTarra puts you in front of people.' },
   { level: 6, name: 'Elite', minPoints: 6000, blurb: 'Top of your category.' },
   { level: 7, name: 'Icon', minPoints: 15000, blurb: 'Known for something.' },
 ];

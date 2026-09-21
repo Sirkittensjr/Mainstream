@@ -1,15 +1,15 @@
 import 'server-only';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { supabaseConfigured } from '@/lib/db/supabase';
 
-const COOKIE = 'rise_session';
+const COOKIE = 'faytarra_session';
 const MAX_AGE = 60 * 60 * 24 * 30; // 30 days
 
 // Stored on globalThis: Next.js can load this module more than once in a single
 // process (server actions and page renders live in separate bundles), and every
 // copy has to agree on the key or sessions stop verifying.
-const globalRef = globalThis as typeof globalThis & { __riseEphemeralSecret?: string };
+const globalRef = globalThis as typeof globalThis & { __fayEphemeralSecret?: string };
 
 /**
  * Session signing key.
@@ -23,17 +23,17 @@ const globalRef = globalThis as typeof globalThis & { __riseEphemeralSecret?: st
 function secret(): string {
   const value = process.env.AUTH_SECRET;
   if (value) return value;
-  if (process.env.NODE_ENV !== 'production') return 'rise-development-secret';
+  if (process.env.NODE_ENV !== 'production') return 'faytarra-development-secret';
   if (supabaseConfigured()) {
     throw new Error('AUTH_SECRET must be set in production.');
   }
-  if (!globalRef.__riseEphemeralSecret) {
-    globalRef.__riseEphemeralSecret = randomBytes(32).toString('hex');
+  if (!globalRef.__fayEphemeralSecret) {
+    globalRef.__fayEphemeralSecret = randomBytes(32).toString('hex');
     console.warn(
-      '[rise] AUTH_SECRET is not set. Using a temporary key — sessions will end when the server restarts.',
+      '[faytarra] AUTH_SECRET is not set. Using a temporary key — sessions will end when the server restarts.',
     );
   }
-  return globalRef.__riseEphemeralSecret;
+  return globalRef.__fayEphemeralSecret;
 }
 
 function sign(payload: string): string {
@@ -83,9 +83,21 @@ export async function clearSessionCookie(): Promise<void> {
   store.delete(COOKIE);
 }
 
+/**
+ * The signed-in account for this request.
+ *
+ * The website sends the session as an HTTP-only cookie. Native clients send
+ * the exact same signed token as a bearer header, so the iOS and Android apps
+ * can reuse every service in `src/lib/services` without a second auth system.
+ */
 export async function currentUserId(): Promise<string | null> {
   const store = await cookies();
-  return readToken(store.get(COOKIE)?.value);
+  const fromCookie = readToken(store.get(COOKIE)?.value);
+  if (fromCookie) return fromCookie;
+
+  const header = (await headers()).get('authorization');
+  if (header?.startsWith('Bearer ')) return readToken(header.slice(7).trim());
+  return null;
 }
 
 export const SESSION_COOKIE = COOKIE;

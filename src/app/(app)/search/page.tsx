@@ -42,7 +42,7 @@ export default async function SearchPage({
             autoFocus={!query}
             placeholder="People, posts, categories, challenges"
             className="w-full py-4 pl-12"
-            aria-label="Search RISE"
+            aria-label="Search FayTarra"
           />
         </form>
 

@@ -25,6 +25,10 @@ import {
 } from '@/lib/services/moderation';
 import { blockUser, follow, unblockUser, unfollow, updateProfile } from '@/lib/services/users';
 import { deleteAccount } from '@/lib/services/account';
+import { submitRating } from '@/lib/services/ratings';
+import { setRaterTrust } from '@/lib/services/rating-integrity';
+import { captureRankSnapshot } from '@/lib/services/rankings';
+import type { Reaction, RatingTarget } from '@/lib/types';
 
 export async function likeAction(postId: string) {
   const viewer = await getViewer();
@@ -39,6 +43,27 @@ export async function followAction(userId: string, shouldFollow: boolean) {
   if (shouldFollow) await follow(viewer.id, userId);
   else await unfollow(viewer.id, userId);
   return { ok: true as const, following: shouldFollow };
+}
+
+export async function rateAction(
+  targetType: RatingTarget,
+  targetId: string,
+  score: number,
+  reactions: Reaction[],
+) {
+  const viewer = await getViewer();
+  if (!viewer) return { ok: false as const, error: 'Sign in to rate.' };
+  const result = await submitRating({
+    raterId: viewer.id,
+    targetType,
+    targetId,
+    score,
+    reactions,
+  });
+  if (result.ok) {
+    revalidatePath(targetType === 'post' ? `/post/${targetId}` : '/home');
+  }
+  return result;
 }
 
 export async function commentAction(postId: string, body: string) {
@@ -205,6 +230,19 @@ export async function adminFeatureAction(postId: string, featured: boolean) {
   await setFeatured(postId, featured);
   revalidatePath('/admin');
   revalidatePath('/discover');
+}
+
+export async function adminSetTrustAction(userId: string, trusted: boolean) {
+  await requireAdmin();
+  await setRaterTrust(userId, trusted);
+  revalidatePath('/admin');
+}
+
+export async function adminCaptureRanksAction() {
+  await requireAdmin();
+  const count = await captureRankSnapshot();
+  revalidatePath('/admin');
+  return { ok: true as const, count };
 }
 
 /** Used by the admin "view user" panel. */

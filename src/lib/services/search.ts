@@ -1,6 +1,6 @@
 import 'server-only';
 import { db } from '@/lib/db';
-import { levelFor } from '@/lib/rise';
+import { levelFor } from '@/lib/progression';
 import { CATEGORIES, type Category, type ID, type PublicUser } from '@/lib/types';
 import { hydratePosts, visiblePosts, type PostView } from './posts';
 import { followerCounts, hiddenUserIds, toPublicUser } from './users';
@@ -45,7 +45,7 @@ export async function search(query: string, viewerId: ID | null): Promise<Search
 
   return {
     people: people.map((user) => {
-      const level = levelFor(user.rise_points);
+      const level = levelFor(user.points);
       return {
         user: toPublicUser(user),
         followers: followers.get(user.id) ?? 0,

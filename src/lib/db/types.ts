@@ -7,11 +7,13 @@ import type {
   Like,
   Notification,
   Post,
+  RankSnapshot,
+  Rating,
   Report,
   User,
 } from '@/lib/types';
 
-/** Every collection RISE persists. Table names match the Supabase schema. */
+/** Every collection FayTarra persists. Table names match the Supabase schema. */
 export interface Schema {
   users: User;
   posts: Post;
@@ -20,6 +22,8 @@ export interface Schema {
   follows: Follow;
   blocks: Block;
   challenges: Challenge;
+  ratings: Rating;
+  rank_snapshots: RankSnapshot;
   notifications: Notification;
   reports: Report;
   activity: Activity;
@@ -40,7 +44,7 @@ export interface QueryOptions<T> {
 
 /**
  * The entire storage contract. Deliberately tiny: ranking, feed mixing and the
- * RISE point maths all live in plain TypeScript on top of these primitives so
+ * FayTarra point maths all live in plain TypeScript on top of these primitives so
  * that swapping drivers can never change product behaviour.
  */
 export interface Driver {

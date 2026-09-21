@@ -1,4 +1,4 @@
-import { LEVELS, levelProgress, nextLevel, pointsToNextLevel } from '@/lib/rise';
+import { LEVELS, levelProgress, nextLevel, pointsToNextLevel } from '@/lib/progression';
 
 export function LevelBadge({
   level,
@@ -18,7 +18,7 @@ export function LevelBadge({
         : 'px-2.5 py-0.5 text-[11px]';
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full border border-ember/30 bg-ember/10 font-semibold uppercase tracking-wide text-ember-soft ${classes}`}
+      className={`inline-flex items-center gap-1 rounded-full border border-fay/30 bg-fay/10 font-semibold uppercase tracking-wide text-fay-soft ${classes}`}
       title={`Level ${level} — ${label}`}
     >
       <span className="text-white/80">L{level}</span>
@@ -27,25 +27,25 @@ export function LevelBadge({
   );
 }
 
-/** The progress bar shown on profiles and in the RISE panel. */
-export function RiseMeter({ points, compact = false }: { points: number; compact?: boolean }) {
+/** The progress bar shown on profiles and in the FayTarra panel. */
+export function LevelMeter({ points, compact = false }: { points: number; compact?: boolean }) {
   const progress = levelProgress(points);
   const next = nextLevel(points);
   return (
     <div className="w-full">
       <div className="h-2 w-full overflow-hidden rounded-full bg-white/10">
         <div
-          className="h-full animate-rise-bar rounded-full"
+          className="h-full animate-level-bar rounded-full"
           style={{
             width: `${progress}%`,
-            backgroundImage: 'linear-gradient(90deg,#FFC93C,#FF5C39)',
+            backgroundImage: 'linear-gradient(90deg,#FFB443,#FF3D9A)',
           }}
         />
       </div>
       {!compact && (
         <p className="mt-2 text-xs text-white/50">
           {next
-            ? `${pointsToNextLevel(points).toLocaleString()} RISE points to Level ${next.level} — ${next.name}`
+            ? `${pointsToNextLevel(points).toLocaleString()} points to Level ${next.level} — ${next.name}`
             : 'Max level. You are an Icon.'}
         </p>
       )}

@@ -70,7 +70,7 @@ export function SettingsForm({
             <button
               type="button"
               onClick={() => setAvatar(null)}
-              className="mt-1 text-xs text-white/40 underline hover:text-ember"
+              className="mt-1 text-xs text-white/40 underline hover:text-fay"
             >
               Remove
             </button>

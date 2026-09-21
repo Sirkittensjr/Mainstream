@@ -14,6 +14,7 @@ export const dynamic = 'force-dynamic';
 
 const ICONS: Record<NotificationType, string> = {
   follow: '👤',
+  rating: '★',
   like: '❤️',
   comment: '💬',
   mention: '@',
@@ -87,7 +88,7 @@ export default async function NotificationsPage() {
                     <span className="shrink-0 text-xs text-white/30">
                       {timeAgo(entry.created_at)}
                     </span>
-                    {!entry.read && <span className="h-2 w-2 shrink-0 rounded-full bg-ember" />}
+                    {!entry.read && <span className="h-2 w-2 shrink-0 rounded-full bg-fay" />}
                   </Link>
                 </li>
               );

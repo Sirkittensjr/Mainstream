@@ -11,16 +11,16 @@ const display = Space_Grotesk({
 
 export const metadata: Metadata = {
   title: {
-    default: 'RISE — Everyone starts at zero',
-    template: '%s · RISE',
+    default: 'FayTarra — Everyone starts at zero',
+    template: '%s · FayTarra',
   },
   description:
-    'RISE is a social platform for people who are still becoming somebody. Create, compete, get discovered, rise.',
-  applicationName: 'RISE',
-  appleWebApp: { capable: true, title: 'RISE', statusBarStyle: 'black-translucent' },
+    'FayTarra is a social platform for people who are still becoming somebody. Create, compete, get discovered, rise.',
+  applicationName: 'FayTarra',
+  appleWebApp: { capable: true, title: 'FayTarra', statusBarStyle: 'black-translucent' },
   manifest: '/manifest.webmanifest',
   openGraph: {
-    title: 'RISE — Everyone starts at zero',
+    title: 'FayTarra — Everyone starts at zero',
     description: 'A social platform for people who are still becoming somebody.',
     type: 'website',
   },

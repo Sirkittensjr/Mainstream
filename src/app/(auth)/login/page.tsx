@@ -26,7 +26,7 @@ export default async function LoginPage({
 
       <p className="mt-6 text-center text-sm text-white/50">
         New here?{' '}
-        <Link href="/signup" className="font-semibold text-ember hover:underline">
+        <Link href="/signup" className="font-semibold text-fay hover:underline">
           Create an account
         </Link>
       </p>

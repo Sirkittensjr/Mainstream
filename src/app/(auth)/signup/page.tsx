@@ -2,12 +2,12 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { SignupForm } from './SignupForm';
 
-export const metadata: Metadata = { title: 'Join RISE' };
+export const metadata: Metadata = { title: 'Join FayTarra' };
 
 export default function SignupPage() {
   return (
     <div className="pt-6">
-      <p className="chip border-ember/30 bg-ember/10 text-ember-soft">Takes about 90 seconds</p>
+      <p className="chip border-fay/30 bg-fay/10 text-fay-soft">Takes about 90 seconds</p>
       <h1 className="mt-5 font-display text-4xl font-extrabold leading-[0.95] tracking-tight">
         Start at zero.
         <br />
@@ -20,8 +20,8 @@ export default function SignupPage() {
       <SignupForm />
 
       <p className="mt-6 text-center text-sm text-white/50">
-        Already on RISE?{' '}
-        <Link href="/login" className="font-semibold text-ember hover:underline">
+        Already on FayTarra?{' '}
+        <Link href="/login" className="font-semibold text-fay hover:underline">
           Sign in
         </Link>
       </p>
@@ -30,7 +30,7 @@ export default function SignupPage() {
         <Link href="/rules" className="underline">
           community rules
         </Link>
-        . RISE is not intended for people under 13.
+        . FayTarra is not intended for people under 13.
       </p>
     </div>
   );

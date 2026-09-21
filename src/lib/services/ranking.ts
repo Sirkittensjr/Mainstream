@@ -15,14 +15,30 @@ export function recency(createdAt: string, now: number): number {
   return Math.pow(0.5, ageHours / HALF_LIFE_HOURS);
 }
 
+/**
+ * How much a community rating moves a post in discovery.
+ *
+ * A 10/10 is worth about 30% more exposure than an unrated post and a 4/10
+ * about 30% less — enough to matter, not enough to bury everything new.
+ */
+export function ratingMultiplier(rating: number | null): number {
+  if (rating == null) return 1;
+  return 0.7 + (rating / 10) * 0.6;
+}
+
 /** Raw popularity. Used by Trending. */
-export function trendingScore(post: Post, e: Engagement, now: number): number {
+export function trendingScore(
+  post: Post,
+  e: Engagement,
+  now: number,
+  rating: number | null = null,
+): number {
   const raw = e.likes * 3 + e.comments * 5 + e.views * 0.05;
-  return raw * recency(post.created_at, now);
+  return raw * recency(post.created_at, now) * ratingMultiplier(rating);
 }
 
 /**
- * The most important number in RISE.
+ * The most important number in FayTarra.
  *
  * Rising score measures how well a post performs *relative to the size of the
  * audience it already had*. Dividing by sqrt(followers) means 40 likes on a
@@ -34,18 +50,25 @@ export function risingScore(
   e: Engagement,
   authorFollowers: number,
   now: number,
+  rating: number | null = null,
 ): number {
   const raw = e.likes * 3 + e.comments * 6 + e.views * 0.05;
   const audience = Math.sqrt(authorFollowers + 8);
   const shotBoost = post.shot ? 1.35 : 1;
   const smallCreatorBoost = authorFollowers < 500 ? 1.25 : 1;
-  return (raw / audience) * recency(post.created_at, now) * shotBoost * smallCreatorBoost;
+  return (
+    (raw / audience) *
+    recency(post.created_at, now) *
+    shotBoost *
+    smallCreatorBoost *
+    ratingMultiplier(rating)
+  );
 }
 
 /**
  * Rotating exposure for "GIVE ME A SHOT" posts.
  *
- * Instead of promising everyone virality, RISE gives every shot post a
+ * Instead of promising everyone virality, FayTarra gives every shot post a
  * deterministic slot in a rotation that advances every few hours. A post that
  * is not on screen right now is simply waiting for its turn, and brand new
  * posts start near the front of the queue.

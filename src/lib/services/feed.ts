@@ -2,7 +2,15 @@ import 'server-only';
 import { db } from '@/lib/db';
 import { DAY } from '@/lib/time';
 import type { Category, ID, Post, User } from '@/lib/types';
-import { engagementFor, hydratePosts, visiblePosts, type PostView } from './posts';
+import { isResting } from '@/lib/shot';
+import {
+  engagementFor,
+  hydratePosts,
+  recordShotImpressions,
+  visiblePosts,
+  type PostView,
+} from './posts';
+import { ratingsIndex } from './ratings';
 import { interleave, risingScore, shotRotation, trendingScore } from './ranking';
 import { followerCounts, followingIds } from './users';
 
@@ -45,12 +53,18 @@ export async function homeFeed(viewer: User | null, limit = 40): Promise<PostVie
   const { likes, comments } = await engagementFor(posts.map((p) => p.id));
   const followers = await followerCounts([...new Set(posts.map((p) => p.author_id))]);
   const activeChallengeIds = await activeChallengeIdSet();
+  const index = await ratingsIndex();
 
   const engagement = (post: Post) => ({
     likes: likes.get(post.id) ?? 0,
     comments: comments.get(post.id) ?? 0,
     views: post.views,
   });
+  const ratingOf = (post: Post) => index.posts.get(post.id)?.rating ?? null;
+  const engagementRate = (post: Post) => {
+    const e = engagement(post);
+    return (e.likes + e.comments * 2) / Math.max(post.impressions, post.views, 1);
+  };
 
   const mine = viewerId ? posts.filter((p) => p.author_id === viewerId) : [];
   const followed = posts
@@ -62,7 +76,13 @@ export async function homeFeed(viewer: User | null, limit = 40): Promise<PostVie
     .filter((p) => !following.has(p.author_id) && p.author_id !== viewerId)
     .map((post) => ({
       post,
-      score: risingScore(post, engagement(post), followers.get(post.author_id) ?? 0, now),
+      score: risingScore(
+        post,
+        engagement(post),
+        followers.get(post.author_id) ?? 0,
+        now,
+        ratingOf(post),
+      ),
     }))
     .sort((a, b) => b.score - a.score)
     .slice(0, 14)
@@ -76,7 +96,7 @@ export async function homeFeed(viewer: User | null, limit = 40): Promise<PostVie
         p.author_id !== viewerId &&
         (interests.length === 0 || interests.includes(p.category)),
     )
-    .map((post) => ({ post, score: trendingScore(post, engagement(post), now) }))
+    .map((post) => ({ post, score: trendingScore(post, engagement(post), now, ratingOf(post)) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, 12)
     .map((entry) => entry.post);
@@ -87,7 +107,13 @@ export async function homeFeed(viewer: User | null, limit = 40): Promise<PostVie
     .slice(0, 10);
 
   const shots = shotRotation(
-    posts.filter((p) => p.shot && p.author_id !== viewerId && !following.has(p.author_id)),
+    posts.filter(
+      (p) =>
+        p.shot &&
+        p.author_id !== viewerId &&
+        !following.has(p.author_id) &&
+        !isResting(p, ratingOf(p), engagementRate(p)),
+    ),
     now,
     6,
   );
@@ -100,6 +126,7 @@ export async function homeFeed(viewer: User | null, limit = 40): Promise<PostVie
   ).slice(0, limit);
 
   const views = await hydratePosts(ordered, viewerId);
+  await recordShotImpressions(views.filter((view) => shots.some((p) => p.id === view.post.id)));
   return views.map((view) => ({
     ...view,
     reason: reasonFor(view, {

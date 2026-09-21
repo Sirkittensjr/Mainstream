@@ -119,7 +119,7 @@ export async function setUserStatus(
   await db().update('users', userId, { status, status_reason: reason || null });
 }
 
-/** Admins can feature a post, which is also a RISE point award for the author. */
+/** Admins can feature a post, which is also a FayTarra point award for the author. */
 export async function setFeatured(postId: ID, featured: boolean): Promise<void> {
   const store = db();
   const post = await store.get('posts', postId);

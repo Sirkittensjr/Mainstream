@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { Driver, QueryOptions, Row, TableName } from './types';
 
-const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'rise-media';
+const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'faytarra-media';
 
 export function supabaseConfigured(): boolean {
   return Boolean(
@@ -11,7 +11,7 @@ export function supabaseConfigured(): boolean {
 
 /**
  * Supabase driver. Uses the service role key on the server so that the app can
- * enforce its own rules (blocking, moderation, RISE points) in one place; the
+ * enforce its own rules (blocking, moderation, FayTarra points) in one place; the
  * SQL schema still ships row level security for any direct client access.
  */
 class SupabaseDriver implements Driver {
@@ -85,6 +85,8 @@ class SupabaseDriver implements Driver {
   async clear() {
     const tables: TableName[] = [
       'activity',
+      'rank_snapshots',
+      'ratings',
       'notifications',
       'reports',
       'blocks',
@@ -114,9 +116,9 @@ class SupabaseDriver implements Driver {
   }
 }
 
-const globalRef = globalThis as typeof globalThis & { __riseSupabaseDriver?: SupabaseDriver };
+const globalRef = globalThis as typeof globalThis & { __faySupabaseDriver?: SupabaseDriver };
 
 export function supabaseDriver(): Driver {
-  globalRef.__riseSupabaseDriver ??= new SupabaseDriver();
-  return globalRef.__riseSupabaseDriver;
+  globalRef.__faySupabaseDriver ??= new SupabaseDriver();
+  return globalRef.__faySupabaseDriver;
 }

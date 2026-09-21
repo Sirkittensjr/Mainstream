@@ -5,7 +5,7 @@ import { ShieldIcon } from '@/components/Icons';
 
 export const metadata: Metadata = {
   title: 'Community rules',
-  description: 'What is and is not allowed on RISE, and how to report it.',
+  description: 'What is and is not allowed on FayTarra, and how to report it.',
 };
 
 const RULES = [
@@ -31,11 +31,15 @@ const RULES = [
   },
   {
     title: 'No spam',
-    body: 'No mass identical posts, no engagement farming rings, no automated liking. RISE points come from real participation.',
+    body: 'No mass identical posts, no engagement farming rings, no automated liking. FayTarra points come from real participation.',
   },
   {
     title: 'No scams',
     body: 'No fake giveaways, no "pay me to grow your account", no crypto pitches disguised as creator advice.',
+  },
+  {
+    title: 'No rating manipulation',
+    body: 'No fake accounts, no rating rings, no trading ratings, no paying for ratings. Ratings are weighted and audited, weight is revoked from accounts that game them, and buying exposure will never buy you a better rating.',
   },
   {
     title: 'No impersonation',
@@ -51,19 +55,19 @@ export default function RulesPage() {
           <Logo />
         </Link>
         <Link href="/home" className="btn-quiet px-4 text-sm">
-          Back to RISE
+          Back to FayTarra
         </Link>
       </header>
 
       <main className="mx-auto max-w-3xl px-5 pb-24">
-        <ShieldIcon width={30} height={30} className="text-ember" />
+        <ShieldIcon width={30} height={30} className="text-fay" />
         <h1 className="mt-5 font-display text-4xl font-extrabold leading-[0.95] tracking-tight sm:text-5xl">
           The rules are short.
           <br />
           <span className="gradient-text">We enforce them.</span>
         </h1>
         <p className="mt-5 max-w-2xl text-lg text-white/55">
-          RISE is built for people trying to get somewhere. That only works if the place feels
+          FayTarra is built for people trying to get somewhere. That only works if the place feels
           safe. Break one of these and your post comes down; do it repeatedly and your account
           goes with it.
         </p>
@@ -87,17 +91,19 @@ export default function RulesPage() {
             each other and removes any follows in both directions.
           </p>
           <p className="mt-4 leading-relaxed text-white/55">
-            You can delete your own posts at any time from the post page.
+            You can delete your own posts at any time from the post page. Every post and profile
+            also has a <strong className="text-white">Rate</strong> button — one rating per person,
+            changeable whenever you like.
           </p>
         </section>
 
         <section className="card mt-4 p-6">
           <h2 className="font-display text-xl font-bold">Privacy and younger users</h2>
           <ul className="mt-3 space-y-2 leading-relaxed text-white/55">
-            <li>· RISE is not intended for anyone under 13, and we do not market it to children.</li>
+            <li>· FayTarra is not intended for anyone under 13, and we do not market it to children.</li>
             <li>· We ask for a city or country, never an exact address. Location is optional.</li>
             <li>· Your email is never shown on your profile or to other people.</li>
-            <li>· Posts and images are served by RISE itself, not third party trackers.</li>
+            <li>· Posts and images are served by FayTarra itself, not third party trackers.</li>
             <li>· You can delete any post you have made, at any time.</li>
           </ul>
         </section>

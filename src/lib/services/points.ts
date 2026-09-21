@@ -1,7 +1,7 @@
 import 'server-only';
 import { db } from '@/lib/db';
 import { newId } from '@/lib/ids';
-import { levelFor, POINTS, type PointReason } from '@/lib/rise';
+import { levelFor, POINTS } from '@/lib/progression';
 import type { Activity, ActivityType, ID } from '@/lib/types';
 
 interface AwardOptions {
@@ -12,23 +12,23 @@ interface AwardOptions {
 }
 
 /**
- * Awards RISE points, logs the activity and fires a level-up notification when
+ * Awards FayTarra points, logs the activity and fires a level-up notification when
  * a threshold is crossed. This is the only place points ever change.
  */
 export async function award(
   userId: ID,
-  reason: PointReason & ActivityType,
+  reason: ActivityType,
   options: AwardOptions = {},
 ): Promise<void> {
   const store = db();
   const user = await store.get('users', userId);
   if (!user) return;
 
-  const points = options.points ?? POINTS[reason];
-  const before = user.rise_points;
+  const points = options.points ?? (POINTS as Partial<Record<ActivityType, number>>)[reason] ?? 0;
+  const before = user.points;
   const after = Math.max(0, before + points);
 
-  await store.update('users', userId, { rise_points: after });
+  await store.update('users', userId, { points: after });
   const activity: Activity = {
     id: newId(),
     user_id: userId,

@@ -11,12 +11,25 @@ export function toCardData(view: PostView): PostCardData {
     tags: view.post.tags,
     shot: view.post.shot,
     featured: view.post.featured,
+    boosted: view.post.boosted,
     views: view.post.views,
     createdAt: view.post.created_at,
     likes: view.likes,
     comments: view.comments,
     liked: view.liked,
     following: view.following,
+    rating: view.rating.rating,
+    ratingCount: view.rating.count,
+    myScore: view.myScore,
+    myReactions: [],
+    shotProgress: view.shot
+      ? {
+          stage: view.shot.stage,
+          cap: view.shot.cap,
+          progress: view.shot.progress,
+          status: view.shot.status,
+        }
+      : null,
     reason: view.reason,
     challenge: view.challenge ? { slug: view.challenge.slug, title: view.challenge.title } : null,
     author: {

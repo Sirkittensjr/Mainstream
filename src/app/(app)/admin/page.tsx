@@ -7,12 +7,13 @@ import { adminStats, adminUsers } from '@/lib/services/admin';
 import { listReports } from '@/lib/services/moderation';
 import { requireAdmin } from '@/lib/session';
 import { formatShortDate, timeAgo } from '@/lib/time';
-import { ReportActions, UserActions } from './AdminActions';
+import { suspiciousRaters } from '@/lib/services/rating-integrity';
+import { CaptureRanksButton, ReportActions, TrustActions, UserActions } from './AdminActions';
 
 export const metadata: Metadata = { title: 'Admin' };
 export const dynamic = 'force-dynamic';
 
-const TABS = ['overview', 'reports', 'users'] as const;
+const TABS = ['overview', 'reports', 'integrity', 'users'] as const;
 
 export default async function AdminPage({
   searchParams,
@@ -26,10 +27,11 @@ export default async function AdminPage({
     : 'overview';
   const reportStatus = (params.status === 'all' ? 'all' : 'open') as 'all' | 'open';
 
-  const [stats, reports, users] = await Promise.all([
+  const [stats, reports, users, raters] = await Promise.all([
     adminStats(),
     tab === 'reports' ? listReports(reportStatus) : Promise.resolve([]),
     tab === 'users' ? adminUsers(params.q ?? '') : Promise.resolve([]),
+    tab === 'integrity' ? suspiciousRaters() : Promise.resolve([]),
   ]);
 
   return (
@@ -37,7 +39,7 @@ export default async function AdminPage({
       <PageTopBar title="Admin" />
       <div className="mx-auto max-w-4xl px-4 pt-4 lg:pt-8">
         <div className="mb-5 flex items-center gap-3">
-          <ShieldIcon className="text-ember" />
+          <ShieldIcon className="text-fay" />
           <div>
             <h1 className="font-display text-2xl font-extrabold tracking-tight">
               Admin dashboard
@@ -58,7 +60,7 @@ export default async function AdminPage({
             >
               {entry}
               {entry === 'reports' && stats.totals.openReports > 0 && (
-                <span className="rounded-full bg-ember px-1.5 text-[10px] font-bold text-ink-950">
+                <span className="rounded-full bg-fay px-1.5 text-[10px] font-bold text-ink-950">
                   {stats.totals.openReports}
                 </span>
               )}
@@ -75,8 +77,8 @@ export default async function AdminPage({
               <Metric label="Likes" value={stats.totals.likes} />
               <Metric label="Follows" value={stats.totals.follows} />
               <Metric label="Challenge entries" value={stats.totals.challengeEntries} />
+              <Metric label="Ratings cast" value={stats.totals.ratings} />
               <Metric label="Open reports" value={stats.totals.openReports} accent />
-              <Metric label="New today" value={stats.newUsers.today} />
             </div>
 
             <section>
@@ -108,7 +110,7 @@ export default async function AdminPage({
                         <span className="w-24 shrink-0 text-white/60">{entry.category}</span>
                         <span className="h-2 flex-1 overflow-hidden rounded-full bg-white/[0.07]">
                           <span
-                            className="block h-full rounded-full bg-gradient-to-r from-solar to-ember"
+                            className="block h-full rounded-full bg-gradient-to-r from-solar to-fay"
                             style={{ width: `${(entry.posts / max) * 100}%` }}
                           />
                         </span>
@@ -185,6 +187,70 @@ export default async function AdminPage({
           </div>
         )}
 
+        {tab === 'integrity' && (
+          <div className="mt-6 space-y-4 pb-12">
+            <div className="card p-5">
+              <h2 className="font-display text-lg font-bold">Rating integrity</h2>
+              <p className="mt-1 text-sm text-white/50">
+                Ratings are weighted before they ever reach a score: new accounts count less,
+                one rating per person per target, hard daily limits, and weight collapses when
+                someone keeps rating the same creator. These are the accounts whose behaviour
+                still looks wrong.
+              </p>
+              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <Metric label="Ratings cast" value={stats.totals.ratings} />
+                <Metric label="Rated posts" value={stats.totals.ratedPosts} />
+                <Metric label="Flagged raters" value={raters.length} accent />
+                <Metric label="Weight revoked" value={stats.totals.untrusted} />
+              </div>
+            </div>
+
+            {raters.length === 0 ? (
+              <p className="card p-8 text-center text-sm text-white/40">
+                No suspicious rating patterns right now.
+              </p>
+            ) : (
+              <ul className="space-y-3">
+                {raters.map((entry) => (
+                  <li key={entry.user.id} className="card p-5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link
+                        href={`/u/${entry.user.username}`}
+                        className="font-semibold hover:underline"
+                      >
+                        @{entry.user.username}
+                      </Link>
+                      {entry.flags.map((flag) => (
+                        <span key={flag} className="chip border-fay/40 bg-fay/10 text-xs text-fay">
+                          {flag}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-sm text-white/50">
+                      {entry.ratingsGiven} ratings given · average {entry.averageScore} · average
+                      weight {entry.averageWeight} · {entry.topTargetShare}% aimed at @
+                      {entry.topTargetUsername ?? 'unknown'} · {entry.burst24h} in 24h
+                    </p>
+                    <div className="mt-3">
+                      <TrustActions userId={entry.user.id} trusted={entry.user.trusted} />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="card flex flex-wrap items-center justify-between gap-4 p-5">
+              <div>
+                <h2 className="font-display text-lg font-bold">Rank history</h2>
+                <p className="mt-1 text-sm text-white/50">
+                  Freeze this month&rsquo;s ranks so profiles can show the climb.
+                </p>
+              </div>
+              <CaptureRanksButton />
+            </div>
+          </div>
+        )}
+
         {tab === 'reports' && (
           <div className="mt-6 pb-12">
             <div className="mb-4 flex gap-2">
@@ -211,7 +277,7 @@ export default async function AdminPage({
                 {reports.map((entry) => (
                   <li key={entry.report.id} className="card p-5">
                     <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <span className="chip border-ember/40 bg-ember/10 text-ember">
+                      <span className="chip border-fay/40 bg-fay/10 text-fay">
                         {entry.report.reason}
                       </span>
                       <span className="chip capitalize">{entry.report.target_type}</span>
@@ -230,7 +296,7 @@ export default async function AdminPage({
                           by @{entry.target.authorUsername}: &ldquo;
                           {entry.target.caption.slice(0, 160) || 'media only'}&rdquo;
                           {entry.target.removed && (
-                            <span className="ml-2 text-ember">(already removed)</span>
+                            <span className="ml-2 text-fay">(already removed)</span>
                           )}
                         </>
                       )}
@@ -327,7 +393,7 @@ function Metric({
   accent?: boolean;
 }) {
   return (
-    <div className={`card p-4 ${accent && value > 0 ? 'border-ember/40' : ''}`}>
+    <div className={`card p-4 ${accent && value > 0 ? 'border-fay/40' : ''}`}>
       <p className="font-display text-2xl font-extrabold">{value.toLocaleString()}</p>
       <p className="mt-0.5 text-[11px] uppercase tracking-wide text-white/40">{label}</p>
     </div>

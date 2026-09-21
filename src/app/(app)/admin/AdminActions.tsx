@@ -3,7 +3,9 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  adminCaptureRanksAction,
   adminFeatureAction,
+  adminSetTrustAction,
   adminRemoveCommentAction,
   adminRemovePostAction,
   adminResolveReportAction,
@@ -61,7 +63,7 @@ export function ReportActions({
             <button
               type="button"
               disabled={pending}
-              className={`${BUTTON} border-ember/40 text-ember hover:bg-ember/10`}
+              className={`${BUTTON} border-fay/40 text-fay hover:bg-fay/10`}
               onClick={() => run(() => adminRemovePostAction(target.id, reason))}
             >
               Remove post
@@ -71,7 +73,7 @@ export function ReportActions({
           <button
             type="button"
             disabled={pending}
-            className={`${BUTTON} border-ember/40 text-ember hover:bg-ember/10`}
+            className={`${BUTTON} border-fay/40 text-fay hover:bg-fay/10`}
             onClick={() => run(() => adminRemoveCommentAction(target.id))}
           >
             Remove comment
@@ -90,7 +92,7 @@ export function ReportActions({
             <button
               type="button"
               disabled={pending}
-              className={`${BUTTON} border-ember/40 text-ember hover:bg-ember/10`}
+              className={`${BUTTON} border-fay/40 text-fay hover:bg-fay/10`}
               onClick={() => run(() => adminSetStatusAction(target.id, 'banned', reason))}
             >
               Ban
@@ -153,7 +155,7 @@ export function UserActions({
           <button
             type="button"
             disabled={pending}
-            className={`${BUTTON} border-ember/40 text-ember hover:bg-ember/10`}
+            className={`${BUTTON} border-fay/40 text-fay hover:bg-fay/10`}
             onClick={() => run(() => adminSetStatusAction(userId, 'banned', 'Banned by a moderator'))}
           >
             Ban
@@ -161,6 +163,42 @@ export function UserActions({
         </>
       )}
     </div>
+  );
+}
+
+export function TrustActions({ userId, trusted }: { userId: string; trusted: boolean }) {
+  const { pending, run } = useAction();
+  return (
+    <button
+      type="button"
+      disabled={pending}
+      className={`${BUTTON} ${
+        trusted ? 'border-fay/40 text-fay hover:bg-fay/10' : 'border-mint/40 text-mint hover:bg-mint/10'
+      }`}
+      onClick={() => run(() => adminSetTrustAction(userId, !trusted))}
+    >
+      {trusted ? 'Revoke rating weight' : 'Restore rating weight'}
+    </button>
+  );
+}
+
+export function CaptureRanksButton() {
+  const { pending, run } = useAction();
+  const [done, setDone] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={pending}
+      className="btn-ghost px-5 py-2.5 text-sm"
+      onClick={() =>
+        run(async () => {
+          await adminCaptureRanksAction();
+          setDone(true);
+        })
+      }
+    >
+      {pending ? 'Capturing…' : done ? 'Captured' : "Capture this month's ranks"}
+    </button>
   );
 }
 

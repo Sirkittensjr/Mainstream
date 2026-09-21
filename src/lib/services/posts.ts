@@ -1,7 +1,7 @@
 import 'server-only';
 import { db } from '@/lib/db';
 import { newId } from '@/lib/ids';
-import { levelFor } from '@/lib/rise';
+import { levelFor } from '@/lib/progression';
 import type {
   Category,
   Challenge,
@@ -11,8 +11,10 @@ import type {
   PublicUser,
   User,
 } from '@/lib/types';
+import { shotProgress, shouldAdvance, type ShotProgress } from '@/lib/shot';
 import { award } from './points';
 import { notify, notifyMentions } from './notifications';
+import { myRatingsForPosts, ratingsIndex, type PostRatingSummary } from './ratings';
 import { followingIds, hiddenUserIds, toPublicUser } from './users';
 
 export interface PostView {
@@ -25,6 +27,12 @@ export interface PostView {
   liked: boolean;
   following: boolean;
   challenge: Pick<Challenge, 'id' | 'slug' | 'title'> | null;
+  /** Community rating for this post, plus the reactions behind it. */
+  rating: PostRatingSummary;
+  /** What the viewer rated it, if they have. */
+  myScore: number | null;
+  /** Staged exposure progress for "Give me a shot" posts. */
+  shot: ShotProgress | null;
   /** Why this post is in front of you, e.g. "Rising creator". */
   reason?: string;
 }
@@ -43,14 +51,17 @@ export async function hydratePosts(
   const authorIds = [...new Set(posts.map((p) => p.author_id))];
   const challengeIds = [...new Set(posts.map((p) => p.challenge_id).filter(Boolean))] as ID[];
 
-  const [authors, likes, comments, follows, challenges, viewerFollowing] = await Promise.all([
-    store.query('users', { in: { id: authorIds } }),
-    store.query('likes', { in: { post_id: postIds } }),
-    store.query('comments', { in: { post_id: postIds } }),
-    store.query('follows', { in: { following_id: authorIds } }),
-    challengeIds.length ? store.query('challenges', { in: { id: challengeIds } }) : [],
-    viewerId ? followingIds(viewerId) : new Set<ID>(),
-  ]);
+  const [authors, likes, comments, follows, challenges, viewerFollowing, index, mine] =
+    await Promise.all([
+      store.query('users', { in: { id: authorIds } }),
+      store.query('likes', { in: { post_id: postIds } }),
+      store.query('comments', { in: { post_id: postIds } }),
+      store.query('follows', { in: { following_id: authorIds } }),
+      challengeIds.length ? store.query('challenges', { in: { id: challengeIds } }) : [],
+      viewerId ? followingIds(viewerId) : new Set<ID>(),
+      ratingsIndex(),
+      myRatingsForPosts(viewerId, postIds),
+    ]);
 
   const authorById = new Map(authors.map((a) => [a.id, a]));
   const followerCount = new Map<ID, number>(authorIds.map((id) => [id, 0]));
@@ -76,19 +87,26 @@ export async function hydratePosts(
       const author = authorById.get(post.author_id);
       if (!author) return null;
       const challenge = post.challenge_id ? challengeById.get(post.challenge_id) : null;
-      const level = levelFor(author.rise_points);
+      const level = levelFor(author.points);
+      const rating = index.posts.get(post.id) ?? { rating: null, count: 0, reactions: [] };
+      const likeTotal = likeCount.get(post.id) ?? 0;
+      const commentTotal = commentCount.get(post.id) ?? 0;
+      const reach = Math.max(post.impressions, post.views, 1);
       return {
         post,
         author: toPublicUser(author),
         authorFollowers: followerCount.get(author.id) ?? 0,
         authorLevel: { level: level.level, name: level.name },
-        likes: likeCount.get(post.id) ?? 0,
-        comments: commentCount.get(post.id) ?? 0,
+        likes: likeTotal,
+        comments: commentTotal,
         liked: likedByViewer.has(post.id),
         following: viewerFollowing.has(author.id),
         challenge: challenge
           ? { id: challenge.id, slug: challenge.slug, title: challenge.title }
           : null,
+        rating,
+        myScore: mine.get(post.id) ?? null,
+        shot: shotProgress(post, rating.rating, (likeTotal + commentTotal * 2) / reach),
       } satisfies PostView;
     })
     .filter((view): view is PostView => view !== null);
@@ -131,6 +149,9 @@ export async function createPost(input: CreatePostInput): Promise<Post> {
     tags: input.tags.map((tag) => tag.replace(/^#/, '').trim()).filter(Boolean).slice(0, 8),
     challenge_id: input.challengeId,
     shot: input.shot,
+    shot_stage: 0,
+    impressions: 0,
+    boosted: false,
     views: 0,
     featured: false,
     featured_at: null,
@@ -285,6 +306,32 @@ export async function listComments(postId: ID, viewerId: ID | null): Promise<Com
       } satisfies CommentView;
     })
     .filter((c): c is CommentView => c !== null);
+}
+
+/**
+ * Records that discovery put these posts in front of someone.
+ *
+ * This is what makes "Give me a shot" real: exposure is metered, and a post
+ * only graduates to a larger slice of the audience when the response to the
+ * slice it already had was good enough.
+ */
+export async function recordShotImpressions(views: PostView[]): Promise<void> {
+  const store = db();
+  const shots = views.filter((view) => view.post.shot).slice(0, 8);
+  await Promise.all(
+    shots.map(async (view) => {
+      const impressions = view.post.impressions + 1;
+      const reach = Math.max(impressions, view.post.views, 1);
+      const rate = (view.likes + view.comments * 2) / reach;
+      const patch: { impressions: number; shot_stage?: number } = { impressions };
+      if (
+        shouldAdvance({ shot_stage: view.post.shot_stage, impressions }, view.rating.rating, rate)
+      ) {
+        patch.shot_stage = view.post.shot_stage + 1;
+      }
+      await store.update('posts', view.post.id, patch);
+    }),
+  );
 }
 
 /** Counted once per opened post detail page. */

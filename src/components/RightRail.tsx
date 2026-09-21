@@ -1,36 +1,58 @@
 import Link from 'next/link';
-import { levelFor } from '@/lib/rise';
+import { levelFor } from '@/lib/progression';
 import { timeLeft } from '@/lib/time';
 import { activeChallenges } from '@/lib/services/challenges';
 import { risingCreatorCards } from '@/lib/services/discover';
+import { userRating } from '@/lib/services/ratings';
+import { userRanks } from '@/lib/services/rankings';
+import { RatingPill } from './RatingPill';
 import type { User } from '@/lib/types';
 import { Avatar } from './Avatar';
 import { FollowButton } from './FollowButton';
-import { RiseMeter } from './LevelBadge';
+import { LevelMeter } from './LevelBadge';
 import { ArrowIcon } from './Icons';
 
 /** Desktop-only sidebar: progress, the live challenge and people to discover. */
 export async function RightRail({ viewer }: { viewer: User | null }) {
-  const [challenges, creators] = await Promise.all([
+  const [challenges, creators, rating, ranks] = await Promise.all([
     activeChallenges(),
     risingCreatorCards(viewer?.id ?? null, null, 3),
+    viewer ? userRating(viewer.id) : Promise.resolve(null),
+    viewer ? userRanks(viewer.id) : Promise.resolve(null),
   ]);
   const challenge = challenges[0];
-  const level = viewer ? levelFor(viewer.rise_points) : null;
+  const level = viewer ? levelFor(viewer.points) : null;
 
   return (
     <aside className="sticky top-0 hidden h-dvh w-80 shrink-0 space-y-4 overflow-y-auto px-4 py-6 xl:block">
-      {viewer && level ? (
+      {viewer && level && rating && ranks ? (
         <div className="card p-5">
-          <p className="label">Your RISE</p>
-          <p className="mt-2 font-display text-2xl font-bold">
-            Level {level.level} — {level.name}
+          <p className="label">Your FayTarra</p>
+          <div className="mt-3 flex items-center gap-2">
+            <RatingPill value={rating.overall} label="overall" />
+            <RatingPill value={rating.current} label="now" trend={rating.trend} />
+          </div>
+          <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
+            {[
+              { label: 'Overall', value: ranks.overall },
+              { label: 'Current', value: ranks.current },
+              { label: 'Rising', value: ranks.rising },
+            ].map((entry) => (
+              <div key={entry.label} className="rounded-xl bg-black/25 px-2 py-2">
+                <dt className="text-[10px] uppercase tracking-wide text-white/35">{entry.label}</dt>
+                <dd className="font-display text-sm font-bold tabular-nums">
+                  {entry.value ? `#${entry.value}` : '—'}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          <p className="mb-2 mt-4 text-[13px] text-white/45">
+            Level {level.level} — {level.name} · {viewer.points.toLocaleString()} pts
           </p>
-          <p className="mb-3 text-sm text-white/45">
-            {viewer.rise_points.toLocaleString()} RISE points
-          </p>
-          <RiseMeter points={viewer.rise_points} />
-          <p className="mt-3 text-[13px] text-white/50">Goal: {viewer.goal}</p>
+          <LevelMeter points={viewer.points} compact />
+          <Link href="/rankings" className="btn-ghost mt-4 w-full text-sm">
+            See rankings
+          </Link>
         </div>
       ) : (
         <div className="card p-5">
@@ -41,7 +63,7 @@ export async function RightRail({ viewer }: { viewer: User | null }) {
             Make an account and your first post can be discovered today.
           </p>
           <Link href="/signup" className="btn-primary mt-4 w-full">
-            Join RISE
+            Join FayTarra
           </Link>
         </div>
       )}
@@ -85,8 +107,9 @@ export async function RightRail({ viewer }: { viewer: User | null }) {
                   >
                     {creator.user.display_name}
                   </Link>
-                  <p className="truncate text-xs text-white/40">
-                    {creator.followers} followers · +{creator.weeklyPoints} this week
+                  <p className="flex items-center gap-1.5 truncate text-xs text-white/40">
+                    <RatingPill value={creator.rating} size="sm" />
+                    {creator.followers} followers
                   </p>
                 </div>
                 {viewer && viewer.id !== creator.user.id && (
@@ -107,8 +130,8 @@ export async function RightRail({ viewer }: { viewer: User | null }) {
           Community rules
         </Link>
         {' · '}
-        <Link href="/leaderboards" className="hover:text-white/60">
-          Leaderboards
+        <Link href="/rankings" className="hover:text-white/60">
+          Rankings
         </Link>
         {' · '}
         <Link href="/settings" className="hover:text-white/60">

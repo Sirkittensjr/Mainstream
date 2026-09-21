@@ -4,14 +4,16 @@ import Link from 'next/link';
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { likeAction } from '@/app/actions';
-import { formatCount } from '@/lib/rise';
+import { formatCount } from '@/lib/progression';
 import { timeAgo } from '@/lib/time';
-import type { Media } from '@/lib/types';
+import { formatCap } from '@/lib/shot';
+import type { Media, Reaction } from '@/lib/types';
+import { RateButton } from './RateSheet';
 import { Avatar } from './Avatar';
 import { FollowButton } from './FollowButton';
 import { LevelBadge } from './LevelBadge';
 import { ReportDialog } from './ReportDialog';
-import { CommentIcon, EyeIcon, HeartIcon, ShareIcon, SparkIcon } from './Icons';
+import { CommentIcon, HeartIcon, ShareIcon, SparkIcon } from './Icons';
 
 export interface PostCardData {
   id: string;
@@ -21,12 +23,18 @@ export interface PostCardData {
   tags: string[];
   shot: boolean;
   featured: boolean;
+  boosted: boolean;
   views: number;
   createdAt: string;
   likes: number;
   comments: number;
   liked: boolean;
   following: boolean;
+  rating: number | null;
+  ratingCount: number;
+  myScore: number | null;
+  myReactions: Reaction[];
+  shotProgress: { stage: number; cap: number; progress: number; status: string } | null;
   reason?: string;
   challenge: { slug: string; title: string } | null;
   author: {
@@ -82,7 +90,7 @@ export function PostCard({
   async function share() {
     const url = `${window.location.origin}/post/${data.id}`;
     const shareData = {
-      title: `${data.author.displayName} on RISE`,
+      title: `${data.author.displayName} on FayTarra`,
       text: data.caption.slice(0, 120),
       url,
     };
@@ -138,7 +146,7 @@ export function PostCard({
       <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
         <LevelBadge level={data.author.level} name={data.author.levelName} size="xs" />
         {data.shot && (
-          <span className="chip border-ember/40 bg-ember/10 text-ember-soft">
+          <span className="chip border-fay/40 bg-fay/10 text-fay-soft">
             <SparkIcon width={13} height={13} /> Give me a shot
           </span>
         )}
@@ -150,17 +158,37 @@ export function PostCard({
             🏆 {data.challenge.title}
           </Link>
         )}
-        {data.reason && !data.shot && (
-          <span className="chip border-transparent bg-white/[0.03] text-white/40">
-            {data.reason} · {formatCount(data.author.followers)} followers
-          </span>
+        {data.boosted && (
+          <span className="chip border-white/20 bg-white/[0.06] text-white/60">Paid boost</span>
         )}
-        {!data.reason && !data.shot && (
+        <span className="chip border-transparent bg-white/[0.03] text-white/40">
+          {data.reason && !data.shot ? `${data.reason} · ` : ''}
+          {formatCount(data.author.followers)} followers
+        </span>
+        {data.views > 0 && (
           <span className="chip border-transparent bg-white/[0.03] text-white/40">
-            {formatCount(data.author.followers)} followers
+            {formatCount(data.views)} views
           </span>
         )}
       </div>
+
+      {data.shotProgress && (
+        <div className="px-4 pb-3">
+          <div className="flex items-center justify-between text-[11px] text-white/40">
+            <span>
+              Shot stage {data.shotProgress.stage + 1} · {formatCap(data.shotProgress.cap)}{' '}
+              impressions
+            </span>
+            <span className="capitalize">{data.shotProgress.status}</span>
+          </div>
+          <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-white/10">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-aura to-fay"
+              style={{ width: `${Math.max(3, data.shotProgress.progress)}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {data.caption && (
         <Link href={`/post/${data.id}`} className="block px-4 pb-3">
@@ -183,7 +211,7 @@ export function PostCard({
           aria-pressed={liked}
           aria-label={liked ? 'Unlike' : 'Like'}
           className={`flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium transition ${
-            liked ? 'text-ember' : 'text-white/55 hover:text-white'
+            liked ? 'text-fay' : 'text-white/55 hover:text-white'
           }`}
         >
           <HeartIcon filled={liked} className={burst ? 'animate-pop' : ''} />
@@ -204,12 +232,19 @@ export function PostCard({
           <ShareIcon />
           {copied ? 'Copied' : 'Share'}
         </button>
-        {data.views > 0 && (
-          <span className="ml-auto flex items-center gap-1.5 px-2 text-xs text-white/35">
-            <EyeIcon width={15} height={15} />
-            {formatCount(data.views)}
-          </span>
-        )}
+        <span className="ml-auto flex items-center pr-1">
+          <RateButton
+            compact
+            targetType="post"
+            targetId={data.id}
+            rating={data.rating}
+            count={data.ratingCount}
+            myScore={data.myScore}
+            myReactions={data.myReactions}
+            signedIn={Boolean(viewerId)}
+            subject="this post"
+          />
+        </span>
         <div className="relative ml-auto">
           <button
             type="button"

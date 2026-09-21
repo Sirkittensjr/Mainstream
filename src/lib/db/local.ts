@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { Driver, QueryOptions, Row, Schema, TableName } from './types';
 
 const DATA_DIR = path.join(process.cwd(), '.data');
-const DB_FILE = path.join(DATA_DIR, 'rise.json');
+const DB_FILE = path.join(DATA_DIR, 'faytarra.json');
 const MEDIA_DIR = path.join(DATA_DIR, 'uploads');
 
 type Store = { [K in TableName]: Schema[K][] };
@@ -16,6 +16,8 @@ const EMPTY: Store = {
   follows: [],
   blocks: [],
   challenges: [],
+  ratings: [],
+  rank_snapshots: [],
   notifications: [],
   reports: [],
   activity: [],
@@ -31,6 +33,7 @@ class LocalDriver implements Driver {
   private store: Store | null = null;
   private loading: Promise<Store> | null = null;
   private writeChain: Promise<void> = Promise.resolve();
+  private pending: Promise<void> | null = null;
 
   private async load(): Promise<Store> {
     if (this.store) return this.store;
@@ -52,13 +55,25 @@ class LocalDriver implements Driver {
     return this.loading;
   }
 
-  private async flush(): Promise<void> {
-    const snapshot = JSON.stringify(this.store, null, 0);
-    this.writeChain = this.writeChain.then(async () => {
-      await fs.mkdir(DATA_DIR, { recursive: true });
-      await fs.writeFile(DB_FILE, snapshot, 'utf8');
+  /**
+   * Writes are coalesced: a burst (liking, rating, recording impressions for a
+   * page of posts) serialises the store once on the next tick instead of once
+   * per row.
+   */
+  private flush(): Promise<void> {
+    this.pending ??= new Promise<void>((resolve, reject) => {
+      setTimeout(() => {
+        this.pending = null;
+        const snapshot = JSON.stringify(this.store);
+        this.writeChain = this.writeChain
+          .then(async () => {
+            await fs.mkdir(DATA_DIR, { recursive: true });
+            await fs.writeFile(DB_FILE, snapshot, 'utf8');
+          })
+          .then(resolve, reject);
+      }, 0);
     });
-    return this.writeChain;
+    return this.pending;
   }
 
   async query<T extends TableName>(table: T, options: QueryOptions<Row<T>> = {}) {
@@ -141,11 +156,11 @@ class LocalDriver implements Driver {
 }
 
 /** Survives Next.js hot reloads so dev sessions keep one in-memory copy. */
-const globalRef = globalThis as typeof globalThis & { __riseLocalDriver?: LocalDriver };
+const globalRef = globalThis as typeof globalThis & { __fayLocalDriver?: LocalDriver };
 
 export function localDriver(): Driver {
-  globalRef.__riseLocalDriver ??= new LocalDriver();
-  return globalRef.__riseLocalDriver;
+  globalRef.__fayLocalDriver ??= new LocalDriver();
+  return globalRef.__fayLocalDriver;
 }
 
 export const LOCAL_MEDIA_DIR = MEDIA_DIR;

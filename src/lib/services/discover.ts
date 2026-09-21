@@ -1,9 +1,18 @@
 import 'server-only';
 import { DAY } from '@/lib/time';
-import { levelFor } from '@/lib/rise';
+import { levelFor } from '@/lib/progression';
 import type { Category, ID, Post, PublicUser, User } from '@/lib/types';
 import { db } from '@/lib/db';
-import { engagementFor, hydratePosts, visiblePosts, type PostView } from './posts';
+import { isResting } from '@/lib/shot';
+import {
+  engagementFor,
+  hydratePosts,
+  recordShotImpressions,
+  visiblePosts,
+  type PostView,
+} from './posts';
+import { ratingsIndex } from './ratings';
+import type { Trend } from '@/lib/ratings';
 import { risingScore, shotRotation, trendingScore } from './ranking';
 import { followerCounts, hiddenUserIds, toPublicUser } from './users';
 
@@ -22,6 +31,9 @@ export interface CreatorCard {
   levelName: string;
   weeklyPoints: number;
   topCategory: Category | null;
+  rating: number | null;
+  current: number | null;
+  trend: Trend;
 }
 
 interface DiscoverOptions {
@@ -39,30 +51,37 @@ export async function discover(options: DiscoverOptions = {}): Promise<DiscoverF
 
   const { likes, comments } = await engagementFor(posts.map((p) => p.id));
   const followers = await followerCounts([...new Set(posts.map((p) => p.author_id))]);
+  const index = await ratingsIndex();
   const engagement = (post: Post) => ({
     likes: likes.get(post.id) ?? 0,
     comments: comments.get(post.id) ?? 0,
     views: post.views,
   });
+  const ratingOf = (post: Post) => index.posts.get(post.id)?.rating ?? null;
+  const engagementRate = (post: Post) => {
+    const e = engagement(post);
+    return (e.likes + e.comments * 2) / Math.max(post.impressions, post.views, 1);
+  };
 
   // Rising deliberately excludes posts from creators with a big audience: this
   // section exists for people who are not already known.
   const risingPool = posts.filter((post) => (followers.get(post.author_id) ?? 0) < 2_000);
   const rising = rank(risingPool, (post) =>
-    risingScore(post, engagement(post), followers.get(post.author_id) ?? 0, now),
+    risingScore(post, engagement(post), followers.get(post.author_id) ?? 0, now, ratingOf(post)),
   ).slice(0, perSection);
 
-  const trending = rank(posts, (post) => trendingScore(post, engagement(post), now)).slice(
-    0,
-    perSection,
-  );
+  const trending = rank(posts, (post) =>
+    trendingScore(post, engagement(post), now, ratingOf(post)),
+  ).slice(0, perSection);
 
   const fresh = [...posts]
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .slice(0, perSection);
 
+  // A shot post that has used up its slice without earning the next one rests,
+  // so the rotation keeps moving to creators who have not had their turn yet.
   const shots = shotRotation(
-    posts.filter((post) => post.shot),
+    posts.filter((post) => post.shot && !isResting(post, ratingOf(post), engagementRate(post))),
     now,
     perSection,
   );
@@ -74,6 +93,8 @@ export async function discover(options: DiscoverOptions = {}): Promise<DiscoverF
     hydratePosts(shots, viewerId),
     risingCreatorCards(viewerId, category, perSection),
   ]);
+
+  await recordShotImpressions(shotViews);
 
   return {
     rising: risingViews.map((v) => ({ ...v, reason: 'Rising' })),
@@ -101,10 +122,11 @@ export async function risingCreatorCards(
   limit = 12,
 ): Promise<CreatorCard[]> {
   const store = db();
-  const [users, activity, hidden] = await Promise.all([
+  const [users, activity, hidden, index] = await Promise.all([
     store.query('users', { where: { status: 'active' } }),
     store.query('activity'),
     hiddenUserIds(viewerId),
+    ratingsIndex(),
   ]);
   const weekAgo = new Date(Date.now() - 7 * DAY).toISOString();
   const weekly = new Map<ID, number>();
@@ -139,7 +161,8 @@ export async function risingCreatorCards(
       const weeklyPoints = weekly.get(user.id) ?? 0;
       // Smaller accounts get lifted; momentum matters more than size.
       const score = weeklyPoints / Math.sqrt(followerCount + 8);
-      const level = levelFor(user.rise_points);
+      const level = levelFor(user.points);
+      const summary = index.users.get(user.id);
       return {
         score,
         card: {
@@ -149,6 +172,9 @@ export async function risingCreatorCards(
           levelName: level.name,
           weeklyPoints,
           topCategory: categoryByUser.get(user.id) ?? null,
+          rating: summary && summary.ratingsReceived > 0 ? summary.overall : null,
+          current: summary && summary.ratingsReceived > 0 ? summary.current : null,
+          trend: summary?.trend ?? 'steady',
         } satisfies CreatorCard,
       };
     })

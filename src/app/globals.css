@@ -14,8 +14,8 @@
   body {
     @apply bg-ink-950 text-white antialiased;
     background-image:
-      radial-gradient(60rem 40rem at 85% -10%, rgba(124, 92, 255, 0.16), transparent 60%),
-      radial-gradient(50rem 36rem at 0% 0%, rgba(255, 92, 57, 0.18), transparent 55%);
+      radial-gradient(60rem 40rem at 85% -10%, rgba(124, 92, 255, 0.18), transparent 60%),
+      radial-gradient(52rem 38rem at 0% 0%, rgba(255, 61, 154, 0.16), transparent 55%);
     background-attachment: fixed;
   }
 
@@ -25,7 +25,7 @@
   }
 
   ::selection {
-    @apply bg-ember/40 text-white;
+    @apply bg-fay/40 text-white;
   }
 
   input,
@@ -37,7 +37,7 @@
   input:focus,
   textarea:focus,
   select:focus {
-    @apply border-ember/70 ring-2 ring-ember/20;
+    @apply border-fay/70 ring-2 ring-fay/20;
   }
 
   input::placeholder,
@@ -58,7 +58,7 @@
 
   .btn-primary {
     @apply btn text-ink-950 shadow-glow;
-    background-image: linear-gradient(120deg, #ffc93c 0%, #ff5c39 55%, #ff3d6e 100%);
+    background-image: linear-gradient(120deg, #7c5cff 0%, #ff3d9a 52%, #ffb443 100%);
   }
 
   .btn-ghost {
@@ -83,7 +83,7 @@
   }
 
   .gradient-text {
-    background-image: linear-gradient(100deg, #ffc93c, #ff5c39 45%, #ff3d6e);
+    background-image: linear-gradient(100deg, #ffb443, #ff3d9a 48%, #7c5cff);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;

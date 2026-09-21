@@ -1,6 +1,6 @@
 import { scryptSync } from 'node:crypto';
 import type { Schema, TableName } from '@/lib/db/types';
-import { POINTS } from '@/lib/rise';
+import { POINTS } from '@/lib/progression';
 import { slugify } from '@/lib/ids';
 import type {
   Activity,
@@ -12,6 +12,9 @@ import type {
   Like,
   Notification,
   Post,
+  RankSnapshot,
+  Rating,
+  Reaction,
   Report,
   User,
 } from '@/lib/types';
@@ -26,9 +29,9 @@ import {
 type Store = { [K in TableName]: Schema[K][] };
 
 /** Every sample account shares this password so the demo is easy to explore. */
-export const SEED_PASSWORD = 'risedemo123';
-export const DEMO_LOGIN = { email: 'tommy@rise.app', password: SEED_PASSWORD };
-export const ADMIN_LOGIN = { email: 'admin@rise.app', password: SEED_PASSWORD };
+export const SEED_PASSWORD = 'faydemo123';
+export const DEMO_LOGIN = { email: 'tommy@faytarra.app', password: SEED_PASSWORD };
+export const ADMIN_LOGIN = { email: 'admin@faytarra.app', password: SEED_PASSWORD };
 
 const DAY = 86_400_000;
 /** Fixed clock reference so "days ago" values stay sensible after seeding. */
@@ -147,7 +150,7 @@ const REPORT_REASONS = ['Spam or scam', 'Harassment', 'Hate speech', 'Impersonat
 /**
  * Fills an empty store with a believable community: 24 hand written creators,
  * a supporting cast of ~140 accounts, their posts, likes, comments, follows,
- * challenge entries, notifications and RISE point history.
+ * challenge entries, notifications and FayTarra point history.
  */
 export function seedInto(store: Store): Store {
   const users: User[] = [];
@@ -158,6 +161,8 @@ export function seedInto(store: Store): Store {
   const notifications: Notification[] = [];
   const activity: Activity[] = [];
   const reports: Report[] = [];
+  const ratings: Rating[] = [];
+  const snapshots: RankSnapshot[] = [];
 
   const points = new Map<string, number>();
   const addPoints = (
@@ -170,7 +175,7 @@ export function seedInto(store: Store): Store {
   ) => {
     points.set(userId, (points.get(userId) ?? 0) + value);
     // Only recent history is materialised — it is what drives weekly
-    // leaderboards and the journey timeline.
+    // rankings and the journey timeline.
     if (NOW - new Date(at).getTime() < 21 * DAY || type === 'post' || type === 'challenge_entry') {
       activity.push({
         id: uuid(),
@@ -204,8 +209,8 @@ export function seedInto(store: Store): Store {
   const admin: User = {
     id: uuid(),
     email: ADMIN_LOGIN.email,
-    username: 'rise',
-    display_name: 'RISE Team',
+    username: 'faytarra',
+    display_name: 'FayTarra Team',
     password_hash: SEED_HASH,
     bio: 'We run the challenges and keep this place safe. Everyone starts at zero.',
     avatar_url: null,
@@ -215,7 +220,8 @@ export function seedInto(store: Store): Store {
     role: 'admin',
     status: 'active',
     status_reason: null,
-    rise_points: 0,
+    trusted: true,
+    points: 0,
     created_at: iso(120, 0),
     last_active_at: iso(0, 1),
   };
@@ -226,7 +232,7 @@ export function seedInto(store: Store): Store {
   for (const creator of SEED_CREATORS) {
     const user: User = {
       id: uuid(),
-      email: `${creator.username}@rise.app`,
+      email: `${creator.username}@faytarra.app`,
       username: creator.username,
       display_name: creator.display_name,
       password_hash: SEED_HASH,
@@ -238,7 +244,8 @@ export function seedInto(store: Store): Store {
       role: 'user',
       status: 'active',
       status_reason: null,
-      rise_points: 0,
+      trusted: true,
+      points: 0,
       created_at: iso(creator.joinedDaysAgo),
       last_active_at: iso(between(0, 2)),
     };
@@ -258,6 +265,9 @@ export function seedInto(store: Store): Store {
         tags: postDef.tags,
         challenge_id: challenge?.id ?? null,
         shot: Boolean(postDef.shot),
+        shot_stage: 0,
+        impressions: 0,
+        boosted: false,
         views: 0,
         featured: false,
         featured_at: null,
@@ -271,6 +281,37 @@ export function seedInto(store: Store): Store {
         addPoints(user.id, 'challenge_entry', POINTS.challenge_entry, created, post.id, challenge.id);
       }
     });
+
+    // Back catalogue for the established accounts. Without older posts there
+    // is no month-over-month rating history to compare against.
+    if (creator.joinedDaysAgo > 60) {
+      const archive = between(3, 6);
+      for (let i = 0; i < archive; i += 1) {
+        const daysAgo = between(35, creator.joinedDaysAgo - 5);
+        const created = iso(daysAgo);
+        const post: Post = {
+          id: uuid(),
+          author_id: user.id,
+          caption: pick(FILLER_CAPTIONS[creator.category]),
+          media: [coverMedia(`${creator.username}-archive-${i}`, creator.category)],
+          category: creator.category,
+          tags: [creator.category.toLowerCase()],
+          challenge_id: null,
+          shot: false,
+          shot_stage: 0,
+          impressions: 0,
+          boosted: false,
+          views: 0,
+          featured: false,
+          featured_at: null,
+          removed: false,
+          removed_reason: null,
+          created_at: created,
+        };
+        posts.push(post);
+        addPoints(user.id, 'post', POINTS.post, created, post.id);
+      }
+    }
   }
 
   // --- supporting cast ----------------------------------------------------
@@ -296,7 +337,8 @@ export function seedInto(store: Store): Store {
       role: 'user',
       status: 'active',
       status_reason: null,
-      rise_points: 0,
+      trusted: true,
+      points: 0,
       created_at: iso(joined),
       last_active_at: iso(between(0, 6)),
     };
@@ -316,6 +358,9 @@ export function seedInto(store: Store): Store {
         tags: [category.toLowerCase()],
         challenge_id: challenge?.id ?? null,
         shot: rand() < 0.18,
+        shot_stage: 0,
+        impressions: 0,
+        boosted: false,
         views: 0,
         featured: false,
         featured_at: null,
@@ -419,6 +464,131 @@ export function seedInto(store: Store): Store {
     }
 
     post.views = Math.round(likers.size * between(9, 34) + between(10, 200));
+  }
+
+  // --- ratings ------------------------------------------------------------
+  // Each post gets a hidden "true quality"; raters sample around it with
+  // noise, which produces a believable spread instead of everything at 8.
+  const REACTION_POOL: Reaction[] = [
+    'Fire',
+    'Funny',
+    'Creative',
+    'Interesting',
+    'Love It',
+    'Would Collaborate',
+  ];
+
+  const rate = (
+    raterId: string,
+    targetType: 'post' | 'user',
+    targetId: string,
+    ownerId: string,
+    score: number,
+    at: string,
+    weight = 1,
+  ) => {
+    const reactions: Reaction[] = [];
+    if (score >= 8 && rand() < 0.75) reactions.push(pick(REACTION_POOL));
+    if (score >= 9 && rand() < 0.4) {
+      const second = pick(REACTION_POOL);
+      if (!reactions.includes(second)) reactions.push(second);
+    }
+    ratings.push({
+      id: uuid(),
+      rater_id: raterId,
+      target_type: targetType,
+      target_id: targetId,
+      owner_id: ownerId,
+      score: Math.max(1, Math.min(10, Math.round(score))),
+      reactions,
+      weight,
+      created_at: at,
+      updated_at: at,
+    });
+    addPoints(ownerId, 'rating_received', 2, at, targetType === 'post' ? targetId : null);
+    addPoints(raterId, 'rating_given', 1, at);
+  };
+
+  const likesByPost = new Map<string, number>();
+  for (const like of likes) likesByPost.set(like.post_id, (likesByPost.get(like.post_id) ?? 0) + 1);
+
+  for (const post of posts) {
+    const quality = 5.4 + rand() * 4.2;
+    const ageDays = (NOW - new Date(post.created_at).getTime()) / DAY;
+    const wanted = Math.min(40, Math.round((likesByPost.get(post.id) ?? 0) * 0.35) + between(0, 3));
+    const used = new Set<string>();
+    for (let i = 0; i < wanted; i += 1) {
+      const rater = users[Math.floor(rand() * users.length)];
+      if (rater.id === post.author_id || used.has(rater.id)) continue;
+      used.add(rater.id);
+      const noise = (rand() + rand() + rand() - 1.5) * 1.6;
+      // Most ratings land in the recent window so Current has something to say.
+      // Recent posts are rated soon after posting; older posts keep collecting
+      // ratings, which is what gives a creator month-over-month movement.
+      const at = iso(rand() < 0.55 ? rand() * Math.min(ageDays, 28) : rand() * Math.min(ageDays, 75));
+      rate(rater.id, 'post', post.id, post.author_id, quality + noise, at);
+    }
+  }
+
+  // A handful of profile ratings for the hand written creators.
+  for (const entry of creatorUsers) {
+    const wanted = between(2, 9);
+    const base = 6.6 + Math.min(3, entry.pull * 0.28) + rand();
+    const used = new Set<string>();
+    for (let i = 0; i < wanted; i += 1) {
+      const rater = users[Math.floor(rand() * users.length)];
+      if (rater.id === entry.user.id || used.has(rater.id)) continue;
+      used.add(rater.id);
+      rate(
+        rater.id,
+        'user',
+        entry.user.id,
+        entry.user.id,
+        base + (rand() - 0.5) * 1.8,
+        iso(rand() * 30),
+      );
+    }
+  }
+
+  // --- a small rating ring, so the integrity queue has something real ------
+  const ringTarget = creatorUsers.find((entry) => entry.user.username === 'kitpixels');
+  if (ringTarget) {
+    const ringPosts = posts.filter((post) => post.author_id === ringTarget.user.id);
+    for (let i = 0; i < 3; i += 1) {
+      const ringAccount: User = {
+        id: uuid(),
+        email: `pixelfan${i + 1}@example.com`,
+        username: `pixelfan${i + 1}`,
+        display_name: `Pixel Fan ${i + 1}`,
+        password_hash: SEED_HASH,
+        bio: 'big fan',
+        avatar_url: null,
+        location: null,
+        interests: ['Creator'],
+        goal: '100 followers',
+        role: 'user',
+        status: 'active',
+        status_reason: null,
+        trusted: true,
+        points: 0,
+        created_at: iso(between(1, 4)),
+        last_active_at: iso(0),
+      };
+      users.push(ringAccount);
+      for (const post of ringPosts) {
+        // Deliberately the pattern the weighting is designed to catch:
+        // brand new account, everything a 10, all aimed at one creator.
+        rate(ringAccount.id, 'post', post.id, post.author_id, 10, iso(rand() * 2), 0.25);
+      }
+      rate(ringAccount.id, 'user', ringTarget.user.id, ringTarget.user.id, 10, iso(rand()), 0.25);
+      // A couple of decoy ratings elsewhere, which is what a real ring does to
+      // look ordinary — and what the concentration check sees straight through.
+      for (let d = 0; d < 2; d += 1) {
+        const other = posts[Math.floor(rand() * posts.length)];
+        if (other.author_id === ringTarget.user.id) continue;
+        rate(ringAccount.id, 'post', other.id, other.author_id, between(7, 9), iso(rand() * 3), 0.25);
+      }
+    }
   }
 
   // --- featured posts -----------------------------------------------------
@@ -540,7 +710,35 @@ export function seedInto(store: Store): Store {
     });
   }
 
-  for (const user of users) user.rise_points = Math.max(0, Math.round(points.get(user.id) ?? 0));
+  for (const user of users) user.points = Math.max(0, Math.round(points.get(user.id) ?? 0));
+
+  // --- rank history --------------------------------------------------------
+  // Real ranks are computed live from ratings; these are the frozen monthly
+  // captures that let a profile show the climb it has already made.
+  const byPoints = [...users].sort((a, b) => b.points - a.points);
+  const finalRank = new Map(byPoints.map((user, index) => [user.id, index + 1]));
+  for (let monthsAgo = 4; monthsAgo >= 1; monthsAgo -= 1) {
+    const when = new Date(NOW - monthsAgo * 30 * DAY);
+    const key = when.toISOString().slice(0, 7);
+    for (const user of users) {
+      const joinedDays = (NOW - new Date(user.created_at).getTime()) / DAY;
+      if (joinedDays < monthsAgo * 30) continue; // did not exist yet
+      const target = finalRank.get(user.id) ?? users.length;
+      const drift = 1 + monthsAgo * (0.35 + rand() * 0.5);
+      const rank = Math.max(1, Math.min(users.length, Math.round(target * drift)));
+      snapshots.push({
+        id: uuid(),
+        user_id: user.id,
+        period: key,
+        overall_rank: rank,
+        current_rank: Math.max(1, Math.round(rank * (0.8 + rand() * 0.5))),
+        rising_rank: Math.max(1, Math.round(rank * (0.6 + rand() * 0.8))),
+        overall_rating: Math.round((6.4 + (1 - target / users.length) * 2.6) * 10) / 10,
+        current_rating: Math.round((6.2 + (1 - target / users.length) * 3) * 10) / 10,
+        created_at: when.toISOString(),
+      });
+    }
+  }
 
   store.users = users;
   store.posts = posts;
@@ -548,6 +746,8 @@ export function seedInto(store: Store): Store {
   store.comments = comments;
   store.follows = follows;
   store.challenges = challenges;
+  store.ratings = ratings;
+  store.rank_snapshots = snapshots;
   store.notifications = notifications.sort((a, b) => a.created_at.localeCompare(b.created_at));
   store.reports = reports;
   store.activity = activity;
@@ -572,6 +772,8 @@ export function buildSeedStore(): Store {
     follows: [],
     blocks: [],
     challenges: [],
+    ratings: [],
+    rank_snapshots: [],
     notifications: [],
     reports: [],
     activity: [],

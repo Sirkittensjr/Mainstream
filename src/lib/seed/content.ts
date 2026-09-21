@@ -28,7 +28,7 @@ export const SEED_CREATORS: SeedCreator[] = [
     interests: ['Creator', 'Gamer', 'Musician'],
     goal: '10,000 followers',
     category: 'Gaming',
-    joinedDaysAgo: 26,
+    joinedDaysAgo: 98,
     pull: 11,
     posts: [
       { caption: 'Been editing this clip for 3 days. One shot, no cuts.', tags: ['gaming', 'clips'], daysAgo: 2 },
@@ -45,7 +45,7 @@ export const SEED_CREATORS: SeedCreator[] = [
     interests: ['Gamer', 'Creator'],
     goal: 'Top 100 in my region',
     category: 'Gaming',
-    joinedDaysAgo: 58,
+    joinedDaysAgo: 140,
     pull: 9,
     posts: [
       { caption: '1v4 clutch. I have never screamed louder.', tags: ['clutch', 'gaming'], daysAgo: 1 },
@@ -77,7 +77,7 @@ export const SEED_CREATORS: SeedCreator[] = [
     interests: ['Comedian', 'Creator'],
     goal: 'Sell out a 200 seat room',
     category: 'Comedy',
-    joinedDaysAgo: 41,
+    joinedDaysAgo: 110,
     pull: 7,
     posts: [
       { caption: 'Told this joke to 6 people last night. It worked on 5.', tags: ['standup'], daysAgo: 2 },
@@ -93,7 +93,7 @@ export const SEED_CREATORS: SeedCreator[] = [
     interests: ['Fitness', 'Athlete'],
     goal: '315 bench',
     category: 'Fitness',
-    joinedDaysAgo: 73,
+    joinedDaysAgo: 185,
     pull: 11,
     posts: [
       { caption: 'Week 12. Same shirt, different guy.', tags: ['transformation'], daysAgo: 3 },
@@ -109,7 +109,7 @@ export const SEED_CREATORS: SeedCreator[] = [
     interests: ['Artist', 'Creator'],
     goal: 'Full time on art',
     category: 'Art',
-    joinedDaysAgo: 34,
+    joinedDaysAgo: 100,
     pull: 6,
     posts: [
       { caption: '9 hours on one hand. Hands are evil.', tags: ['art', 'drawing'], daysAgo: 1 },
@@ -141,7 +141,7 @@ export const SEED_CREATORS: SeedCreator[] = [
     interests: ['Photographer', 'Artist'],
     goal: 'A real gallery show',
     category: 'Photography',
-    joinedDaysAgo: 49,
+    joinedDaysAgo: 125,
     pull: 8,
     posts: [
       { caption: 'Shot on a camera older than me.', tags: ['film', 'photography'], daysAgo: 3 },
@@ -156,7 +156,7 @@ export const SEED_CREATORS: SeedCreator[] = [
     interests: ['Athlete', 'Creator'],
     goal: 'D1 offer',
     category: 'Sports',
-    joinedDaysAgo: 31,
+    joinedDaysAgo: 96,
     pull: 6,
     posts: [
       { caption: 'Crossover I have been drilling since June, in a real game.', tags: ['basketball'], daysAgo: 2 },
@@ -201,7 +201,7 @@ export const SEED_CREATORS: SeedCreator[] = [
     interests: ['Education', 'Entrepreneur'],
     goal: 'Ship my first app',
     category: 'Technology',
-    joinedDaysAgo: 39,
+    joinedDaysAgo: 115,
     pull: 5,
     posts: [
       { caption: 'Shipped something today that 3 people used. Best day this month.', tags: ['buildinpublic'], daysAgo: 2 },
@@ -216,7 +216,7 @@ export const SEED_CREATORS: SeedCreator[] = [
     interests: ['Fashion', 'Creator'],
     goal: 'Style a real shoot',
     category: 'Fashion',
-    joinedDaysAgo: 28,
+    joinedDaysAgo: 92,
     pull: 5,
     posts: [
       { caption: 'Whole fit: £14. Fight me.', tags: ['thrift', 'fashion'], daysAgo: 3 },
@@ -246,7 +246,7 @@ export const SEED_CREATORS: SeedCreator[] = [
     interests: ['Fitness', 'Athlete', 'Education'],
     goal: 'Coach 10 lifters',
     category: 'Fitness',
-    joinedDaysAgo: 62,
+    joinedDaysAgo: 150,
     pull: 9,
     posts: [
       { caption: 'PR at 6am with nobody watching. Posting it so somebody does.', tags: ['powerlifting'], daysAgo: 4 },
@@ -261,7 +261,7 @@ export const SEED_CREATORS: SeedCreator[] = [
     interests: ['Comedian', 'Actor'],
     goal: 'Make 100 people laugh in one room',
     category: 'Comedy',
-    joinedDaysAgo: 23,
+    joinedDaysAgo: 88,
     pull: 4,
     posts: [
       { caption: 'We filmed this in a stairwell. Sound guy: nobody.', tags: ['sketch'], daysAgo: 1 },
@@ -276,7 +276,7 @@ export const SEED_CREATORS: SeedCreator[] = [
     interests: ['Athlete', 'Fitness'],
     goal: 'Sub 4 hour marathon',
     category: 'Sports',
-    joinedDaysAgo: 44,
+    joinedDaysAgo: 120,
     pull: 6,
     posts: [
       { caption: '18 miles. Cried at mile 14. Finished anyway.', tags: ['running'], daysAgo: 3 },
@@ -306,7 +306,7 @@ export const SEED_CREATORS: SeedCreator[] = [
     interests: ['Education', 'Entrepreneur'],
     goal: 'Teach 1,000 people one useful thing',
     category: 'Education',
-    joinedDaysAgo: 54,
+    joinedDaysAgo: 132,
     pull: 8,
     posts: [
       { caption: 'Your first £500 saved is harder than your first £5,000. Here is why.', tags: ['money'], daysAgo: 2 },
@@ -336,7 +336,7 @@ export const SEED_CREATORS: SeedCreator[] = [
     interests: ['Musician', 'Creator'],
     goal: 'Write with someone I admire',
     category: 'Music',
-    joinedDaysAgo: 36,
+    joinedDaysAgo: 105,
     pull: 7,
     posts: [
       { caption: 'Wrote this in a car park waiting for my shift.', tags: ['songwriting'], daysAgo: 1 },
@@ -366,7 +366,7 @@ export const SEED_CREATORS: SeedCreator[] = [
     interests: ['Creator', 'Photographer'],
     goal: 'Edit for someone I love watching',
     category: 'Other',
-    joinedDaysAgo: 67,
+    joinedDaysAgo: 160,
     pull: 10,
     posts: [
       { caption: 'Same clip, 3 edits. Which one keeps you watching?', tags: ['editing'], daysAgo: 4 },

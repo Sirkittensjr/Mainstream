@@ -109,7 +109,7 @@ export function CreateForm({
         <p className="mt-2 text-xs text-white/30">
           Images and video, up to 6 per post. Text-only posts are fine too.
         </p>
-        {uploadError && <p className="mt-2 text-xs text-ember">{uploadError}</p>}
+        {uploadError && <p className="mt-2 text-xs text-fay">{uploadError}</p>}
       </div>
 
       {/* Meta ----------------------------------------------------------- */}
@@ -161,7 +161,7 @@ export function CreateForm({
       {/* Give me a shot -------------------------------------------------- */}
       <label
         className={`flex cursor-pointer items-start gap-3 rounded-3xl border p-4 transition ${
-          shot ? 'border-ember/60 bg-ember/10' : 'border-white/10 bg-white/[0.03]'
+          shot ? 'border-fay/60 bg-fay/10' : 'border-white/10 bg-white/[0.03]'
         }`}
       >
         <input
@@ -173,19 +173,19 @@ export function CreateForm({
         />
         <span>
           <span className="flex items-center gap-2 font-display font-bold">
-            <SparkIcon width={16} height={16} className="text-ember" />
+            <SparkIcon width={16} height={16} className="text-fay" />
             GIVE ME A SHOT
           </span>
           <span className="mt-1 block text-sm leading-relaxed text-white/50">
-            Ask the community to discover you. Shot posts rotate through the Discover page so new
-            creators get real exposure. No promises of going viral — just a genuine turn in front
-            of people.
+            Ask the community to discover you. Your post gets shown to 100 people first. If they
+            respond well it earns 1,000, then 10,000, then more. No promises of going viral — a
+            real, metered turn in front of people, and nobody can buy their way past it.
           </span>
         </span>
       </label>
 
       {state?.error && (
-        <p className="rounded-2xl border border-ember/40 bg-ember/10 px-4 py-3 text-sm text-ember-soft">
+        <p className="rounded-2xl border border-fay/40 bg-fay/10 px-4 py-3 text-sm text-fay-soft">
           {state.error}
         </p>
       )}

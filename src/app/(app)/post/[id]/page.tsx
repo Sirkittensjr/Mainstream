@@ -5,6 +5,9 @@ import { CommentThread, type CommentItem } from '@/components/CommentThread';
 import { DeletePostButton } from '@/components/DeletePostButton';
 import { PageTopBar } from '@/components/PageTopBar';
 import { PostCard } from '@/components/PostCard';
+import { RatingPill, ReactionBar } from '@/components/RatingPill';
+import { formatCap, SHOT_STAGES } from '@/lib/shot';
+import { topReactions } from '@/lib/ratings';
 import { getPost, hydratePosts, listComments, registerView } from '@/lib/services/posts';
 import { getUser, hiddenUserIds } from '@/lib/services/users';
 import { getViewer } from '@/lib/session';
@@ -22,7 +25,7 @@ export async function generateMetadata({
   if (!post) return { title: 'Post' };
   const author = await getUser(post.author_id);
   return {
-    title: `${author?.display_name ?? 'Post'} on RISE`,
+    title: `${author?.display_name ?? 'Post'} on FayTarra`,
     description: post.caption.slice(0, 140),
   };
 }
@@ -76,13 +79,52 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
       <PageTopBar title="Post" />
       <div className="mx-auto max-w-2xl space-y-4 px-4 pt-4 lg:pt-8">
         {post.removed && (
-          <p className="rounded-2xl border border-ember/40 bg-ember/10 px-4 py-3 text-sm text-ember-soft">
+          <p className="rounded-2xl border border-fay/40 bg-fay/10 px-4 py-3 text-sm text-fay-soft">
             This post has been removed by a moderator
             {post.removed_reason ? `: ${post.removed_reason}` : '.'} Only you and moderators can
             see it.
           </p>
         )}
         <PostCard data={toCardData(view)} viewerId={viewer?.id ?? null} />
+
+        <section className="card p-5">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="font-display text-lg font-bold">Community rating</h2>
+              <p className="mt-1 text-sm text-white/45">
+                {view.rating.count > 0
+                  ? `${view.rating.count} rating${view.rating.count === 1 ? '' : 's'} from the community`
+                  : 'Not rated yet. First rating counts the most.'}
+              </p>
+            </div>
+            <RatingPill value={view.rating.rating} size="lg" count={view.rating.count} />
+          </div>
+          {topReactions(view.rating.reactions, 6).length > 0 && (
+            <div className="mt-4">
+              <ReactionBar reactions={topReactions(view.rating.reactions, 6)} />
+            </div>
+          )}
+          {view.shot && (
+            <div className="mt-5 rounded-2xl border border-white/[0.07] bg-black/20 p-4">
+              <p className="label">Give me a shot</p>
+              <p className="mt-2 text-sm text-white/60">
+                Stage {view.shot.stage + 1} of {SHOT_STAGES.length} ·{' '}
+                {view.post.impressions.toLocaleString()} of {formatCap(view.shot.cap)} impressions
+                used · {view.shot.status}
+              </p>
+              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-aura to-fay"
+                  style={{ width: `${Math.max(3, view.shot.progress)}%` }}
+                />
+              </div>
+              <p className="mt-3 text-xs leading-relaxed text-white/35">
+                Exposure is handed out in slices. Respond well to a slice and the post earns a
+                bigger one. Nothing about this can be bought.
+              </p>
+            </div>
+          )}
+        </section>
 
         <CommentThread
           postId={post.id}

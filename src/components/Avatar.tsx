@@ -9,12 +9,12 @@ const SIZES = {
 } as const;
 
 const GRADIENTS = [
-  'linear-gradient(135deg,#FF5C39,#FFC93C)',
-  'linear-gradient(135deg,#7C5CFF,#FF5C39)',
+  'linear-gradient(135deg,#FF3D9A,#FFB443)',
+  'linear-gradient(135deg,#7C5CFF,#FF3D9A)',
   'linear-gradient(135deg,#3DDC97,#7C5CFF)',
-  'linear-gradient(135deg,#FF3D6E,#FFC93C)',
+  'linear-gradient(135deg,#7C5CFF,#FFB443)',
   'linear-gradient(135deg,#38BDF8,#7C5CFF)',
-  'linear-gradient(135deg,#FFC93C,#3DDC97)',
+  'linear-gradient(135deg,#FFB443,#3DDC97)',
 ];
 
 function hash(value: string): number {
@@ -51,13 +51,13 @@ export function Avatar({
     <img
       src={src}
       alt={`${displayName || username} profile picture`}
-      className={`${SIZES[size]} shrink-0 rounded-full object-cover ${ring ? 'ring-2 ring-ember/70 ring-offset-2 ring-offset-ink-950' : ''}`}
+      className={`${SIZES[size]} shrink-0 rounded-full object-cover ${ring ? 'ring-2 ring-fay/70 ring-offset-2 ring-offset-ink-950' : ''}`}
     />
   ) : (
     <span
       aria-hidden
       className={`${SIZES[size]} flex shrink-0 items-center justify-center rounded-full font-display font-bold text-ink-950 ${
-        ring ? 'ring-2 ring-ember/70 ring-offset-2 ring-offset-ink-950' : ''
+        ring ? 'ring-2 ring-fay/70 ring-offset-2 ring-offset-ink-950' : ''
       }`}
       style={{ backgroundImage: gradient }}
     >

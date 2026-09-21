@@ -5,16 +5,16 @@ import { NextResponse } from 'next/server';
  *
  * Seed data points at this route instead of an external image host, so a fresh
  * install looks populated even with no network access, and no third party ever
- * sees who is browsing RISE.
+ * sees who is browsing FayTarra.
  */
 
 const PALETTES: [string, string, string][] = [
-  ['#FF5C39', '#FFC93C', '#2A1206'],
-  ['#7C5CFF', '#FF3D6E', '#120A2A'],
+  ['#FF3D9A', '#FFB443', '#2A1206'],
+  ['#7C5CFF', '#7C5CFF', '#120A2A'],
   ['#3DDC97', '#38BDF8', '#062018'],
-  ['#FFC93C', '#3DDC97', '#231A05'],
-  ['#FF3D6E', '#7C5CFF', '#26061A'],
-  ['#38BDF8', '#FF5C39', '#04121F'],
+  ['#FFB443', '#3DDC97', '#231A05'],
+  ['#7C5CFF', '#7C5CFF', '#26061A'],
+  ['#38BDF8', '#FF3D9A', '#04121F'],
 ];
 
 function hash(value: string): number {
@@ -46,7 +46,7 @@ export async function GET(
     return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${fill}" opacity="${opacity.toFixed(2)}"/>`;
   }).join('');
 
-  // A column chart climbing to the right — the RISE motif, used as texture.
+  // A column chart climbing to the right — the FayTarra motif, used as texture.
   const bars = Array.from({ length: 7 }, (_, i) => {
     const n = hash(`${seed}:bar:${i}`);
     const height = 90 + i * 46 + (n % 120);

@@ -25,7 +25,7 @@ export default async function ChallengesPage() {
         <div className="mb-5 hidden lg:block">
           <h1 className="font-display text-3xl font-extrabold tracking-tight">Challenges</h1>
           <p className="mt-1 text-white/45">
-            Same prompt, same start line, everyone from zero. Entries are worth 25 RISE points.
+            Same prompt, same start line, everyone from zero. Entries are worth 25 FayTarra points.
           </p>
         </div>
 
@@ -35,7 +35,7 @@ export default async function ChallengesPage() {
             className="card mb-6 block overflow-hidden p-6 transition hover:border-white/20 sm:p-8"
             style={{
               backgroundImage:
-                'linear-gradient(130deg, rgba(255,92,57,0.22), rgba(124,92,255,0.14))',
+                'linear-gradient(130deg, rgba(255,61,154,0.22), rgba(124,92,255,0.14))',
             }}
           >
             <p className="label flex items-center gap-2">

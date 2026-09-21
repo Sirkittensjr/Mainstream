@@ -25,7 +25,7 @@ export default async function CreatePage({
         <div className="mb-6">
           <h1 className="font-display text-3xl font-extrabold tracking-tight">Create</h1>
           <p className="mt-1 text-white/45">
-            Posting is worth 10 RISE points, and every post is eligible for Discover the moment it
+            Posting is worth 10 FayTarra points, and every post is eligible for Discover the moment it
             goes up.
           </p>
         </div>

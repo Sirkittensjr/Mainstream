@@ -25,7 +25,7 @@ export function DeletePostButton({ postId }: { postId: string }) {
         type="button"
         disabled={pending}
         onClick={() => startTransition(() => deletePostAction(postId))}
-        className="btn px-4 py-2 text-sm bg-ember text-ink-950"
+        className="btn px-4 py-2 text-sm bg-fay text-ink-950"
       >
         {pending ? 'Deleting…' : 'Yes, delete'}
       </button>

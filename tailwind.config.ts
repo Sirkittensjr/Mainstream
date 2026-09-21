@@ -13,13 +13,13 @@ const config: Config = {
           700: '#1E1E2B',
           600: '#2A2A3A',
         },
-        ember: {
-          DEFAULT: '#FF5C39',
-          soft: '#FF8A5B',
-          deep: '#E03A16',
+        fay: {
+          DEFAULT: '#FF3D9A',
+          soft: '#FF7DBE',
+          deep: '#D01271',
         },
-        solar: '#FFC93C',
-        volt: '#7C5CFF',
+        solar: '#FFB443',
+        aura: '#7C5CFF',
         mint: '#3DDC97',
       },
       fontFamily: {
@@ -30,7 +30,7 @@ const config: Config = {
         '4xl': '2rem',
       },
       boxShadow: {
-        glow: '0 0 40px -12px rgba(255, 92, 57, 0.55)',
+        glow: '0 0 40px -12px rgba(255, 61, 154, 0.55)',
         card: '0 1px 0 0 rgba(255,255,255,0.04) inset, 0 12px 32px -20px rgba(0,0,0,0.9)',
       },
       keyframes: {
@@ -47,7 +47,7 @@ const config: Config = {
           '0%': { backgroundPosition: '-200% 0' },
           '100%': { backgroundPosition: '200% 0' },
         },
-        'rise-bar': {
+        'level-bar': {
           '0%': { width: '0%' },
         },
       },
@@ -55,7 +55,7 @@ const config: Config = {
         'fade-up': 'fade-up 0.4s cubic-bezier(0.22, 1, 0.36, 1) both',
         pop: 'pop 0.35s ease-out',
         shimmer: 'shimmer 2.5s linear infinite',
-        'rise-bar': 'rise-bar 1s cubic-bezier(0.22, 1, 0.36, 1) both',
+        'level-bar': 'level-bar 1s cubic-bezier(0.22, 1, 0.36, 1) both',
       },
     },
   },

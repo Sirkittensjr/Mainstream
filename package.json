@@ -1,8 +1,8 @@
 {
-  "name": "rise",
+  "name": "faytarra",
   "version": "0.1.0",
   "private": true,
-  "description": "RISE — everyone starts at zero. A social platform for people who are still becoming somebody.",
+  "description": "FayTarra — everyone starts at zero. A social platform for people who are still becoming somebody.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

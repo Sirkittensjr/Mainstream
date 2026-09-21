@@ -15,7 +15,7 @@ export function DangerZone({ username }: { username: string }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="text-sm text-white/40 underline hover:text-ember"
+        className="text-sm text-white/40 underline hover:text-fay"
       >
         Delete my account
       </button>
@@ -23,7 +23,7 @@ export function DangerZone({ username }: { username: string }) {
   }
 
   return (
-    <div className="rounded-2xl border border-ember/30 bg-ember/[0.06] p-4">
+    <div className="rounded-2xl border border-fay/30 bg-fay/[0.06] p-4">
       <p className="text-sm text-white/70">
         This deletes your profile, posts, comments, likes and follows. It cannot be undone. Type{' '}
         <strong className="text-white">{username}</strong> to confirm.
@@ -35,7 +35,7 @@ export function DangerZone({ username }: { username: string }) {
         className="mt-3 w-full py-2 text-sm"
         aria-label="Confirm your username"
       />
-      {error && <p className="mt-2 text-sm text-ember">{error}</p>}
+      {error && <p className="mt-2 text-sm text-fay">{error}</p>}
       <div className="mt-3 flex gap-2">
         <button
           type="button"
@@ -46,7 +46,7 @@ export function DangerZone({ username }: { username: string }) {
               if (result && !result.ok) setError(result.error);
             })
           }
-          className="btn bg-ember px-5 py-2 text-sm text-ink-950"
+          className="btn bg-fay px-5 py-2 text-sm text-ink-950"
         >
           {pending ? 'Deleting…' : 'Delete permanently'}
         </button>

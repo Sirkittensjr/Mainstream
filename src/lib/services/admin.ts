@@ -1,6 +1,6 @@
 import 'server-only';
 import { db } from '@/lib/db';
-import { levelFor } from '@/lib/rise';
+import { levelFor } from '@/lib/progression';
 import { DAY } from '@/lib/time';
 import type { Category, ID, PublicUser } from '@/lib/types';
 import { followerCounts, toPublicUser } from './users';
@@ -14,6 +14,9 @@ export interface AdminStats {
     follows: number;
     challengeEntries: number;
     openReports: number;
+    ratings: number;
+    ratedPosts: number;
+    untrusted: number;
   };
   active: { dau: number; wau: number; mau: number };
   newUsers: { today: number; week: number; month: number };
@@ -27,7 +30,7 @@ export interface AdminStats {
 /** Everything the admin dashboard needs, in one pass over the tables. */
 export async function adminStats(): Promise<AdminStats> {
   const store = db();
-  const [users, posts, comments, likes, follows, challenges, reports, activity] =
+  const [users, posts, comments, likes, follows, challenges, reports, activity, ratings] =
     await Promise.all([
       store.query('users'),
       store.query('posts'),
@@ -37,6 +40,7 @@ export async function adminStats(): Promise<AdminStats> {
       store.query('challenges'),
       store.query('reports'),
       store.query('activity'),
+      store.query('ratings'),
     ]);
 
   const now = Date.now();
@@ -68,6 +72,11 @@ export async function adminStats(): Promise<AdminStats> {
       follows: follows.length,
       challengeEntries: posts.filter((p) => p.challenge_id && !p.removed).length,
       openReports: reports.filter((r) => r.status === 'open').length,
+      ratings: ratings.length,
+      ratedPosts: new Set(
+        ratings.filter((r) => r.target_type === 'post').map((r) => r.target_id),
+      ).size,
+      untrusted: users.filter((u) => !u.trusted).length,
     },
     active: { dau: activeSince(1), wau: activeSince(7), mau: activeSince(30) },
     newUsers: {
@@ -89,13 +98,13 @@ export async function adminStats(): Promise<AdminStats> {
         author: usernameById.get(post.author_id) ?? 'unknown',
       })),
     topCreators: [...activeUsers]
-      .sort((a, b) => b.rise_points - a.rise_points)
+      .sort((a, b) => b.points - a.points)
       .slice(0, 8)
       .map((user) => ({
         user: toPublicUser(user),
         followers: followers.get(user.id) ?? 0,
-        level: levelFor(user.rise_points).level,
-        points: user.rise_points,
+        level: levelFor(user.points).level,
+        points: user.points,
       })),
     challengeParticipation: challenges
       .map((challenge) => {
@@ -149,6 +158,6 @@ export async function adminUsers(query: string, limit = 40): Promise<AdminUserRo
     email: user.email,
     followers: followers.get(user.id) ?? 0,
     posts: postCounts.get(user.id) ?? 0,
-    level: levelFor(user.rise_points).level,
+    level: levelFor(user.points).level,
   }));
 }

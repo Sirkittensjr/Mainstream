@@ -83,14 +83,14 @@ export function CommentThread({
         </form>
       ) : (
         <p className="mt-4 text-sm text-white/50">
-          <Link href="/login" className="font-semibold text-ember hover:underline">
+          <Link href="/login" className="font-semibold text-fay hover:underline">
             Sign in
           </Link>{' '}
           to join the conversation.
         </p>
       )}
 
-      {error && <p className="mt-3 text-sm text-ember">{error}</p>}
+      {error && <p className="mt-3 text-sm text-fay">{error}</p>}
 
       <ul className="mt-6 space-y-4">
         {optimistic.map((comment) => (
@@ -124,7 +124,7 @@ export function CommentThread({
                     router.refresh();
                   })
                 }
-                className="self-start text-xs text-white/30 hover:text-ember"
+                className="self-start text-xs text-white/30 hover:text-fay"
               >
                 Delete
               </button>

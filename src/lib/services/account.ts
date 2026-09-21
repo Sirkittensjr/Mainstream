@@ -9,8 +9,9 @@ import { getUserByEmail, getUserByUsername } from './users';
 export const USERNAME_RULES = 'letters, numbers and underscores, 3–20 characters';
 const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
 const RESERVED = new Set([
-  'admin', 'rise', 'home', 'discover', 'create', 'challenges', 'profile', 'login', 'signup',
-  'settings', 'search', 'notifications', 'leaderboards', 'api', 'rules', 'post', 'u', 'me',
+  'admin', 'faytarra', 'fay', 'home', 'discover', 'create', 'challenges', 'profile', 'login',
+  'signup', 'settings', 'search', 'notifications', 'rankings', 'leaderboards', 'api', 'rules',
+  'post', 'u', 'me', 'rate', 'support', 'help',
 ]);
 
 export interface SignUpInput {
@@ -66,7 +67,8 @@ export async function signUp(input: SignUpInput): Promise<Result<User>> {
     role: adminEmails.includes(email) ? 'admin' : 'user',
     status: 'active',
     status_reason: null,
-    rise_points: 0,
+    trusted: true,
+    points: 0,
     created_at: now,
     last_active_at: now,
   };
@@ -75,7 +77,7 @@ export async function signUp(input: SignUpInput): Promise<Result<User>> {
   await notify({
     userId: user.id,
     type: 'level_up',
-    body: 'Welcome to RISE. You are Level 1 — Rookie. Everyone starts at zero.',
+    body: 'Welcome to FayTarra. You are Level 1 — Rookie. Everyone starts at zero.',
   });
   return { ok: true, value: user };
 }
@@ -90,7 +92,7 @@ export async function signIn(identifier: string, password: string): Promise<Resu
     return { ok: false, error: 'No account matches those details.' };
   }
   if (user.status === 'banned') {
-    return { ok: false, error: 'This account has been banned for breaking the RISE rules.' };
+    return { ok: false, error: 'This account has been banned for breaking the FayTarra rules.' };
   }
   return { ok: true, value: user };
 }

@@ -1,7 +1,7 @@
 import 'server-only';
 import { db } from '@/lib/db';
 import { newId } from '@/lib/ids';
-import { levelFor, nextFollowerGoal } from '@/lib/rise';
+import { levelFor, nextFollowerGoal } from '@/lib/progression';
 import type { Activity, ID, Interest, PublicUser, User } from '@/lib/types';
 import { award } from './points';
 import { notify } from './notifications';
@@ -187,7 +187,7 @@ export interface Journey {
 }
 
 /**
- * "Tommy's RISE Journey" — a timeline built entirely from real activity so the
+ * "Tommy's FayTarra Journey" — a timeline built entirely from real activity so the
  * profile reads as a story rather than a set of counters.
  */
 export async function getJourney(user: User): Promise<Journey> {
@@ -207,7 +207,7 @@ export async function getJourney(user: User): Promise<Journey> {
   )[0] ?? null;
   const topPost = [...posts].sort((a, b) => b.views - a.views)[0] ?? null;
   const firstChallenge = first('challenge_entry');
-  const level = levelFor(user.rise_points);
+  const level = levelFor(user.points);
 
   return {
     joined: user.created_at,
@@ -219,7 +219,7 @@ export async function getJourney(user: User): Promise<Journey> {
     nextGoal: nextFollowerGoal(stats.followers),
     level: level.level,
     levelName: level.name,
-    points: user.rise_points,
+    points: user.points,
     milestones: [
       {
         label: 'First post',

@@ -1,5 +1,5 @@
 /**
- * Seeds the active storage driver with the sample RISE community.
+ * Seeds the active storage driver with the sample FayTarra community.
  *
  *   npm run seed          # seeds whichever driver is configured
  *   npm run reset         # wipes local data and re-seeds
@@ -29,6 +29,7 @@ async function main() {
     'users',
     'challenges',
     'posts',
+    'ratings',
     'likes',
     'comments',
     'follows',
@@ -36,6 +37,7 @@ async function main() {
     'notifications',
     'reports',
     'activity',
+    'rank_snapshots',
   ];
 
   for (const table of order) {
@@ -48,8 +50,8 @@ async function main() {
     console.log(`  ${table}: ${rows.length}`);
   }
 
-  console.log('\nDone. Sign in with tommy@rise.app / risedemo123');
-  console.log('Admin dashboard: admin@rise.app / risedemo123');
+  console.log('\nDone. Sign in with tommy@faytarra.app / faydemo123');
+  console.log('Admin dashboard: admin@faytarra.app / faydemo123');
 }
 
 main().catch((error) => {

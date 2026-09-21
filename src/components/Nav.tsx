@@ -36,7 +36,7 @@ function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-/** Bottom navigation — the primary way around RISE on a phone. */
+/** Bottom navigation — the primary way around FayTarra on a phone. */
 export function BottomNav({ user }: { user: NavUser | null }) {
   const pathname = usePathname();
   const profileHref = user ? `/u/${user.username}` : '/login';
@@ -55,7 +55,7 @@ export function BottomNav({ user }: { user: NavUser | null }) {
                   aria-label="Create"
                   className="flex h-14 w-14 items-center justify-center rounded-2xl shadow-glow transition active:scale-95"
                   style={{
-                    backgroundImage: 'linear-gradient(135deg,#FFC93C,#FF5C39 60%,#FF3D6E)',
+                    backgroundImage: 'linear-gradient(135deg,#7C5CFF,#FF3D9A 55%,#FFB443)',
                   }}
                 >
                   <PlusIcon width={26} height={26} className="text-ink-950" strokeWidth={2.4} />
@@ -100,7 +100,7 @@ function NavTab({
         active ? 'text-white' : 'text-white/40'
       }`}
     >
-      <span className={active ? 'text-ember' : ''}>{children}</span>
+      <span className={active ? 'text-fay' : ''}>{children}</span>
       {label}
     </Link>
   );
@@ -111,7 +111,7 @@ export function Sidebar({ user }: { user: NavUser | null }) {
   const pathname = usePathname();
   const items = [
     ...PRIMARY.map((item) => ({ ...item, icon: item.icon as typeof HomeIcon })),
-    { href: '/leaderboards', label: 'Leaderboards', icon: ChartIcon },
+    { href: '/rankings', label: 'Rankings', icon: ChartIcon },
     { href: '/search', label: 'Search', icon: SearchIcon },
     { href: '/notifications', label: 'Notifications', icon: BellIcon },
   ];
@@ -133,12 +133,12 @@ export function Sidebar({ user }: { user: NavUser | null }) {
                   active ? 'bg-white/[0.08] text-white' : 'text-white/55 hover:bg-white/[0.04] hover:text-white'
                 }`}
               >
-                <span className={active ? 'text-ember' : ''}>
+                <span className={active ? 'text-fay' : ''}>
                   <item.icon />
                 </span>
                 {item.label}
                 {item.href === '/notifications' && user && user.unread > 0 && (
-                  <span className="ml-auto rounded-full bg-ember px-2 py-0.5 text-[11px] font-bold text-ink-950">
+                  <span className="ml-auto rounded-full bg-fay px-2 py-0.5 text-[11px] font-bold text-ink-950">
                     {user.unread > 9 ? '9+' : user.unread}
                   </span>
                 )}
@@ -162,7 +162,7 @@ export function Sidebar({ user }: { user: NavUser | null }) {
           >
             <span
               className="flex h-10 w-10 items-center justify-center rounded-full font-display text-sm font-bold text-ink-950"
-              style={{ backgroundImage: 'linear-gradient(135deg,#FF5C39,#FFC93C)' }}
+              style={{ backgroundImage: 'linear-gradient(135deg,#FF3D9A,#FFB443)' }}
             >
               {user.displayName.slice(0, 2).toUpperCase()}
             </span>
@@ -176,7 +176,7 @@ export function Sidebar({ user }: { user: NavUser | null }) {
         ) : (
           <div className="space-y-2 px-1">
             <Link href="/signup" className="btn-primary w-full">
-              Join RISE
+              Join FayTarra
             </Link>
             <Link href="/login" className="btn-ghost w-full">
               Sign in
@@ -210,7 +210,7 @@ export function TopBar({ user, title }: { user: NavUser | null; title?: string }
         >
           <BellIcon />
           {user && user.unread > 0 && (
-            <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-ember ring-2 ring-ink-950" />
+            <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-fay ring-2 ring-ink-950" />
           )}
         </Link>
         {!user && (
@@ -225,10 +225,37 @@ export function TopBar({ user, title }: { user: NavUser | null; title?: string }
 
 export function Logo({ small = false }: { small?: boolean }) {
   return (
-    <span
-      className={`font-display font-extrabold tracking-tight ${small ? 'text-xl' : 'text-2xl'}`}
-    >
-      <span className="gradient-text">RISE</span>
+    <span className="inline-flex items-center gap-2">
+      <Mark size={small ? 22 : 26} />
+      <span
+        className={`font-display font-extrabold tracking-tight ${small ? 'text-xl' : 'text-2xl'}`}
+      >
+        <span className="gradient-text">FayTarra</span>
+      </span>
     </span>
+  );
+}
+
+/** The FayTarra mark: three climbing bars and a spark. */
+export function Mark({ size = 26 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 64 64" aria-hidden>
+      <defs>
+        <linearGradient id="fay-mark" x1="0" y1="1" x2="1" y2="0">
+          <stop offset="0%" stopColor="#7C5CFF" />
+          <stop offset="52%" stopColor="#FF3D9A" />
+          <stop offset="100%" stopColor="#FFB443" />
+        </linearGradient>
+      </defs>
+      <g fill="url(#fay-mark)">
+        <rect x="6" y="38" width="11" height="18" rx="5.5" />
+        <rect x="24" y="26" width="11" height="30" rx="5.5" />
+        <rect x="42" y="12" width="11" height="44" rx="5.5" />
+      </g>
+      <path
+        d="M47.5 2 l2.1 4.4 4.4 2.1 -4.4 2.1 -2.1 4.4 -2.1 -4.4 -4.4 -2.1 4.4 -2.1z"
+        fill="#FFB443"
+      />
+    </svg>
   );
 }

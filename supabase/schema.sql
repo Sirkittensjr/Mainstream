@@ -1,11 +1,11 @@
 -- ---------------------------------------------------------------------------
--- RISE — Supabase schema
+-- FayTarra — Supabase schema
 --
 -- Run this once in the Supabase SQL editor (or `supabase db execute -f`), then
 -- seed the sample community with `npm run seed`.
 --
 -- The application talks to these tables through the server-side service role
--- and enforces its own rules (blocking, moderation, RISE points) in one place.
+-- and enforces its own rules (blocking, moderation, FayTarra points) in one place.
 -- RLS is still enabled on every table so that nothing is readable or writable
 -- with the anon key by accident.
 -- ---------------------------------------------------------------------------
@@ -27,13 +27,15 @@ create table if not exists public.users (
   role          text not null default 'user'   check (role in ('user', 'admin')),
   status        text not null default 'active' check (status in ('active', 'suspended', 'banned')),
   status_reason text,
-  rise_points   integer not null default 0,
+  points        integer not null default 0,
+  -- Rating integrity: a moderator can revoke the weight an account's ratings carry.
+  trusted       boolean not null default true,
   created_at    timestamptz not null default now(),
   last_active_at timestamptz not null default now()
 );
 
 create index if not exists users_username_idx on public.users (username);
-create index if not exists users_points_idx on public.users (rise_points desc);
+create index if not exists users_points_idx on public.users (points desc);
 
 -- Challenges ---------------------------------------------------------------
 create table if not exists public.challenges (
@@ -60,6 +62,9 @@ create table if not exists public.posts (
   tags           text[] not null default '{}',
   challenge_id   uuid references public.challenges (id) on delete set null,
   shot           boolean not null default false,   -- "GIVE ME A SHOT"
+  shot_stage     integer not null default 0,       -- staged exposure ladder
+  impressions    integer not null default 0,       -- metered discovery exposure
+  boosted        boolean not null default false,   -- reserved for paid exposure
   views          integer not null default 0,
   featured       boolean not null default false,
   featured_at    timestamptz,
@@ -119,6 +124,47 @@ create table if not exists public.blocks (
   unique (blocker_id, blocked_id)
 );
 
+-- Ratings ------------------------------------------------------------------
+-- One row per (rater, target): rating again updates this row rather than
+-- stacking, which is the first line of manipulation defence.
+create table if not exists public.ratings (
+  id          uuid primary key default gen_random_uuid(),
+  rater_id    uuid not null references public.users (id) on delete cascade,
+  target_type text not null check (target_type in ('post', 'user')),
+  target_id   uuid not null,
+  -- The creator being rated, denormalised so per-creator scans are one pass.
+  owner_id    uuid not null references public.users (id) on delete cascade,
+  score       integer not null check (score between 1 and 10),
+  reactions   text[] not null default '{}',
+  -- Integrity weight, 0-1, computed when the rating was cast.
+  weight      real not null default 1,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now(),
+  unique (rater_id, target_type, target_id),
+  check (rater_id <> owner_id)
+);
+
+create index if not exists ratings_target_idx on public.ratings (target_type, target_id);
+create index if not exists ratings_owner_idx on public.ratings (owner_id);
+create index if not exists ratings_rater_idx on public.ratings (rater_id, updated_at desc);
+
+-- Rank snapshots -----------------------------------------------------------
+-- Monthly freeze of the live ranking, so a profile can show its climb.
+create table if not exists public.rank_snapshots (
+  id             uuid primary key default gen_random_uuid(),
+  user_id        uuid not null references public.users (id) on delete cascade,
+  period         text not null,               -- e.g. '2026-09'
+  overall_rank   integer not null,
+  current_rank   integer not null,
+  rising_rank    integer not null,
+  overall_rating real not null,
+  current_rating real not null,
+  created_at     timestamptz not null default now(),
+  unique (user_id, period)
+);
+
+create index if not exists rank_snapshots_period_idx on public.rank_snapshots (period);
+
 -- Notifications ------------------------------------------------------------
 create table if not exists public.notifications (
   id           uuid primary key default gen_random_uuid(),
@@ -149,7 +195,7 @@ create table if not exists public.reports (
 
 create index if not exists reports_status_idx on public.reports (status, created_at desc);
 
--- Activity (RISE point ledger) ---------------------------------------------
+-- Activity (FayTarra point ledger) ---------------------------------------------
 create table if not exists public.activity (
   id           uuid primary key default gen_random_uuid(),
   user_id      uuid not null references public.users (id) on delete cascade,
@@ -174,6 +220,8 @@ alter table public.comments      enable row level security;
 alter table public.follows       enable row level security;
 alter table public.blocks        enable row level security;
 alter table public.challenges    enable row level security;
+alter table public.ratings       enable row level security;
+alter table public.rank_snapshots enable row level security;
 alter table public.notifications enable row level security;
 alter table public.reports       enable row level security;
 alter table public.activity      enable row level security;
@@ -181,5 +229,5 @@ alter table public.activity      enable row level security;
 -- Storage -------------------------------------------------------------------
 -- Uploaded images and video go to this bucket. Public read so posts render.
 insert into storage.buckets (id, name, public)
-values ('rise-media', 'rise-media', true)
+values ('faytarra-media', 'faytarra-media', true)
 on conflict (id) do nothing;

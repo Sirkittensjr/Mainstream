@@ -16,21 +16,21 @@ export default async function WelcomePage() {
     {
       icon: PlusIcon,
       title: 'Post something today',
-      body: 'Anything. A clip, a photo, a sentence. Your first post earns 10 RISE points and goes straight into Discover.',
+      body: 'Anything. A clip, a photo, a sentence. Your first post can be rated by anyone, and it goes straight into Discover.',
       href: '/create',
       cta: 'Create your first post',
     },
     {
       icon: CompassIcon,
       title: 'Find five people',
-      body: 'Discover ranks creators by momentum, not follower count. Follow people who just started too.',
+      body: 'Discover ranks by rating and momentum, not follower count. Rate what you like while you are there — it is how everyone here gets a real score.',
       href: '/discover',
       cta: 'Open Discover',
     },
     {
       icon: TrophyIcon,
       title: challenge ? `Enter “${challenge.title}”` : 'Enter a challenge',
-      body: 'Challenges are the fastest way to get featured. Entries are worth 25 RISE points each.',
+      body: 'Challenges are the fastest way to get featured. Entries are worth 25 FayTarra points each.',
       href: challenge ? `/challenges/${challenge.slug}` : '/challenges',
       cta: 'See the challenge',
     },
@@ -38,7 +38,7 @@ export default async function WelcomePage() {
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-10">
-      <p className="chip border-ember/30 bg-ember/10 text-ember-soft">Level 1 — Rookie</p>
+      <p className="chip border-fay/30 bg-fay/10 text-fay-soft">Level 1 — Rookie</p>
       <h1 className="mt-5 font-display text-4xl font-extrabold leading-[0.95] tracking-tight">
         You are in, {viewer.display_name}.
         <br />
@@ -53,7 +53,7 @@ export default async function WelcomePage() {
         {steps.map((step, index) => (
           <li key={step.title} className="card p-5">
             <div className="flex items-start gap-4">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.06] text-ember">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/[0.06] text-fay">
                 <step.icon />
               </span>
               <div className="min-w-0">
@@ -62,7 +62,7 @@ export default async function WelcomePage() {
                 <p className="mt-1 text-sm leading-relaxed text-white/50">{step.body}</p>
                 <Link
                   href={step.href}
-                  className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-ember hover:underline"
+                  className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-fay hover:underline"
                 >
                   {step.cta} <ArrowIcon width={15} height={15} />
                 </Link>

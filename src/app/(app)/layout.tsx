@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { BottomNav, Sidebar, type NavUser } from '@/components/Nav';
 import { RightRail } from '@/components/RightRail';
-import { levelFor } from '@/lib/rise';
+import { levelFor } from '@/lib/progression';
 import { unreadCount } from '@/lib/services/notifications';
 import { getViewer, markActive } from '@/lib/session';
 
@@ -15,7 +15,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         username: viewer.username,
         displayName: viewer.display_name,
         avatarUrl: viewer.avatar_url,
-        level: levelFor(viewer.rise_points).level,
+        level: levelFor(viewer.points).level,
         isAdmin: viewer.role === 'admin',
         unread,
       }
@@ -26,7 +26,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <Sidebar user={navUser} />
       <div className="min-w-0 flex-1 pb-24 lg:pb-8">
         {viewer?.status === 'suspended' && (
-          <div className="border-b border-ember/30 bg-ember/10 px-4 py-3 text-sm text-ember-soft">
+          <div className="border-b border-fay/30 bg-fay/10 px-4 py-3 text-sm text-fay-soft">
             Your account is suspended
             {viewer.status_reason ? `: ${viewer.status_reason}` : '.'} You can still browse, but you
             cannot post.{' '}

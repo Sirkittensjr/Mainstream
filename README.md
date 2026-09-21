@@ -1,18 +1,27 @@
-# RISE
+# FayTarra
 
 **Everyone starts at zero.**
 
-RISE is a social platform for people who are still becoming somebody — creators,
+FayTarra is a social platform for people who are still becoming somebody — creators,
 musicians, gamers, artists, athletes, entrepreneurs, comedians, anyone trying to
-get known for something. The product bet is simple: **follower count should not
-decide who gets discovered.** Discovery here ranks posts by how well they perform
-*relative to the audience the creator already has*, so someone with ten followers
-has a genuine path onto the Discover page.
+get known for something.
 
-This repository is a working MVP, not a mockup. Authentication, profiles, posts,
-likes, comments, follows, the feed, discovery, challenges, RISE points and levels,
-leaderboards, notifications, reporting, blocking and the admin dashboard are all
-implemented and persisted.
+Two ideas hold the product together:
+
+1. **Follower count does not decide who gets discovered.** Discovery ranks work
+   by how well it performs *relative to the audience the creator already has*.
+2. **Everyone has a rating, and it cannot be bought.** Ratings are the answer to
+   "how well is this person doing?" and "how good is this piece of content?" —
+   separate from likes, separate from followers, and defended against
+   manipulation.
+
+The core loop is: **Create → Get rated → Improve → Rise → Get discovered → Gain
+followers → Create again.**
+
+This repository is a working mobile-first website, not a mockup. Authentication,
+profiles, posts, ratings, rankings, likes, comments, follows, feed, discovery,
+challenges, points and levels, notifications, reporting, blocking, rating
+integrity and the admin dashboard are all implemented and persisted.
 
 ---
 
@@ -20,25 +29,23 @@ implemented and persisted.
 
 ```bash
 npm install
-npm run seed      # creates ./.data/rise.json with a sample community
+npm run seed      # creates ./.data/faytarra.json with a sample community
 npm run dev       # http://localhost:3000
 ```
 
-No configuration is required. With no Supabase keys present, RISE runs on a
-bundled file-backed JSON driver that is auto-seeded with 165 sample accounts,
-~200 posts, 7 challenges and the likes/comments/follows behind them, so the app
-looks populated from the first page load.
+No configuration is required. With no Supabase keys present, FayTarra runs on a
+bundled file-backed JSON driver, auto-seeded with ~168 accounts, ~265 posts,
+~3,100 ratings, 7 challenges and the months of rank history behind them.
 
 **Sample logins** (local demo data only):
 
 | Account | Email | Password |
 | --- | --- | --- |
-| Creator | `tommy@rise.app` | `risedemo123` |
-| Admin | `admin@rise.app` | `risedemo123` |
+| Creator | `tommy@faytarra.app` | `faydemo123` |
+| Admin | `admin@faytarra.app` | `faydemo123` |
 
-Every seeded creator uses the same password — `mirabeats@rise.app`,
-`novaplays@rise.app`, `sunnyclay@rise.app` (a day-six account with two followers)
-and so on.
+Every seeded creator shares that password — `mirabeats@faytarra.app`,
+`novaplays@faytarra.app`, `sunnyclay@faytarra.app` (six days old, two followers).
 
 ```bash
 npm run reset     # wipe local data and re-seed
@@ -49,98 +56,166 @@ npm run typecheck # tsc --noEmit
 
 ---
 
+## The FayTarra rating system
+
+Anyone can rate a post or a profile **1–10** and optionally add reactions (Fire,
+Funny, Creative, Interesting, Love It, Would Collaborate). The maths lives in
+[`src/lib/ratings.ts`](src/lib/ratings.ts) and
+[`src/lib/services/ratings.ts`](src/lib/services/ratings.ts).
+
+### Post rating
+
+A weighted average, shrunk toward the platform's own live mean so a single 10/10
+cannot outrank forty ratings averaging 9.3. Shown next to likes, comments, views
+and shares — never instead of them.
+
+### Overall rating — the slow number
+
+Anchored to every rating a creator has ever received, heavily shrunk, then
+adjusted by up to ±0.8 for behaviour: consistency, engagement relative to
+audience size, follower growth, community participation and account history. One
+bad post cannot move it.
+
+### Current rating — the fast number
+
+The same maths over the **last 30 days only**, starting from the creator's
+all-time average and moving quickly as new ratings arrive. Go quiet and it
+drifts down while the overall rating stays put.
+
+### The trend arrow
+
+Movement is measured **window over window** — the last 30 days against the 30
+before it — not current against overall. Comparing against overall would show an
+arrow up for every above-average creator forever, which says nothing.
+
+---
+
+## Rating integrity
+
+The system is worthless if a hundred throwaway accounts can hand someone a 10.
+Defence is layered, and every layer is explainable
+([`rating-integrity.ts`](src/lib/services/rating-integrity.ts)):
+
+- **One rating per person per target.** Rating again updates your rating; it
+  never stacks.
+- **Weighted raters.** A rating carries 0–1 weight. Accounts under a day old
+  count for a quarter, under a week for 60%, accounts with no activity are
+  discounted, and an account that rates almost everything 9–10 (or 1–2) is
+  heavily discounted.
+- **Concentration collapse.** Rating the same creator repeatedly drops your
+  weight to 25%. If over half your ratings target one creator, everything you
+  cast drops to 35%.
+- **Hard rate limits.** 25 an hour, 80 a day.
+- **No self-rating, no rating across a block, no rating removed posts.**
+- **Detection queue.** `/admin → Integrity` lists accounts whose behaviour looks
+  automated, with the same numbers the weighting used, and a moderator can
+  revoke an account's rating weight retroactively.
+- **Paid exposure can never touch a rating.** The `boosted` flag on a post is
+  excluded from every rating and ranking calculation by construction.
+
+The seed deliberately includes a small three-account rating ring so the
+integrity queue has something real to catch on first run.
+
+---
+
+## Ranking
+
+Three boards, four time windows (Today / This week / This month / All time) and
+every category — see [`rankings.ts`](src/lib/services/rankings.ts).
+
+| Board | Ranked by |
+| --- | --- |
+| **Overall** | Long-term rating. Slow, hard to fake, impossible to buy. |
+| **Current** | Last 30 days of community response. |
+| **Rising** | Momentum: improvement against your own baseline, growth relative to the audience you already had, and showing up. |
+
+In the seeded data the Current board is topped by creators with 3, 4 and 26
+followers sitting above accounts with 100+ — which is the entire point.
+
+Profiles show **Overall rank**, **Current rank** and **Rising rank**, plus a
+month-by-month **rank history** so the platform reads as a climb rather than a
+scoreboard. `/admin → Integrity → Capture this month's ranks` freezes a snapshot.
+
+---
+
+## Give me a shot — staged exposure
+
+A "Give me a shot" post is not promised virality. It is promised a *test*
+([`src/lib/shot.ts`](src/lib/shot.ts)):
+
+```
+100 impressions → 1,000 → 10,000 → 100,000
+```
+
+Exposure is metered: impressions are recorded as discovery actually serves the
+post. When a post uses up its slice it either graduates — if its rating is 7.4+
+or its engagement rate clears the bar — or it rests, freeing rotation slots for
+creators who have not had their turn. Progress is visible on the post itself.
+Nothing about this ladder can be bought.
+
+---
+
+## Website first, then real apps
+
+Priority order, deliberately:
+
+1. An excellent **mobile-first website** (this repo).
+2. Validate with real users.
+3. Turn the proven product into **proper iOS and Android apps** — not a WebView
+   wrapper.
+
+The architecture is built for step 3 now:
+
+- All product logic lives in `src/lib/services`, above a six-method storage
+  interface. Nothing important lives in a React component.
+- A versioned **JSON API** under `/api/v1` already exposes the same services:
+  `POST /api/v1/auth/login`, `GET /api/v1/me`, `GET /api/v1/feed`,
+  `GET /api/v1/discover`, `GET /api/v1/users/[username]`,
+  `GET /api/v1/posts/[id]`, `POST /api/v1/ratings`, `GET /api/v1/rankings`.
+- **One auth system.** The website sends the signed session token as an
+  HTTP-only cookie; a native client sends the identical token as
+  `Authorization: Bearer <token>`. Same accounts, same database, same ratings
+  and ranks.
+
+```bash
+TOKEN=$(curl -s -X POST localhost:3000/api/v1/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"identifier":"tommy@faytarra.app","password":"faydemo123"}' | jq -r .token)
+
+curl -s localhost:3000/api/v1/me -H "Authorization: Bearer $TOKEN" | jq
+```
+
+---
+
 ## Running on Supabase
 
 1. Create a Supabase project.
-2. Run [`supabase/schema.sql`](supabase/schema.sql) in the SQL editor. It creates
-   every table, the indexes, RLS, and the `rise-media` storage bucket.
-3. Copy `.env.example` to `.env.local` and fill in:
+2. Run [`supabase/schema.sql`](supabase/schema.sql) — tables, indexes, RLS and
+   the `faytarra-media` storage bucket.
+3. Copy `.env.example` to `.env.local`:
 
    ```
    NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
    SUPABASE_SERVICE_ROLE_KEY=...
-   AUTH_SECRET=<long random string>       # required once Supabase is configured
-   ADMIN_EMAILS=you@example.com           # these emails get the admin role on signup
+   AUTH_SECRET=<long random string>
+   ADMIN_EMAILS=you@example.com
    ```
 
-4. `npm run seed` to load the same sample community into Supabase, or skip it and
-   start empty.
+4. `npm run seed` to load the sample community, or skip it and start empty.
 
-The app picks its driver automatically: Supabase whenever `NEXT_PUBLIC_SUPABASE_URL`
-and `SUPABASE_SERVICE_ROLE_KEY` are set, otherwise the local JSON store. Uploaded
-images and video follow the same rule — Supabase Storage in production, local disk
-served through `/api/media/[file]` in development.
+The driver is chosen automatically: Supabase when those keys are set, the local
+JSON store otherwise. Uploads follow the same rule — Supabase Storage in
+production, local disk served through `/api/media/[file]` in development.
 
-`AUTH_SECRET` signs the session cookie. Any Supabase-backed deployment must set
-it — sessions are refused without one. A local demo (`npm run build && npm start`
-with no Supabase keys) falls back to a temporary per-process key and warns, so a
-restart simply signs everyone out.
+`AUTH_SECRET` signs the session cookie and the bearer token. Any Supabase-backed
+deployment must set it. A local demo falls back to a temporary per-process key
+and warns.
 
-### A note on authentication
-
-Auth is a self-contained email + username + password layer (scrypt hashes in the
-`users` table, signed HTTP-only session cookies). It was built this way so the
-exact same code path works on both drivers and the app can run with zero setup.
-Supabase Auth can be swapped in later without touching any feature code: replace
-`src/lib/auth/session.ts` and `src/lib/services/account.ts`, and keep `getViewer()`
-returning the same `User` row.
-
----
-
-## How discovery actually works
-
-The rules live in [`src/lib/services/ranking.ts`](src/lib/services/ranking.ts).
-
-- **Rising score** — `(likes·3 + comments·6 + views·0.05) / √(followers + 8)`,
-  multiplied by an exponential recency decay (30-hour half-life), a 1.25× lift for
-  accounts under 500 followers and 1.35× for "Give me a shot" posts. Dividing by
-  the square root of the existing audience is the whole point: 40 likes on a
-  20-follower account beats 400 likes on a 200,000-follower account.
-- **Trending** — raw engagement with the same recency decay, for the posts the
-  whole platform is engaging with.
-- **New** — most recent first, so a post is visible the second it exists.
-- **Give me a shot rotation** — shot posts are not ranked, they are *rotated*.
-  Posts from the last 24 hours go to the front; everything else advances through a
-  deterministic queue that moves every six hours. Nobody is promised virality;
-  everybody is promised a turn.
-- **Home feed** — four streams (people you follow, rising, recommended by your
-  interests, live challenge entries) are ranked separately and then interleaved,
-  so part of every screen is reserved for creators you have never seen.
-
-Leaderboards deliberately rank on earned momentum — RISE points this week, growth
-relative to audience size, challenge entries — never on raw follower count.
-
----
-
-## The RISE system
-
-Points are only ever awarded through `award()` in
-[`src/lib/services/points.ts`](src/lib/services/points.ts), and every award is
-written to the `activity` ledger, so progress is always explainable and can never
-be bought.
-
-| Action | Points |
-| --- | --- |
-| Create a post | +10 |
-| Receive a like | +2 |
-| Receive a comment | +3 |
-| Gain a follower | +5 |
-| Give a like / comment / follow | +1 |
-| Enter a challenge | +25 |
-| Have a post featured | +100 |
-| Show up (once per day) | +5 |
-
-| Level | Name | Points |
-| --- | --- | --- |
-| 1 | Rookie | 0 |
-| 2 | Rising | 100 |
-| 3 | Breakout | 400 |
-| 4 | Creator | 1,000 |
-| 5 | Featured | 2,500 |
-| 6 | Elite | 6,000 |
-| 7 | Icon | 15,000 |
-
-Crossing a threshold fires a level-up notification automatically.
+**A note on authentication:** auth is a self-contained email + username +
+password layer (scrypt hashes, signed HTTP-only cookies) so the same code path
+works on both drivers with zero setup. Supabase Auth can replace it later by
+swapping `src/lib/auth/session.ts` and `src/lib/services/account.ts` — nothing
+else needs to change, because everything reads `getViewer()`.
 
 ---
 
@@ -148,35 +223,26 @@ Crossing a threshold fires a level-up notification automatically.
 
 | Route | What it does |
 | --- | --- |
-| `/` | Landing page — the pitch, live creators, the current challenge, the levels |
-| `/signup`, `/login` | Fast signup: email, username, password, what you are trying to become, profile |
-| `/welcome` | Three-step orientation for a brand new account |
-| `/home` | Mixed feed with "For you" and "Following" |
-| `/discover` | Rising · Trending · New · Give me a shot, plus categories and creators to watch |
-| `/create` | Text, images, video, multiple media, category, challenge, tags, "Give me a shot" |
+| `/` | Landing page — the pitch, ratings, ranking, live creators, challenges |
+| `/signup`, `/login` | Fast signup: email, username, password, what you're becoming, profile |
+| `/welcome` | Three-step orientation for a new account |
+| `/home` | Mixed feed: follows, rising, recommended, live challenge entries |
+| `/discover` | Rising · Trending · New · Give me a shot, by category |
+| `/create` | Text, images, video, category, challenge, tags, Give me a shot |
 | `/challenges`, `/challenges/[slug]` | Weekly challenges, entries, featured entries |
-| `/u/[username]` | Profile with Posts / Challenges / About, RISE level and the creator journey |
-| `/post/[id]` | Post detail, comments, share, delete your own |
-| `/leaderboards` | Rising this week · Fastest growing · Top challenge creators, by category |
-| `/notifications` | Follows, likes, comments, mentions, features, level ups, challenges ending |
+| `/u/[username]` | Profile: both ratings, three ranks, rank history, journey |
+| `/post/[id]` | Post detail, community rating, reactions, comments |
+| `/rankings` | Overall · Current · Rising, by period and category |
+| `/notifications` | Follows, ratings, likes, comments, mentions, features, level ups |
 | `/search` | People, posts, categories, challenges |
 | `/settings` | Profile, blocked accounts, sign out, delete account |
-| `/admin` | Reports queue, moderation actions, platform statistics |
-| `/rules` | Community rules and how reporting works |
+| `/admin` | Overview · Reports · Integrity · Users |
+| `/rules` | Community rules, including rating manipulation |
 
-### Safety and moderation
-
-Report a post, a profile or a comment from the ••• menu; block someone from their
-profile (which also removes follows in both directions); delete your own posts or
-your whole account from settings. Admins work the queue at `/admin`: remove or
-restore posts, remove comments, suspend or ban accounts, feature posts, and
-resolve or dismiss reports. Suspended accounts can browse but cannot post; banned
-accounts cannot sign in. The rules themselves are at `/rules`.
-
-Privacy choices worth naming: location is a free-text city or country and is
-optional, emails are never exposed on a profile or through the API, sample imagery
-is generated by the app itself (`/api/cover/[seed]`) rather than fetched from a
-third-party image host, and RISE is not marketed to children.
+Alongside ratings, creators earn **FayTarra points** for participation across
+seven levels (Rookie → Icon). Points cannot be bought either; they are awarded
+in exactly one place, [`points.ts`](src/lib/services/points.ts), and every award
+is written to an `activity` ledger.
 
 ---
 
@@ -187,37 +253,24 @@ src/
   app/
     (app)/            # everything behind the shell (bottom nav / sidebar / right rail)
     (auth)/           # signup + login
+    api/v1/           # JSON API for future native clients
     api/              # upload, local media, generated cover art
-    actions.ts        # every server action (like, follow, comment, report, admin…)
-  components/         # Avatar, PostCard, Nav, Journey, LevelBadge, dialogs…
+    actions.ts        # server actions (rate, like, follow, comment, report, admin…)
+  components/         # PostCard, RateSheet, RatingPill, Nav, Journey…
   lib/
+    ratings.ts        # rating maths (pure, shared client/server)
+    shot.ts           # staged exposure ladder
     db/               # driver interface + local JSON driver + Supabase driver
-    services/         # feed, discover, ranking, points, challenges, moderation, admin…
+    services/         # ratings, rankings, feed, discover, integrity, moderation…
     seed/             # the sample community
 supabase/schema.sql   # tables, indexes, RLS, storage bucket
-scripts/seed.ts       # seeds whichever driver is configured
 ```
-
-Business logic lives in `src/lib/services`; storage is a tiny six-method interface
-in `src/lib/db/types.ts`. That is what makes swapping the local driver for Supabase
-a configuration change rather than a rewrite.
-
----
-
-## Built to become apps later
-
-RISE is mobile-first: bottom navigation on phones, a sidebar and right rail on
-desktop, safe-area padding, an installable web app manifest, and standalone
-display. Nothing in the UI assumes a desktop pointer. Wrapping it in a Capacitor
-or React Native WebView shell, or reusing the same services behind a native
-client, does not require reworking the feed, the ranking or the data model.
 
 ## Deliberately not built yet
 
-Direct messages, creator collaborations, live streaming, monetisation, brand
-partnerships, a creator marketplace, verified profiles, advanced recommendations,
-AI creator tools, native apps, creator analytics and sponsorships are all out of
-scope for this MVP. The seams for them exist: `activity` is already an append-only
-event ledger, ranking is isolated in one module, the driver interface can take new
-tables without touching feature code, and `PostView` is the single shape every
-surface renders.
+Direct messages, collaborations, live streaming, monetisation and paid boosts,
+brand partnerships, a creator marketplace, verified profiles, AI creator tools,
+native apps, creator analytics and sponsorships. The seams exist: `activity` is
+an append-only event ledger, ratings and ranking are isolated modules, the
+`boosted` field is already excluded from every score, and the driver interface
+takes new tables without touching feature code.

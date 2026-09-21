@@ -3,6 +3,7 @@ import type { CreatorCard } from '@/lib/services/discover';
 import { Avatar } from './Avatar';
 import { FollowButton } from './FollowButton';
 import { LevelBadge } from './LevelBadge';
+import { RatingPill } from './RatingPill';
 
 /** Horizontal, swipeable row of creators — used on Discover. */
 export function CreatorRow({
@@ -39,6 +40,7 @@ export function CreatorRow({
             {creator.user.bio || 'Starting at zero.'}
           </p>
           <div className="mt-3 flex items-center justify-center gap-2">
+            <RatingPill value={creator.rating} trend={creator.trend} size="sm" />
             <LevelBadge level={creator.level} name={creator.levelName} size="xs" />
           </div>
           <p className="mt-2 text-[11px] text-white/35">

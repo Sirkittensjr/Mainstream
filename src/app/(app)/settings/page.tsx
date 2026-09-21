@@ -24,7 +24,7 @@ export default async function SettingsPage() {
         <div className="hidden lg:block">
           <h1 className="font-display text-3xl font-extrabold tracking-tight">Settings</h1>
           <p className="mt-1 text-white/45">
-            Signed in as @{viewer.username} · {viewer.rise_points.toLocaleString()} RISE points
+            Signed in as @{viewer.username} · {viewer.points.toLocaleString()} FayTarra points
           </p>
         </div>
 
@@ -68,7 +68,7 @@ export default async function SettingsPage() {
           )}
           <Link
             href="/rules"
-            className="mt-5 inline-block text-sm font-semibold text-ember hover:underline"
+            className="mt-5 inline-block text-sm font-semibold text-fay hover:underline"
           >
             Read the community rules
           </Link>

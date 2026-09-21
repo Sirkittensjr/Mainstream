@@ -41,7 +41,7 @@ export default async function ChallengePage({
           className="card p-6 sm:p-8"
           style={{
             backgroundImage:
-              'linear-gradient(130deg, rgba(255,92,57,0.2), rgba(124,92,255,0.12))',
+              'linear-gradient(130deg, rgba(255,61,154,0.2), rgba(124,92,255,0.12))',
           }}
         >
           <p className="label flex items-center gap-2">
