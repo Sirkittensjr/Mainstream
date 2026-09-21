@@ -2,7 +2,7 @@
   "name": "faytarra",
   "version": "0.1.0",
   "private": true,
-  "description": "FayTarra — share what you're into. A social network for music, art, gaming, food, sport and everything else.",
+  "description": "FayTarra — where the community decides what they like. A social network for music, art, gaming, food, sport and everything else.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

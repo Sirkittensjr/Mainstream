@@ -11,18 +11,18 @@ const display = Space_Grotesk({
 
 export const metadata: Metadata = {
   title: {
-    default: "FayTarra — Share what you're into",
+    default: 'FayTarra — Where the community decides what they like',
     template: '%s · FayTarra',
   },
   description:
-    "Music, jokes, gaming, art, food, sports, random moments. Post what you're into, find people who get it, and have some fun.",
+    'Post the music, art, gaming, food, jokes and random moments you are into. Everyone else weighs in with likes, comments and a rating out of 10.',
   applicationName: 'FayTarra',
   appleWebApp: { capable: true, title: 'FayTarra', statusBarStyle: 'black-translucent' },
   manifest: '/manifest.webmanifest',
   openGraph: {
-    title: "FayTarra — Share what you're into",
+    title: 'FayTarra — Where the community decides what they like',
     description:
-      "Whatever you want to share, there's a place for it here. Post it, find people who get it, have some fun.",
+      'Post whatever you are into. Everyone else weighs in with likes, comments and a rating out of 10.',
     type: 'website',
   },
 };

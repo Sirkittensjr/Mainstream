@@ -6,10 +6,10 @@ import type { MetadataRoute } from 'next';
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "FayTarra — Share what you're into",
+    name: 'FayTarra — Where the community decides what they like',
     short_name: 'FayTarra',
     description:
-      "Music, jokes, gaming, art, food, sports, random moments. Post what you're into and find people who get it.",
+      'Post whatever you are into. Everyone else weighs in with likes, comments and a rating out of 10.',
     start_url: '/home',
     display: 'standalone',
     background_color: '#06060A',

@@ -1,10 +1,10 @@
 # FayTarra
 
-**Share what you're into.**
+**Where the community decides what they like.**
 
-Music. Jokes. Gaming. Art. Food. Sports. Random moments. Whatever you want to
-share, there's a place for it here — post it, find people who get it, have some
-fun. You follow people, post what you are into, and rate what is good.
+Post the music, art, gaming, food, jokes and random moments you are into, and
+everyone else weighs in with likes, comments and a rating out of 10. You follow
+people, post the things you like, and the community says what it thinks.
 
 The thing that makes it FayTarra is the rating: every post and every profile can
 be rated 1–10, and those ratings drive discovery instead of follower count.
