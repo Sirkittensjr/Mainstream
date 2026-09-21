@@ -1,0 +1,100 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-ink-950 text-white antialiased;
+    background-image:
+      radial-gradient(60rem 40rem at 85% -10%, rgba(124, 92, 255, 0.18), transparent 60%),
+      radial-gradient(52rem 38rem at 0% 0%, rgba(255, 61, 154, 0.16), transparent 55%);
+    background-attachment: fixed;
+  }
+
+  /* Bottom navigation sits above the iOS home indicator. */
+  .safe-bottom {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+
+  ::selection {
+    @apply bg-fay/40 text-white;
+  }
+
+  input,
+  textarea,
+  select {
+    @apply bg-ink-850 border border-white/10 rounded-2xl px-4 py-3 text-[15px] outline-none transition;
+  }
+
+  input:focus,
+  textarea:focus,
+  select:focus {
+    @apply border-fay/70 ring-2 ring-fay/20;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    @apply text-white/30;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-3xl border border-white/[0.07] bg-ink-900/70 backdrop-blur-xl shadow-card;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-3 text-[15px] font-semibold
+      transition active:scale-[0.97] disabled:opacity-50 disabled:pointer-events-none;
+  }
+
+  .btn-primary {
+    @apply btn text-ink-950 shadow-glow;
+    background-image: linear-gradient(120deg, #7c5cff 0%, #ff3d9a 52%, #ffb443 100%);
+  }
+
+  .btn-ghost {
+    @apply btn border border-white/[0.12] bg-white/[0.04] text-white hover:bg-white/[0.09];
+  }
+
+  .btn-quiet {
+    @apply btn bg-transparent text-white/60 hover:text-white;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-white/10
+      bg-white/[0.04] px-3.5 py-1.5 text-[13px] font-medium text-white/70 transition;
+  }
+
+  .chip-active {
+    @apply border-transparent bg-white text-ink-950;
+  }
+
+  .label {
+    @apply text-[11px] font-bold uppercase tracking-[0.18em] text-white/40;
+  }
+
+  .gradient-text {
+    background-image: linear-gradient(100deg, #ffb443, #ff3d9a 48%, #7c5cff);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
