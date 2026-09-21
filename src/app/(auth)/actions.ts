@@ -3,12 +3,19 @@
 import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { newId } from '@/lib/ids';
-import { setSessionCookie } from '@/lib/auth/session';
-import { signIn, signUp } from '@/lib/services/account';
+import {
+  requestPasswordReset,
+  resendConfirmation,
+  signIn,
+  signUp,
+  updatePassword,
+} from '@/lib/services/account';
+import { getUserByUsername } from '@/lib/services/users';
 import { CATEGORIES, type Category } from '@/lib/types';
 
 export interface AuthState {
   error?: string;
+  notice?: string;
 }
 
 const AVATAR_TYPES: Record<string, string> = {
@@ -39,8 +46,9 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
     );
   }
 
+  const email = String(formData.get('email') || '');
   const result = await signUp({
-    email: String(formData.get('email') || ''),
+    email,
     username: String(formData.get('username') || ''),
     password: String(formData.get('password') || ''),
     display_name: String(formData.get('display_name') || ''),
@@ -51,17 +59,70 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
   });
   if (!result.ok) return { error: result.error };
 
-  await setSessionCookie(result.value.id);
+  // Supabase sends the confirmation mail. There is no session until the link
+  // is followed, so there is nothing to log in to yet.
+  if (result.value.needsEmailConfirmation) {
+    redirect(`/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}`);
+  }
   redirect('/home?tab=recommended');
 }
 
 export async function loginAction(_prev: AuthState, formData: FormData): Promise<AuthState> {
-  const result = await signIn(
-    String(formData.get('identifier') || ''),
-    String(formData.get('password') || ''),
-  );
-  if (!result.ok) return { error: result.error };
-  await setSessionCookie(result.value.id);
+  const identifier = String(formData.get('identifier') || '').trim();
+  const password = String(formData.get('password') || '');
+
+  // Supabase signs people in by email, so a username has to be resolved first.
+  let email = identifier.toLowerCase();
+  if (email && !email.includes('@')) {
+    const profile = await getUserByUsername(email);
+    // A miss still goes to Supabase with an address that cannot exist, so the
+    // reply is the same either way and usernames cannot be probed from here.
+    email = profile?.email ?? `${email}@invalid.faytarra`;
+  }
+
+  const result = await signIn(email, password);
+  if (!result.ok) {
+    if (result.needsEmailConfirmation) {
+      redirect(`/verify-email?email=${encodeURIComponent(email)}&resend=1`);
+    }
+    return { error: result.error };
+  }
+
   const next = String(formData.get('next') || '/home');
-  redirect(next.startsWith('/') ? next : '/home');
+  redirect(next.startsWith('/') && !next.startsWith('//') ? next : '/home');
+}
+
+export async function resendConfirmationAction(
+  _prev: AuthState,
+  formData: FormData,
+): Promise<AuthState> {
+  const email = String(formData.get('email') || '');
+  if (!email.includes('@')) return { error: 'Enter the email address you signed up with.' };
+  const result = await resendConfirmation(email);
+  if (!result.ok) return { error: result.error };
+  return { notice: 'Sent. Give it a minute and check your spam folder too.' };
+}
+
+export async function forgotPasswordAction(
+  _prev: AuthState,
+  formData: FormData,
+): Promise<AuthState> {
+  const email = String(formData.get('email') || '');
+  if (!email.includes('@')) return { error: 'Enter the email address on your account.' };
+  const result = await requestPasswordReset(email);
+  if (!result.ok) return { error: result.error };
+  return { notice: 'If that address has an account, a reset link is on its way.' };
+}
+
+export async function resetPasswordAction(
+  _prev: AuthState,
+  formData: FormData,
+): Promise<AuthState> {
+  const password = String(formData.get('password') || '');
+  if (password !== String(formData.get('confirm') || '')) {
+    return { error: 'Those passwords do not match.' };
+  }
+  const result = await updatePassword(password);
+  if (!result.ok) return { error: result.error };
+  redirect('/home?tab=recommended');
 }

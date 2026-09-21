@@ -1,10 +1,13 @@
 'use client';
 
 import { useActionState } from 'react';
+import Link from 'next/link';
 import { loginAction, type AuthState } from '../actions';
 
-export function LoginForm({ next }: { next: string }) {
+export function LoginForm({ next, error }: { next: string; error?: string }) {
   const [state, formAction, pending] = useActionState<AuthState, FormData>(loginAction, {});
+  // `error` carries anything the Supabase email links reported on their way back.
+  const message = state.error ?? error;
 
   return (
     <form action={formAction} className="mt-8 space-y-4">
@@ -23,9 +26,14 @@ export function LoginForm({ next }: { next: string }) {
         />
       </div>
       <div>
-        <label className="label" htmlFor="password">
-          Password
-        </label>
+        <div className="flex items-baseline justify-between">
+          <label className="label" htmlFor="password">
+            Password
+          </label>
+          <Link href="/forgot-password" className="text-xs text-fay hover:underline">
+            Forgot it?
+          </Link>
+        </div>
         <input
           id="password"
           name="password"
@@ -36,9 +44,9 @@ export function LoginForm({ next }: { next: string }) {
           className="mt-2 w-full"
         />
       </div>
-      {state.error && (
+      {message && (
         <p className="rounded-2xl border border-fay/40 bg-fay/10 px-4 py-3 text-sm text-fay-soft">
-          {state.error}
+          {message}
         </p>
       )}
       <button type="submit" disabled={pending} className="btn-primary w-full py-4">

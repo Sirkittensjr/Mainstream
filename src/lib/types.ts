@@ -48,11 +48,12 @@ export type UserRole = 'user' | 'admin';
 export type UserStatus = 'active' | 'suspended' | 'banned';
 
 export interface User {
+  /** Same id as the Supabase Auth user. This row is the profile. */
   id: ID;
+  /** Mirrored from auth.users so moderators can search by address. */
   email: string;
   username: string;
   display_name: string;
-  password_hash: string;
   bio: string;
   avatar_url: string | null;
   location: string | null;
@@ -71,8 +72,8 @@ export interface User {
   last_active_at: ISODate;
 }
 
-/** A user as exposed to the client — never carries the password hash. */
-export type PublicUser = Omit<User, 'password_hash' | 'email'> & { email?: string };
+/** A user as exposed to the client — never carries the email address. */
+export type PublicUser = Omit<User, 'email'> & { email?: string };
 
 export type MediaKind = 'image' | 'video';
 
@@ -173,9 +174,4 @@ export interface Report {
   status: ReportStatus;
   resolution: string | null;
   created_at: ISODate;
-}
-
-export interface Session {
-  user_id: ID;
-  issued_at: number;
 }

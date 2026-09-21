@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { SignupForm } from './SignupForm';
+import { authConfigured } from '@/lib/supabase/config';
+import { AuthNotConfigured } from '../AuthNotConfigured';
 
 export const metadata: Metadata = { title: 'Join FayTarra' };
 
@@ -17,7 +19,7 @@ export default function SignupPage() {
         You need an email, a username and a password. Everything else can change later.
       </p>
 
-      <SignupForm />
+      {authConfigured() ? <SignupForm /> : <AuthNotConfigured />}
 
       <p className="mt-6 text-center text-sm text-white/50">
         Already on FayTarra?{' '}

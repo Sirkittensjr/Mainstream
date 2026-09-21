@@ -1,4 +1,3 @@
-import { scryptSync } from 'node:crypto';
 import type { Schema, TableName } from '@/lib/db/types';
 import type {
   Category,
@@ -16,7 +15,10 @@ import { FILLER_BIOS, FILLER_CAPTIONS, FIRST_NAMES, HANDLE_SUFFIXES, SEED_CREATO
 
 type Store = { [K in TableName]: Schema[K][] };
 
-/** Every sample account shares this password so the demo is easy to explore. */
+/**
+ * Every sample account shares this password. The seed script hands it to
+ * Supabase Auth, which does the hashing — we never store a password here.
+ */
 export const SEED_PASSWORD = 'faydemo123';
 export const DEMO_LOGIN = { email: 'tommy@faytarra.app', password: SEED_PASSWORD };
 export const ADMIN_LOGIN = { email: 'admin@faytarra.app', password: SEED_PASSWORD };
@@ -62,14 +64,6 @@ function iso(daysAgo: number, jitterHours = 12): string {
   const offset = daysAgo * DAY + Math.floor(rand() * jitterHours * 3_600_000);
   return new Date(NOW - offset).toISOString();
 }
-
-/** Deterministic hash so the seeded dataset is byte-stable across runs. */
-const SEED_SALT = Buffer.from('726973657365656473616c7476616c75', 'hex');
-const SEED_HASH = `scrypt$${SEED_SALT.toString('hex')}$${scryptSync(
-  SEED_PASSWORD,
-  SEED_SALT,
-  64,
-).toString('hex')}`;
 
 const REPORT_REASONS = ['Spam or scam', 'Harassment', 'Hate speech', 'Impersonation'];
 
@@ -120,7 +114,6 @@ export function seedInto(store: Store): Store {
     email: ADMIN_LOGIN.email,
     username: 'faytarra',
     display_name: 'FayTarra Team',
-    password_hash: SEED_HASH,
     bio: 'We keep this place friendly. Post something.',
     avatar_url: null,
     location: 'Everywhere',
@@ -141,7 +134,6 @@ export function seedInto(store: Store): Store {
       email: `${creator.username}@faytarra.app`,
       username: creator.username,
       display_name: creator.display_name,
-      password_hash: SEED_HASH,
       bio: creator.bio,
       avatar_url: null,
       location: creator.location,
@@ -201,7 +193,6 @@ export function seedInto(store: Store): Store {
       email: `${username}@example.com`,
       username,
       display_name: username[0].toUpperCase() + username.slice(1),
-      password_hash: SEED_HASH,
       bio: pick(FILLER_BIOS),
       avatar_url: null,
       location: null,
@@ -372,7 +363,6 @@ export function seedInto(store: Store): Store {
         email: `pixelfan${i + 1}@example.com`,
         username: `pixelfan${i + 1}`,
         display_name: `Pixel Fan ${i + 1}`,
-        password_hash: SEED_HASH,
         bio: 'big fan',
         avatar_url: null,
         location: null,
