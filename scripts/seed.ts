@@ -6,12 +6,18 @@
  *
  * With Supabase configured, run supabase/schema.sql first.
  */
-import { config } from 'dotenv';
 import { buildSeedStore } from '../src/lib/seed/data';
 import type { TableName } from '../src/lib/db/types';
 
-config({ path: '.env.local' });
-config({ path: '.env' });
+// Node's own env-file loader (20.12+), so this script needs no dependency of
+// its own — one less package that `next build` has to resolve.
+for (const file of ['.env.local', '.env']) {
+  try {
+    process.loadEnvFile(file);
+  } catch {
+    // Not present, which is fine: the local driver needs no configuration.
+  }
+}
 
 async function main() {
   // Imported directly rather than through `@/lib/db`, which is server-only.
