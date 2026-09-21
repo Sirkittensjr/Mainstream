@@ -26,5 +26,19 @@ export function db(): Driver {
   return localDriver();
 }
 
+/**
+ * Whether what gets written will still be there later.
+ *
+ * The local JSON driver is fine on a developer's machine. On a serverless host
+ * it writes to a per-instance temp directory that is wiped between instances,
+ * so anything stored there is gone — which matters most at signup, where a
+ * person would get a real Supabase Auth account whose FayTarra profile then
+ * evaporates. That is worse than refusing, because it looks like it worked.
+ */
+export function storageIsDurable(): boolean {
+  if (supabaseConfigured()) return true;
+  return !(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+}
+
 export type { Driver, QueryOptions, Row, Schema, TableName } from './types';
 export { supabaseConfigured };

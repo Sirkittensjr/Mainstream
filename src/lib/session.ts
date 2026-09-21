@@ -4,7 +4,7 @@ import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
 import { db } from '@/lib/db';
-import { SUPABASE_ANON_KEY, SUPABASE_URL } from '@/lib/supabase/config';
+import { supabaseAnonKey, supabaseUrl } from '@/lib/supabase/config';
 import { createAuthClient } from '@/lib/supabase/server';
 import type { User } from '@/lib/types';
 
@@ -31,8 +31,10 @@ async function authenticatedUserId(): Promise<string | null> {
   const authorization = (await headers()).get('authorization');
   if (authorization?.startsWith('Bearer ')) {
     const token = authorization.slice(7).trim();
-    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
-    const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    const url = supabaseUrl();
+    const anonKey = supabaseAnonKey();
+    if (!url || !anonKey) return null;
+    const client = createClient(url, anonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
     const { data, error } = await client.auth.getUser(token);

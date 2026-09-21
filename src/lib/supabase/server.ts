@@ -1,7 +1,7 @@
 import 'server-only';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
-import { SUPABASE_ANON_KEY, SUPABASE_URL, authConfigured } from './config';
+import { authConfigured, supabaseAnonKey, supabaseUrl } from './config';
 
 /**
  * Request-scoped Supabase client for authentication.
@@ -18,7 +18,7 @@ export async function createAuthClient() {
   if (!authConfigured()) return null;
   const cookieStore = await cookies();
 
-  return createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  return createServerClient(supabaseUrl(), supabaseAnonKey(), {
     cookies: {
       getAll() {
         return cookieStore.getAll();
@@ -43,8 +43,9 @@ export async function createAuthClient() {
  */
 export function createAdminAuthClient() {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!SUPABASE_URL || !serviceKey) return null;
-  return createServerClient(SUPABASE_URL, serviceKey, {
+  const url = supabaseUrl();
+  if (!url || !serviceKey) return null;
+  return createServerClient(url, serviceKey, {
     cookies: { getAll: () => [], setAll: () => {} },
     auth: { persistSession: false, autoRefreshToken: false },
   });

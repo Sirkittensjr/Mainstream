@@ -1,5 +1,6 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
+import { supabaseAnonKey, supabaseUrl } from '@/lib/supabase/config';
 
 /**
  * Keeps the Supabase session alive across navigations.
@@ -18,8 +19,8 @@ export async function middleware(request: NextRequest) {
   // return, which may be the redirect below rather than the pass-through.
   const refreshed: { name: string; value: string; options: CookieOptions }[] = [];
 
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const url = supabaseUrl();
+  const anonKey = supabaseAnonKey();
   if (!url || !anonKey) return NextResponse.next({ request });
 
   const supabase = createServerClient(url, anonKey, {

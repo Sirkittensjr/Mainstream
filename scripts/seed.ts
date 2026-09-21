@@ -32,7 +32,7 @@ type Store = { [K in TableName]: Schema[K][] };
  * script can be run again without tripping over itself.
  */
 async function createAuthUsers(store: Store): Promise<void> {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceKey) {
     throw new Error(

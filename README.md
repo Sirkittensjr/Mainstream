@@ -248,7 +248,7 @@ build it themselves; set the same variables and ignore the standalone output.
 
 | Variable | Why it matters |
 | --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase Auth. Without them **nobody can sign up or sign in** — the auth screens say so. |
+| `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY`<br>(or `SUPABASE_URL` + `SUPABASE_ANON_KEY`) | Supabase Auth. Without them **nobody can sign up or sign in** — the auth screens say so, and name the missing variable. |
 | `NEXT_PUBLIC_SITE_URL` | The absolute URL Supabase puts in confirmation and reset emails. On Vercel it falls back to the deployment URL, which is fine for previews and wrong for a custom domain. |
 | `SUPABASE_SERVICE_ROLE_KEY` | The database driver, and deleting an account's Supabase Auth user. Without it the app runs on the bundled JSON driver, which writes to `./.data`. On a container or serverless host that is ephemeral or read-only, so **every post and rating disappears on restart**. The server logs a warning if you deploy this way. |
 | `SUPABASE_STORAGE_BUCKET` | Where uploads go. Local disk uploads do not survive a redeploy either. |
@@ -290,6 +290,39 @@ first-class Next.js support.
 The driver is chosen automatically: Supabase when those keys are set, the local
 JSON store otherwise. Uploads follow the same rule — Supabase Storage in
 production, local disk served through `/api/media/[file]` in development.
+
+### Connecting a deployment to Supabase
+
+Set these on the host (Vercel: Project → Settings → Environment Variables,
+scoped to **Production**), then **redeploy with the build cache turned off**:
+
+```
+SUPABASE_URL=https://<project>.supabase.co
+SUPABASE_ANON_KEY=<anon key>
+SUPABASE_SERVICE_ROLE_KEY=<service role key>     # secret
+SITE_URL=https://<your domain>
+```
+
+Then open `/api/health`. It returns `ready: true` when the deployment is
+wired up, and otherwise names exactly what is missing. It reports booleans and
+variable names only — never a value — so it is safe to leave public.
+
+Two things make this go wrong more often than it should:
+
+- **`NEXT_PUBLIC_*` variables are inlined at build time.** Adding one in the
+  dashboard changes nothing about a deployment that is already built, and a
+  redeploy that reuses the build cache can miss it too. That is why the
+  unprefixed names above are also accepted: they are read at runtime. Use
+  those and the build cache stops mattering.
+- **Auth and the database are separate.** Setting only the two auth variables
+  gives people a real Supabase Auth login while their FayTarra profile is
+  written to a per-instance temp directory that does not survive the request.
+  Signing up is refused in that state rather than quietly losing the account;
+  `SUPABASE_SERVICE_ROLE_KEY` is what fixes it.
+
+Also run the migrations in [`supabase/migrations/`](supabase/migrations)
+against the project, in order, or new accounts get no profile trigger and the
+anon key keeps more power than it should.
 
 ### What a leaked anon key can do
 
