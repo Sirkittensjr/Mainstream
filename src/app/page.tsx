@@ -74,8 +74,8 @@ export default async function LandingPage() {
               body: 'A Following feed for the people you like, and a Recommended feed for everyone else worth seeing.',
             },
             {
-              title: 'Rate what is good',
-              body: 'Anything can be rated 1–10 — posts and profiles. It is how good work gets noticed here.',
+              title: 'Say what you think',
+              body: 'Anything can be shared, liked, commented on, and rated by the community.',
             },
           ].map((item) => (
             <div key={item.title} className="card p-6">
@@ -142,7 +142,10 @@ export default async function LandingPage() {
               <h2 className="font-display text-3xl font-bold tracking-tight">
                 Best rated right now
               </h2>
-              <p className="mt-1 text-white/45">Ranked by ratings, never by follower count.</p>
+              <p className="mt-1 max-w-xl text-white/45">
+                Rankings are based on community ratings and the strength of those ratings — not
+                simply how many followers someone has.
+              </p>
             </div>
             <Link href="/discover" className="btn-ghost hidden px-5 py-2.5 text-sm sm:inline-flex">
               See Discover <ArrowIcon width={16} height={16} />
