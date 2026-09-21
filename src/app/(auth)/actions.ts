@@ -2,6 +2,7 @@
 
 import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
+import { EXTENSION_FOR, sniffType, type SniffedType } from '@/lib/file-type';
 import { newId } from '@/lib/ids';
 import {
   requestPasswordReset,
@@ -10,7 +11,7 @@ import {
   signUp,
   updatePassword,
 } from '@/lib/services/account';
-import { getUserByUsername } from '@/lib/services/users';
+import { getUserByUsername, updateProfile } from '@/lib/services/users';
 import { CATEGORIES, type Category } from '@/lib/types';
 
 export interface AuthState {
@@ -18,32 +19,25 @@ export interface AuthState {
   notice?: string;
 }
 
-const AVATAR_TYPES: Record<string, string> = {
-  'image/jpeg': '.jpg',
-  'image/png': '.png',
-  'image/webp': '.webp',
-  'image/gif': '.gif',
-};
-
 export async function signupAction(_prev: AuthState, formData: FormData): Promise<AuthState> {
   const interests = formData
     .getAll('interests')
     .map(String)
     .filter((value): value is Category => (CATEGORIES as readonly string[]).includes(value));
 
-  // The avatar rides along with the signup form so we never need an upload
-  // endpoint that accepts files from people without an account.
-  let avatarUrl: string | null = null;
+  // The avatar is validated here but only STORED once Supabase has actually
+  // created the account. Writing it first would make this an upload endpoint
+  // that needs no account at all — free storage for anyone with a script.
   const avatar = formData.get('avatar');
+  let avatarBytes: { data: Uint8Array; type: SniffedType } | null = null;
   if (avatar instanceof File && avatar.size > 0) {
-    const extension = AVATAR_TYPES[avatar.type];
-    if (!extension) return { error: 'Profile picture must be a JPG, PNG, WEBP or GIF.' };
     if (avatar.size > 6 * 1024 * 1024) return { error: 'Profile picture must be under 6MB.' };
-    avatarUrl = await db().putMedia(
-      `${newId()}${extension}`,
-      avatar.type,
-      new Uint8Array(await avatar.arrayBuffer()),
-    );
+    const data = new Uint8Array(await avatar.arrayBuffer());
+    const type = sniffType(data);
+    if (!type || !type.startsWith('image/')) {
+      return { error: 'Profile picture must be a JPG, PNG, WEBP or GIF.' };
+    }
+    avatarBytes = { data, type };
   }
 
   const email = String(formData.get('email') || '');
@@ -54,10 +48,24 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
     display_name: String(formData.get('display_name') || ''),
     bio: String(formData.get('bio') || ''),
     location: String(formData.get('location') || ''),
-    avatar_url: avatarUrl,
+    avatar_url: null,
     interests,
   });
   if (!result.ok) return { error: result.error };
+
+  if (avatarBytes) {
+    try {
+      const url = await db().putMedia(
+        `${newId()}${EXTENSION_FOR[avatarBytes.type]}`,
+        avatarBytes.type,
+        avatarBytes.data,
+      );
+      await updateProfile(result.value.userId, { avatar_url: url });
+    } catch {
+      // A picture is not worth failing the signup over — they can add one in
+      // settings.
+    }
+  }
 
   // Supabase sends the confirmation mail. There is no session until the link
   // is followed, so there is nothing to log in to yet.

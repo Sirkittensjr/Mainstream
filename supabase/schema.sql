@@ -60,6 +60,10 @@ create table if not exists public.posts (
 create index if not exists posts_author_idx on public.posts (author_id);
 create index if not exists posts_created_idx on public.posts (created_at desc);
 create index if not exists posts_category_idx on public.posts (category);
+create index if not exists posts_visible_idx
+  on public.posts (created_at desc) where removed = false;
+create index if not exists posts_author_visible_idx
+  on public.posts (author_id, created_at desc) where removed = false;
 
 -- Likes --------------------------------------------------------------------
 create table if not exists public.likes (
@@ -71,18 +75,24 @@ create table if not exists public.likes (
 );
 
 create index if not exists likes_post_idx on public.likes (post_id);
+create index if not exists likes_user_idx on public.likes (user_id);
 
 -- Comments -----------------------------------------------------------------
 create table if not exists public.comments (
   id         uuid primary key default gen_random_uuid(),
   post_id    uuid not null references public.posts (id) on delete cascade,
   user_id    uuid not null references public.users (id) on delete cascade,
+  -- Replies are one level deep: a reply points at a top-level comment, and a
+  -- reply to a reply attaches to the same parent.
+  parent_id  uuid references public.comments (id) on delete cascade,
   body       text not null,
   removed    boolean not null default false,
   created_at timestamptz not null default now()
 );
 
 create index if not exists comments_post_idx on public.comments (post_id);
+create index if not exists comments_user_idx on public.comments (user_id);
+create index if not exists comments_parent_idx on public.comments (parent_id);
 
 -- Follows ------------------------------------------------------------------
 create table if not exists public.follows (
@@ -143,6 +153,8 @@ create table if not exists public.notifications (
 );
 
 create index if not exists notifications_user_idx on public.notifications (user_id, created_at desc);
+create index if not exists notifications_unread_idx
+  on public.notifications (user_id) where read = false;
 
 -- Reports ------------------------------------------------------------------
 create table if not exists public.reports (
@@ -158,6 +170,7 @@ create table if not exists public.reports (
 );
 
 create index if not exists reports_status_idx on public.reports (status, created_at desc);
+create index if not exists reports_reporter_idx on public.reports (reporter_id, created_at desc);
 
 -- Row level security --------------------------------------------------------
 -- Every table is locked down: the app server uses the service role key, which
@@ -272,6 +285,55 @@ drop policy if exists "profiles are publicly readable" on public.users;
 create policy "profiles are publicly readable"
   on public.users for select
   using (status <> 'banned');
+
+-- ---------------------------------------------------------------------------
+-- What the API roles may see and change on public.users.
+--
+-- Supabase grants `anon` and `authenticated` full table access by default and
+-- relies on RLS. RLS decides WHICH ROWS — it cannot stop a permitted row from
+-- being read or written COLUMN BY COLUMN. Two consequences, both real:
+--
+--   * "profiles are publicly readable" handed out the mirrored email address
+--     to anyone holding the anon key, which ships to every browser.
+--   * "people can edit their own profile" let a signed-in person PATCH their
+--     own row through the REST API and set role = 'admin', clear a ban, or
+--     restore the `trusted` flag a moderator had revoked.
+--
+-- A column-level REVOKE does not help: a table-level grant covers every
+-- column and outranks it. So the table grant goes, and only the safe columns
+-- are granted back.
+--
+-- The app itself is unaffected: it talks to the database with the service
+-- role, which bypasses all of this. These grants are the blast radius of a
+-- leaked anon key.
+--
+-- ADDING A COLUMN TO public.users? Add it to the SELECT list below, and to the
+-- UPDATE list only if its owner is allowed to set it themselves.
+-- ---------------------------------------------------------------------------
+do $$
+declare
+  api_role text;
+begin
+  foreach api_role in array array['anon', 'authenticated'] loop
+    if not exists (select 1 from pg_roles where rolname = api_role) then
+      continue;
+    end if;
+
+    execute format('revoke all on public.users from %I', api_role);
+
+    execute format(
+      'grant select (id, username, display_name, bio, avatar_url, location, '
+      'interests, role, status, status_reason, trusted, created_at, last_active_at) '
+      'on public.users to %I', api_role);
+  end loop;
+
+  -- Only a signed-in person can change anything, and only their own profile
+  -- fields. The RLS policy below is what restricts it to their own row.
+  if exists (select 1 from pg_roles where rolname = 'authenticated') then
+    grant update (display_name, bio, avatar_url, location, interests)
+      on public.users to authenticated;
+  end if;
+end $$;
 
 drop policy if exists "people can edit their own profile" on public.users;
 create policy "people can edit their own profile"

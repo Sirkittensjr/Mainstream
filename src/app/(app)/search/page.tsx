@@ -8,6 +8,7 @@ import { PostList } from '@/components/PostList';
 import { SearchIcon } from '@/components/Icons';
 import { SectionHeader } from '@/components/EmptyState';
 import { search } from '@/lib/services/search';
+import { followingIds } from '@/lib/services/users';
 import { CATEGORIES } from '@/lib/types';
 import { getViewer } from '@/lib/session';
 
@@ -22,7 +23,10 @@ export default async function SearchPage({
   const { q } = await searchParams;
   const query = (q ?? '').trim();
   const viewer = await getViewer();
-  const results = await search(query, viewer?.id ?? null);
+  const [results, following] = await Promise.all([
+    search(query, viewer?.id ?? null),
+    viewer ? followingIds(viewer.id) : Promise.resolve(new Set<string>()),
+  ]);
   const nothing =
     query &&
     results.people.length === 0 &&
@@ -39,7 +43,7 @@ export default async function SearchPage({
             name="q"
             defaultValue={query}
             autoFocus={!query}
-            placeholder="People, posts, categories, challenges"
+            placeholder="People, posts, tags, categories"
             className="w-full py-4 pl-12"
             aria-label="Search FayTarra"
           />
@@ -95,7 +99,7 @@ export default async function SearchPage({
                   {viewer && viewer.id !== entry.user.id && (
                     <FollowButton
                       userId={entry.user.id}
-                      initialFollowing={false}
+                      initialFollowing={following.has(entry.user.id)}
                       signedIn={Boolean(viewer)}
                     />
                   )}

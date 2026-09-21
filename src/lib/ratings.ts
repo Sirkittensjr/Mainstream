@@ -69,6 +69,13 @@ export const PRIOR_VOTES = {
 /** Below this many effective votes, nothing appears in a ranking at all. */
 export const MIN_VOTES_FOR_RANKING = 10;
 
+/**
+ * The same idea for a single post, set lower: a post collects ratings from one
+ * audience over a few days, where a person collects them across everything
+ * they have ever posted.
+ */
+export const MIN_VOTES_FOR_POST_RANKING = 4;
+
 /** ≈90% one-sided confidence. Higher is harsher on small samples. */
 export const CONFIDENCE_Z = 1.6;
 

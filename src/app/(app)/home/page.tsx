@@ -3,7 +3,8 @@ import Link from 'next/link';
 import { EmptyState } from '@/components/EmptyState';
 import { PageTopBar } from '@/components/PageTopBar';
 import { PostList } from '@/components/PostList';
-import { followingFeed, recommendedFeed } from '@/lib/services/feed';
+import { LoadMore } from '@/components/LoadMore';
+import { FEED_MAX, FEED_PAGE, followingFeed, recommendedFeed } from '@/lib/services/feed';
 import { getViewer } from '@/lib/session';
 
 export const metadata: Metadata = { title: 'Home' };
@@ -12,14 +13,29 @@ export const dynamic = 'force-dynamic';
 export default async function HomePage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; show?: string }>;
 }) {
-  const { tab } = await searchParams;
+  const { tab, show } = await searchParams;
   const viewer = await getViewer();
   // Signed-out visitors have nobody to follow, so they get Recommended.
   const onFollowing = Boolean(viewer) && tab !== 'recommended';
 
-  const posts = onFollowing && viewer ? await followingFeed(viewer) : await recommendedFeed(viewer);
+  // "Show more" grows the page rather than paginating, so the posts already
+  // read stay where they were and nothing is lost on the way back.
+  const requested = Number.parseInt(show ?? '', 10);
+  const limit = Number.isFinite(requested)
+    ? Math.min(Math.max(requested, FEED_PAGE), FEED_MAX)
+    : FEED_PAGE;
+
+  const feed =
+    onFollowing && viewer
+      ? await followingFeed(viewer, limit)
+      : await recommendedFeed(viewer, limit);
+
+  const moreHref = `/home?${new URLSearchParams({
+    ...(onFollowing ? {} : { tab: 'recommended' }),
+    show: String(Math.min(limit + FEED_PAGE, FEED_MAX)),
+  })}`;
 
   return (
     <>
@@ -61,7 +77,7 @@ export default async function HomePage({
         )}
 
         <PostList
-          posts={posts}
+          posts={feed.posts}
           viewerId={viewer?.id ?? null}
           empty={
             onFollowing ? (
@@ -80,19 +96,31 @@ export default async function HomePage({
           }
         />
 
-        <p className="py-10 text-center text-xs text-white/25">
-          {onFollowing ? (
-            <>
-              That is everything from your follows.{' '}
-              <Link href="/home?tab=recommended" className="underline hover:text-white/60">
-                See what else is good
-              </Link>
-              .
-            </>
-          ) : (
-            'That is everything for now.'
-          )}
-        </p>
+        {feed.posts.length > 0 && (
+          <LoadMore
+            href={moreHref}
+            hasMore={feed.hasMore && limit < FEED_MAX}
+            endNote={
+              onFollowing ? (
+                <>
+                  That is everything from your follows.{' '}
+                  <Link href="/home?tab=recommended" className="underline hover:text-white/60">
+                    See what else is good
+                  </Link>
+                  .
+                </>
+              ) : (
+                <>
+                  That is everything for now.{' '}
+                  <Link href="/discover" className="underline hover:text-white/60">
+                    Discover more
+                  </Link>
+                  .
+                </>
+              )
+            }
+          />
+        )}
       </div>
     </>
   );

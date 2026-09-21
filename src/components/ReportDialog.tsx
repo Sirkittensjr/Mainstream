@@ -17,6 +17,7 @@ export function ReportDialog({
 }) {
   const [open, setOpen] = useState(false);
   const [done, setDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   return (
@@ -76,9 +77,13 @@ export function ReportDialog({
               ) : (
                 <form
                   action={(formData) => {
+                    setError(null);
                     startTransition(async () => {
-                      await reportAction(formData);
-                      setDone(true);
+                      const result = await reportAction(formData);
+                      // A refused report must say so — silently showing
+                      // "thanks, we have it" would be a lie.
+                      if (result?.ok) setDone(true);
+                      else setError(result?.error ?? 'Could not send that report.');
                     });
                   }}
                   className="space-y-3"
@@ -101,6 +106,11 @@ export function ReportDialog({
                     placeholder="Anything else we should know? (optional)"
                     className="w-full"
                   />
+                  {error && (
+                    <p className="rounded-2xl border border-fay/40 bg-fay/10 px-4 py-2.5 text-sm text-fay-soft">
+                      {error}
+                    </p>
+                  )}
                   <button
                     type="submit"
                     disabled={pending}

@@ -6,6 +6,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { FollowButton } from '@/components/FollowButton';
 import { PageTopBar } from '@/components/PageTopBar';
 import { PostList } from '@/components/PostList';
+import { LoadMore } from '@/components/LoadMore';
 import { ProfileMenu } from '@/components/ProfileMenu';
 import { RatingPill, ReactionBar } from '@/components/RatingPill';
 import { RateButton } from '@/components/RateSheet';
@@ -42,10 +43,10 @@ export default async function ProfilePage({
   searchParams,
 }: {
   params: Promise<{ username: string }>;
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; show?: string }>;
 }) {
   const { username } = await params;
-  const { tab: tabParam } = await searchParams;
+  const { tab: tabParam, show } = await searchParams;
   const tab = TABS.includes((tabParam ?? '') as (typeof TABS)[number])
     ? (tabParam as (typeof TABS)[number])
     : 'posts';
@@ -67,7 +68,13 @@ export default async function ProfilePage({
     myRating(viewer?.id ?? null, 'user', user.id),
   ]);
 
-  const posts = blocked ? [] : await hydratePosts(allPosts.slice(0, 40), viewer?.id ?? null);
+  const requested = Number.parseInt(show ?? '', 10);
+  const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 20), 200) : 20;
+  const posts = blocked ? [] : await hydratePosts(allPosts.slice(0, limit), viewer?.id ?? null);
+  const moreHref = `/u/${user.username}?${new URLSearchParams({
+    ...(tab === 'about' ? { tab } : {}),
+    show: String(Math.min(limit + 20, 200)),
+  })}`;
   const rated = rating.overallVotes > 0;
 
   return (
@@ -244,21 +251,24 @@ export default async function ProfilePage({
               </dl>
             </section>
           ) : (
-            <PostList
-              posts={posts}
-              viewerId={viewer?.id ?? null}
-              empty={
-                <EmptyState
-                  title="Nothing posted yet"
-                  body={
-                    isSelf
-                      ? 'Post a photo, a video or just a thought. It shows up here.'
-                      : `${user.display_name} has not posted yet. Follow to be there when they do.`
-                  }
-                  cta={isSelf ? { href: '/create', label: 'Create a post' } : undefined}
-                />
-              }
-            />
+            <>
+              <PostList
+                posts={posts}
+                viewerId={viewer?.id ?? null}
+                empty={
+                  <EmptyState
+                    title="Nothing posted yet"
+                    body={
+                      isSelf
+                        ? 'Post a photo, a video or just a thought. It shows up here.'
+                        : `${user.display_name} has not posted yet. Follow to be there when they do.`
+                    }
+                    cta={isSelf ? { href: '/create', label: 'Create a post' } : undefined}
+                  />
+                }
+              />
+              <LoadMore href={moreHref} hasMore={allPosts.length > posts.length} />
+            </>
           )}
         </div>
       </div>

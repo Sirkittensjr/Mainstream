@@ -22,7 +22,7 @@ function useAction() {
   return { pending, run };
 }
 
-const BUTTON = 'rounded-full border border-white/12 px-3 py-1.5 text-xs font-semibold transition';
+const BUTTON = 'rounded-full border border-white/[0.12] px-3 py-1.5 text-xs font-semibold transition';
 
 export function ReportActions({
   reportId,

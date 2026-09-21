@@ -9,9 +9,9 @@ export async function GET(request: Request) {
   const limit = Math.min(Math.max(Number(params.get('limit') ?? 25), 1), 50);
   const viewer = await getViewer();
   const tab = params.get('tab') === 'following' ? 'following' : 'recommended';
-  const posts =
+  const feed =
     tab === 'following' && viewer
       ? await followingFeed(viewer, limit)
       : await recommendedFeed(viewer, limit);
-  return json({ tab, posts: posts.map(serialisePost) });
+  return json({ tab, hasMore: feed.hasMore, posts: feed.posts.map(serialisePost) });
 }

@@ -108,6 +108,12 @@ export interface Comment {
   id: ID;
   post_id: ID;
   user_id: ID;
+  /**
+   * The comment this is a reply to, if any. Threads are one level deep: a
+   * reply to a reply attaches to the same parent, so a conversation stays
+   * readable on a phone and stays moderatable.
+   */
+  parent_id: ID | null;
   body: string;
   removed: boolean;
   created_at: ISODate;
@@ -148,7 +154,13 @@ export interface Rating {
   updated_at: ISODate;
 }
 
-export type NotificationType = 'follow' | 'like' | 'comment' | 'mention' | 'rating';
+export type NotificationType =
+  | 'follow'
+  | 'like'
+  | 'comment'
+  | 'reply'
+  | 'mention'
+  | 'rating';
 
 export interface Notification {
   id: ID;

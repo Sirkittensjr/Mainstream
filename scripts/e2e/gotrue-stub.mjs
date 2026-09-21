@@ -10,7 +10,7 @@
  */
 import { createServer } from 'node:http';
 import { createHmac, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
-import { appendFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 
 const PORT = Number(process.env.STUB_PORT || 54321);
 const OUTBOX = process.env.STUB_OUTBOX || '/tmp/fay-outbox.jsonl';
@@ -19,6 +19,42 @@ writeFileSync(OUTBOX, '');
 
 /** email -> user record */
 const users = new Map();
+
+/**
+ * Adopt the accounts the seed already wrote to the local JSON store, keeping
+ * their ids so the profiles they own still belong to them. Without this the
+ * sample community exists but nobody can sign in to it.
+ */
+function adoptSeededUsers(path, password) {
+  let store;
+  try {
+    store = JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    return 0;
+  }
+  const now = new Date().toISOString();
+  for (const user of store.users ?? []) {
+    if (!user?.email || users.has(user.email.toLowerCase())) continue;
+    users.set(user.email.toLowerCase(), {
+      id: user.id,
+      email: user.email.toLowerCase(),
+      password,
+      email_confirmed_at: now,
+      user_metadata: {
+        username: user.username,
+        display_name: user.display_name,
+        bio: user.bio ?? '',
+        location: user.location ?? '',
+        avatar_url: user.avatar_url ?? '',
+        interests: user.interests ?? [],
+      },
+      created_at: user.created_at ?? now,
+      updated_at: now,
+      last_sign_in_at: null,
+    });
+  }
+  return users.size;
+}
 /** one-time code -> { userId, challenge, type } */
 const codes = new Map();
 /** refresh token -> userId */
@@ -246,6 +282,14 @@ const server = createServer(async (req, res) => {
 
   return fail(res, 404, 'not_found', `no route for ${req.method} ${path}`);
 });
+
+if (process.env.STUB_SEED_FROM) {
+  const adopted = adoptSeededUsers(
+    process.env.STUB_SEED_FROM,
+    process.env.STUB_SEED_PASSWORD || 'faydemo123',
+  );
+  console.log(`[gotrue-stub] adopted ${adopted} seeded accounts`);
+}
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`[gotrue-stub] listening on http://127.0.0.1:${PORT}`);

@@ -3,6 +3,16 @@ import type { Driver, QueryOptions, Row, TableName } from './types';
 
 const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'faytarra-media';
 
+/** Supabase's own per-response cap. Paging in this size means one round trip per 1000 rows. */
+const PAGE_SIZE = 1000;
+
+/**
+ * A ceiling on any single full-table read, so one runaway query cannot pull the
+ * whole database into a serverless function's memory. Hitting it is a signal
+ * that the aggregate it feeds needs to move into SQL.
+ */
+const HARD_CAP = 50_000;
+
 export function supabaseConfigured(): boolean {
   return Boolean(
     process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY,
@@ -27,20 +37,45 @@ class SupabaseDriver implements Driver {
   }
 
   async query<T extends TableName>(table: T, options: QueryOptions<Row<T>> = {}) {
-    let builder = this.client.from(table).select('*');
-    for (const [key, value] of Object.entries(options.where ?? {})) {
-      builder = builder.eq(key, value as never);
+    // Supabase caps a single response at `max-rows` (1000 by default). An
+    // unbounded query that silently stopped at 1000 would not error — it would
+    // just return the wrong answer, and the ratings, rankings and admin totals
+    // are all computed from full-table reads. So page through explicitly.
+    const wanted = options.limit ?? Infinity;
+    const out: Row<T>[] = [];
+
+    for (let from = 0; out.length < wanted; from += PAGE_SIZE) {
+      const size = Math.min(PAGE_SIZE, wanted - out.length);
+      let builder = this.client.from(table).select('*');
+      for (const [key, value] of Object.entries(options.where ?? {})) {
+        builder = builder.eq(key, value as never);
+      }
+      for (const [key, values] of Object.entries(options.in ?? {})) {
+        if (values) builder = builder.in(key, values as never[]);
+      }
+      if (options.orderBy) {
+        builder = builder.order(String(options.orderBy), { ascending: !options.desc });
+      }
+      // A stable tiebreak, or two pages can repeat and skip rows.
+      builder = builder.order('id', { ascending: true });
+      builder = builder.range(from, from + size - 1);
+
+      const { data, error } = await builder;
+      if (error) throw new Error(`[supabase:${table}] ${error.message}`);
+      const page = (data ?? []) as Row<T>[];
+      out.push(...page);
+      if (page.length < size) break;
+
+      if (out.length >= HARD_CAP) {
+        console.warn(
+          `[faytarra] ${table} read hit the ${HARD_CAP} row cap. Aggregates over this table ` +
+            'are no longer exact — move them into SQL.',
+        );
+        break;
+      }
     }
-    for (const [key, values] of Object.entries(options.in ?? {})) {
-      if (values) builder = builder.in(key, values as never[]);
-    }
-    if (options.orderBy) {
-      builder = builder.order(String(options.orderBy), { ascending: !options.desc });
-    }
-    if (options.limit != null) builder = builder.limit(options.limit);
-    const { data, error } = await builder;
-    if (error) throw new Error(`[supabase:${table}] ${error.message}`);
-    return (data ?? []) as Row<T>[];
+
+    return out;
   }
 
   async get<T extends TableName>(table: T, id: string) {

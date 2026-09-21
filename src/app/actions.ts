@@ -3,7 +3,9 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
-import { CATEGORIES, type Category, type Media } from '@/lib/types';
+import { CATEGORIES, type Category } from '@/lib/types';
+import { sanitiseAvatarUrl, sanitiseMedia } from '@/lib/media';
+import { checkLimit } from '@/lib/services/rate-limit';
 import { getViewer, requireAdmin, requireViewer } from '@/lib/session';
 import {
   addComment,
@@ -30,6 +32,9 @@ import type { Reaction, RatingTarget } from '@/lib/types';
 export async function likeAction(postId: string) {
   const viewer = await getViewer();
   if (!viewer) return { ok: false as const, error: 'Sign in to like posts.' };
+  if (viewer.status !== 'active') {
+    return { ok: false as const, error: 'Your account is suspended.' };
+  }
   const result = await toggleLike(postId, viewer.id);
   return { ok: true as const, liked: result.liked };
 }
@@ -37,8 +42,13 @@ export async function likeAction(postId: string) {
 export async function followAction(userId: string, shouldFollow: boolean) {
   const viewer = await getViewer();
   if (!viewer) return { ok: false as const, error: 'Sign in to follow creators.' };
-  if (shouldFollow) await follow(viewer.id, userId);
-  else await unfollow(viewer.id, userId);
+  if (shouldFollow) {
+    const limit = await checkLimit('follows', viewer.id);
+    if (!limit.ok) return { ok: false as const, error: limit.error };
+    await follow(viewer.id, userId);
+  } else {
+    await unfollow(viewer.id, userId);
+  }
   return { ok: true as const, following: shouldFollow };
 }
 
@@ -63,10 +73,20 @@ export async function rateAction(
   return result;
 }
 
-export async function commentAction(postId: string, body: string) {
+export async function commentAction(
+  postId: string,
+  body: string,
+  parentId: string | null = null,
+) {
   const viewer = await getViewer();
   if (!viewer) return { ok: false as const, error: 'Sign in to comment.' };
-  await addComment(postId, viewer.id, body);
+  if (viewer.status !== 'active') {
+    return { ok: false as const, error: 'Your account is suspended, so you cannot comment.' };
+  }
+  if (!body.trim()) return { ok: false as const, error: 'Write something first.' };
+  const limit = await checkLimit('comments', viewer.id);
+  if (!limit.ok) return { ok: false as const, error: limit.error };
+  await addComment(postId, viewer.id, body, parentId);
   revalidatePath(`/post/${postId}`);
   return { ok: true as const };
 }
@@ -87,7 +107,9 @@ export async function deletePostAction(postId: string) {
 
 export async function reportAction(formData: FormData) {
   const viewer = await getViewer();
-  if (!viewer) return;
+  if (!viewer) return { ok: false as const, error: 'Sign in to report.' };
+  const limit = await checkLimit('reports', viewer.id);
+  if (!limit.ok) return { ok: false as const, error: limit.error };
   await submitReport({
     reporterId: viewer.id,
     targetType: formData.get('targetType') as 'post' | 'user' | 'comment',
@@ -95,6 +117,7 @@ export async function reportAction(formData: FormData) {
     reason: String(formData.get('reason') || 'Something else'),
     details: String(formData.get('details') || ''),
   });
+  return { ok: true as const };
 }
 
 export async function blockAction(userId: string, shouldBlock: boolean) {
@@ -110,14 +133,19 @@ export async function createPostAction(_prev: unknown, formData: FormData) {
   if (viewer.status !== 'active') {
     return { error: 'Your account is suspended, so you cannot post right now.' };
   }
-  const caption = String(formData.get('caption') || '').trim();
-  const mediaRaw = String(formData.get('media') || '[]');
-  let media: Media[] = [];
+  const limit = await checkLimit('posts', viewer.id);
+  if (!limit.ok) return { error: limit.error };
+
+  const caption = String(formData.get('caption') || '').trim().slice(0, 1200);
+  // Media arrives as a hidden field, so it is untrusted: keep only the URLs
+  // this deployment issued. See src/lib/media.ts.
+  let parsed: unknown = [];
   try {
-    media = JSON.parse(mediaRaw) as Media[];
+    parsed = JSON.parse(String(formData.get('media') || '[]'));
   } catch {
-    media = [];
+    parsed = [];
   }
+  const media = sanitiseMedia(parsed, 6);
   if (!caption && media.length === 0) {
     return { error: 'Add a caption or some media before posting.' };
   }
@@ -127,10 +155,11 @@ export async function createPostAction(_prev: unknown, formData: FormData) {
   const post = await createPost({
     authorId: viewer.id,
     caption,
-    media: media.slice(0, 6),
+    media,
     category,
     tags: String(formData.get('tags') || '')
       .split(/[\s,]+/)
+      .map((tag) => tag.slice(0, 30))
       .filter(Boolean),
   });
   revalidatePath('/home');
@@ -148,12 +177,21 @@ export async function markNotificationsReadAction() {
 
 export async function updateProfileAction(_prev: unknown, formData: FormData) {
   const viewer = await requireViewer('/settings');
-  const interests = formData.getAll('interests').map(String) as Category[];
+  // Interests drive the category rankings, so only real categories go in.
+  const interests = formData
+    .getAll('interests')
+    .map(String)
+    .filter((value): value is Category => (CATEGORIES as readonly string[]).includes(value))
+    .slice(0, 6);
+  const displayName = String(formData.get('display_name') || '').trim().slice(0, 40);
+  if (!displayName) return { ok: false as const, error: 'Add a display name.' };
+
   await updateProfile(viewer.id, {
-    display_name: String(formData.get('display_name') || viewer.display_name).slice(0, 40),
+    display_name: displayName,
     bio: String(formData.get('bio') || '').slice(0, 240),
     location: String(formData.get('location') || '').slice(0, 60) || null,
-    avatar_url: String(formData.get('avatar_url') || '') || null,
+    // Same reasoning as post media: only an avatar we stored.
+    avatar_url: sanitiseAvatarUrl(formData.get('avatar_url')),
     ...(interests.length > 0 ? { interests } : {}),
   });
   revalidatePath('/settings');

@@ -16,22 +16,27 @@ export function SettingsForm({
   };
 }) {
   const [state, formAction, pending] = useActionState<
-    { ok?: true; message?: string } | null,
+    { ok?: boolean; message?: string; error?: string } | null,
     FormData
   >(updateProfileAction, null);
   const [selected, setSelected] = useState<Category[]>(defaults.interests);
   const [avatar, setAvatar] = useState<string | null>(defaults.avatarUrl);
   const [uploading, setUploading] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
 
   async function uploadAvatar(file: File | undefined) {
     if (!file) return;
     setUploading(true);
+    setAvatarError(null);
     try {
       const body = new FormData();
       body.append('file', file);
       const response = await fetch('/api/upload', { method: 'POST', body });
-      const result = (await response.json()) as { url?: string };
+      const result = (await response.json()) as { url?: string; error?: string };
       if (result.url) setAvatar(result.url);
+      else setAvatarError(result.error ?? 'Could not upload that picture.');
+    } catch {
+      setAvatarError('Could not upload that picture.');
     } finally {
       setUploading(false);
     }
@@ -65,6 +70,7 @@ export function SettingsForm({
         <div>
           <p className="text-sm font-semibold">Profile picture</p>
           <p className="text-xs text-white/40">JPG, PNG, WEBP or GIF.</p>
+          {avatarError && <p className="mt-1 text-xs text-fay">{avatarError}</p>}
           {avatar && (
             <button
               type="button"
@@ -151,6 +157,11 @@ export function SettingsForm({
         ))}
       </fieldset>
 
+      {state?.error && (
+        <p className="rounded-2xl border border-fay/40 bg-fay/10 px-4 py-3 text-sm text-fay-soft">
+          {state.error}
+        </p>
+      )}
       {state?.message && (
         <p className="rounded-2xl border border-mint/30 bg-mint/10 px-4 py-3 text-sm text-mint">
           {state.message}

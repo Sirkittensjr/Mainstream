@@ -274,13 +274,22 @@ export function seedInto(store: Store): Store {
     }
 
     const commentCount = Math.round(likers.size * (0.06 + rand() * 0.12));
+    const threadRoots: string[] = [];
     for (let i = 0; i < commentCount; i += 1) {
       const author = users[Math.floor(rand() * users.length)];
       if (author.id === post.author_id) continue;
+      const id = uuid();
+      // Roughly one in four comments is a reply to an earlier one, so the
+      // threaded view has something real to render.
+      const replyTo = threadRoots.length > 0 && rand() < 0.25
+        ? threadRoots[Math.floor(rand() * threadRoots.length)]
+        : null;
+      if (!replyTo) threadRoots.push(id);
       comments.push({
-        id: uuid(),
+        id,
         post_id: post.id,
         user_id: author.id,
+        parent_id: replyTo,
         body: pick(COMMENT_BODIES),
         removed: false,
         created_at: iso(Math.max(0, ageDays - rand())),

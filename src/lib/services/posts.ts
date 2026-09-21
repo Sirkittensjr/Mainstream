@@ -1,10 +1,15 @@
 import 'server-only';
+import { cookies } from 'next/headers';
 import { db } from '@/lib/db';
 import { newId } from '@/lib/ids';
 import type { Category, ID, Media, Post, PublicUser, User } from '@/lib/types';
 import { notify, notifyMentions } from './notifications';
 import { myRatingsForPosts, ratingsIndex, type PostRatingSummary } from './ratings';
 import { followingIds, hiddenUserIds, toPublicUser } from './users';
+
+/** Recently viewed posts, so a reload does not count twice. */
+const VIEW_COOKIE = 'fay_seen';
+const VIEW_COOKIE_KEYS = 120;
 
 export interface PostView {
   post: Post;
@@ -181,34 +186,68 @@ export async function toggleLike(postId: ID, userId: ID): Promise<{ liked: boole
   return { liked: true };
 }
 
-export async function addComment(postId: ID, userId: ID, body: string): Promise<void> {
+export async function addComment(
+  postId: ID,
+  userId: ID,
+  body: string,
+  parentId: ID | null = null,
+): Promise<void> {
   const trimmed = body.trim();
   if (!trimmed) return;
   const store = db();
   const post = await store.get('posts', postId);
-  if (!post) return;
+  if (!post || post.removed) return;
+
+  // Threads stay one level deep: replying to a reply joins the same thread
+  // rather than starting a deeper one.
+  let parent = parentId ? await store.get('comments', parentId) : null;
+  if (parent && (parent.post_id !== postId || parent.removed)) parent = null;
+  if (parent?.parent_id) parent = await store.get('comments', parent.parent_id);
+  const resolvedParent = parent && !parent.removed ? parent : null;
+
   await store.insert('comments', {
     id: newId(),
     post_id: postId,
     user_id: userId,
+    parent_id: resolvedParent?.id ?? null,
     body: trimmed.slice(0, 600),
     removed: false,
     created_at: new Date().toISOString(),
   });
+
   const actor = await store.get('users', userId);
-  await notify({
-    userId: post.author_id,
-    type: 'comment',
-    actorId: userId,
-    postId,
-    body: `@${actor?.username ?? 'someone'} commented on your post`,
-  });
-  await notifyMentions(
-    trimmed,
-    userId,
-    `@${actor?.username ?? 'someone'} mentioned you in a comment`,
-    postId,
-  );
+  const who = `@${actor?.username ?? 'someone'}`;
+
+  if (resolvedParent) {
+    // The person being replied to hears about it; the post author only hears
+    // about it if it is not already their own thread.
+    await notify({
+      userId: resolvedParent.user_id,
+      type: 'reply',
+      actorId: userId,
+      postId,
+      body: `${who} replied to your comment`,
+    });
+    if (post.author_id !== resolvedParent.user_id) {
+      await notify({
+        userId: post.author_id,
+        type: 'comment',
+        actorId: userId,
+        postId,
+        body: `${who} replied in the comments on your post`,
+      });
+    }
+  } else {
+    await notify({
+      userId: post.author_id,
+      type: 'comment',
+      actorId: userId,
+      postId,
+      body: `${who} commented on your post`,
+    });
+  }
+
+  await notifyMentions(trimmed, userId, `${who} mentioned you in a comment`, postId);
 }
 
 export async function deleteComment(commentId: ID, userId: ID): Promise<void> {
@@ -221,9 +260,11 @@ export async function deleteComment(commentId: ID, userId: ID): Promise<void> {
 }
 
 export interface CommentView {
-  comment: { id: ID; body: string; created_at: string };
+  comment: { id: ID; body: string; created_at: string; parent_id: ID | null };
   author: PublicUser;
   mine: boolean;
+  /** Replies to this comment, oldest first. Only top-level comments carry them. */
+  replies: CommentView[];
 }
 
 export async function listComments(postId: ID, viewerId: ID | null): Promise<CommentView[]> {
@@ -236,24 +277,76 @@ export async function listComments(postId: ID, viewerId: ID | null): Promise<Com
   if (visible.length === 0) return [];
   const users = await store.query('users', { in: { id: visible.map((c) => c.user_id) } });
   const byId = new Map(users.map((u) => [u.id, u]));
-  return visible
-    .map((comment) => {
-      const author = byId.get(comment.user_id);
-      if (!author) return null;
-      return {
-        comment: { id: comment.id, body: comment.body, created_at: comment.created_at },
-        author: toPublicUser(author),
-        mine: viewerId === comment.user_id,
-      } satisfies CommentView;
-    })
-    .filter((c): c is CommentView => c !== null);
+
+  const toView = (comment: (typeof visible)[number]): CommentView | null => {
+    const author = byId.get(comment.user_id);
+    if (!author) return null;
+    return {
+      comment: {
+        id: comment.id,
+        body: comment.body,
+        created_at: comment.created_at,
+        parent_id: comment.parent_id ?? null,
+      },
+      author: toPublicUser(author),
+      mine: viewerId === comment.user_id,
+      replies: [],
+    };
+  };
+
+  const byCommentId = new Map<ID, CommentView>();
+  const roots: CommentView[] = [];
+  // Two passes: parents can only be attached once every view exists.
+  for (const comment of visible) {
+    const view = toView(comment);
+    if (view) byCommentId.set(comment.id, view);
+  }
+  for (const comment of visible) {
+    const view = byCommentId.get(comment.id);
+    if (!view) continue;
+    const parent = comment.parent_id ? byCommentId.get(comment.parent_id) : null;
+    // A reply whose parent was hidden or removed is shown at the top level
+    // rather than disappearing with it.
+    if (parent) parent.replies.push(view);
+    else roots.push(view);
+  }
+  return roots;
 }
 
-/** Counted once per opened post page. */
+/**
+ * Counts a view, at most once per browser per post per day.
+ *
+ * Views feed the Recommended ranking, so counting every render meant anyone
+ * could push their own post up the feed by holding F5 — and it meant a
+ * database write on every page load of every post. The cookie is the dedupe
+ * key: it costs nothing, it is per browser, and the worst case is an
+ * undercount, which is the right way to be wrong for a ranking signal.
+ */
 export async function registerView(postId: ID, viewerId: ID | null): Promise<void> {
   const store = db();
   const post = await store.get('posts', postId);
   if (!post || post.author_id === viewerId) return;
+
+  const jar = await cookies();
+  const seen = (jar.get(VIEW_COOKIE)?.value ?? '').split('.').filter(Boolean);
+  const key = postId.slice(0, 8);
+  if (seen.includes(key)) return;
+
+  try {
+    // Server Components cannot write cookies; the post page is dynamic, so
+    // this runs where they can. If it ever cannot, the view simply is not
+    // deduped rather than the page failing.
+    jar.set(VIEW_COOKIE, [key, ...seen].slice(0, VIEW_COOKIE_KEYS).join('.'), {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      path: '/',
+      maxAge: 60 * 60 * 24,
+    });
+  } catch {
+    return;
+  }
+
   await store.update('posts', postId, { views: post.views + 1 });
 }
 

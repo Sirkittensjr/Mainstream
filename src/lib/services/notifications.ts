@@ -50,8 +50,18 @@ export async function listNotifications(userId: ID, limit = 60): Promise<Notific
   }));
 }
 
+/**
+ * The badge number. Capped, because the exact count stops meaning anything
+ * past a couple of screens and the badge only ever shows "9+" anyway — this
+ * keeps a busy account from reading thousands of rows on every page load.
+ */
+export const UNREAD_CAP = 50;
+
 export async function unreadCount(userId: ID): Promise<number> {
-  const rows = await db().query('notifications', { where: { user_id: userId, read: false } });
+  const rows = await db().query('notifications', {
+    where: { user_id: userId, read: false },
+    limit: UNREAD_CAP,
+  });
   return rows.length;
 }
 
