@@ -1,4 +1,3 @@
-import { levelFor } from '@/lib/progression';
 import { unreadCount } from '@/lib/services/notifications';
 import { getViewer } from '@/lib/session';
 import { TopBar } from './Nav';
@@ -19,7 +18,6 @@ export async function PageTopBar({ title }: { title?: string }) {
               username: viewer.username,
               displayName: viewer.display_name,
               avatarUrl: viewer.avatar_url,
-              level: levelFor(viewer.points).level,
               isAdmin: viewer.role === 'admin',
               unread,
             }

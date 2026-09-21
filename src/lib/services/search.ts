@@ -1,26 +1,25 @@
 import 'server-only';
 import { db } from '@/lib/db';
-import { levelFor } from '@/lib/progression';
 import { CATEGORIES, type Category, type ID, type PublicUser } from '@/lib/types';
 import { hydratePosts, visiblePosts, type PostView } from './posts';
+import { ratingsIndex } from './ratings';
 import { followerCounts, hiddenUserIds, toPublicUser } from './users';
 
 export interface SearchResults {
-  people: { user: PublicUser; followers: number; level: number; levelName: string }[];
+  people: { user: PublicUser; followers: number; rating: number | null; votes: number }[];
   posts: PostView[];
   categories: Category[];
-  challenges: { slug: string; title: string; description: string }[];
 }
 
 export async function search(query: string, viewerId: ID | null): Promise<SearchResults> {
   const needle = query.trim().toLowerCase();
-  if (!needle) return { people: [], posts: [], categories: [], challenges: [] };
+  if (!needle) return { people: [], posts: [], categories: [] };
   const store = db();
-  const [users, challenges, hidden, posts] = await Promise.all([
+  const [users, hidden, posts, index] = await Promise.all([
     store.query('users', { where: { status: 'active' } }),
-    store.query('challenges'),
     hiddenUserIds(viewerId),
     visiblePosts(viewerId),
+    ratingsIndex(),
   ]);
 
   const people = users
@@ -39,28 +38,22 @@ export async function search(query: string, viewerId: ID | null): Promise<Search
     .filter(
       (post) =>
         post.caption.toLowerCase().includes(needle) ||
-        post.tags.some((tag) => tag.toLowerCase().includes(needle)),
+        post.tags.some((tag) => tag.toLowerCase().includes(needle)) ||
+        post.category.toLowerCase() === needle,
     )
     .slice(0, 24);
 
   return {
     people: people.map((user) => {
-      const level = levelFor(user.points);
+      const summary = index.users.get(user.id);
       return {
         user: toPublicUser(user),
         followers: followers.get(user.id) ?? 0,
-        level: level.level,
-        levelName: level.name,
+        rating: summary && summary.overallVotes > 0 ? summary.overall : null,
+        votes: summary?.overallVotes ?? 0,
       };
     }),
     posts: await hydratePosts(matchedPosts, viewerId),
     categories: CATEGORIES.filter((category) => category.toLowerCase().includes(needle)),
-    challenges: challenges
-      .filter(
-        (challenge) =>
-          challenge.title.toLowerCase().includes(needle) ||
-          challenge.description.toLowerCase().includes(needle),
-      )
-      .map(({ slug, title, description }) => ({ slug, title, description })),
   };
 }

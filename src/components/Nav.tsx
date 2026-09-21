@@ -5,13 +5,11 @@ import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 import {
   BellIcon,
-  ChartIcon,
   CompassIcon,
   HomeIcon,
   PlusIcon,
   SearchIcon,
   ShieldIcon,
-  TrophyIcon,
   UserIcon,
 } from './Icons';
 
@@ -19,7 +17,6 @@ export interface NavUser {
   username: string;
   displayName: string;
   avatarUrl: string | null;
-  level: number;
   isAdmin: boolean;
   unread: number;
 }
@@ -28,7 +25,7 @@ const PRIMARY = [
   { href: '/home', label: 'Home', icon: HomeIcon },
   { href: '/discover', label: 'Discover', icon: CompassIcon },
   { href: '/create', label: 'Create', icon: PlusIcon },
-  { href: '/challenges', label: 'Challenges', icon: TrophyIcon },
+  { href: '/notifications', label: 'Alerts', icon: BellIcon },
 ] as const;
 
 function isActive(pathname: string, href: string): boolean {
@@ -63,10 +60,17 @@ export function BottomNav({ user }: { user: NavUser | null }) {
               </li>
             );
           }
+          const href =
+            item.href === '/notifications' && !user ? '/login?next=/notifications' : item.href;
           return (
             <li key={item.href}>
-              <NavTab href={item.href} label={item.label} active={active}>
-                <item.icon />
+              <NavTab href={href} label={item.label} active={active}>
+                <span className="relative block">
+                  <item.icon />
+                  {item.href === '/notifications' && user && user.unread > 0 && (
+                    <span className="absolute -right-1 -top-0.5 h-2 w-2 rounded-full bg-fay ring-2 ring-ink-950" />
+                  )}
+                </span>
               </NavTab>
             </li>
           );
@@ -110,8 +114,9 @@ function NavTab({
 export function Sidebar({ user }: { user: NavUser | null }) {
   const pathname = usePathname();
   const items = [
-    ...PRIMARY.map((item) => ({ ...item, icon: item.icon as typeof HomeIcon })),
-    { href: '/rankings', label: 'Rankings', icon: ChartIcon },
+    { href: '/home', label: 'Home', icon: HomeIcon as typeof HomeIcon },
+    { href: '/discover', label: 'Discover', icon: CompassIcon },
+    { href: '/create', label: 'Create', icon: PlusIcon },
     { href: '/search', label: 'Search', icon: SearchIcon },
     { href: '/notifications', label: 'Notifications', icon: BellIcon },
   ];
@@ -168,9 +173,7 @@ export function Sidebar({ user }: { user: NavUser | null }) {
             </span>
             <span className="min-w-0">
               <span className="block truncate text-sm font-semibold">{user.displayName}</span>
-              <span className="block truncate text-xs text-white/40">
-                Level {user.level} · @{user.username}
-              </span>
+              <span className="block truncate text-xs text-white/40">@{user.username}</span>
             </span>
           </Link>
         ) : (

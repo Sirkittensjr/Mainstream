@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { rateAction } from "@/app/actions";
-import { formatRating, ratingTone } from "@/lib/ratings";
+import { formatRating, formatVotes, ratingTone } from "@/lib/ratings";
 import { REACTIONS, type Reaction, type RatingTarget } from "@/lib/types";
 import { CloseIcon } from "./Icons";
 import { Portal } from "./Portal";
@@ -15,7 +15,7 @@ export interface RateTargetProps {
   targetId: string;
   /** What the community says right now. */
   rating: number | null;
-  count: number;
+  votes: number;
   /** What this viewer already said, if anything. */
   myScore: number | null;
   myReactions?: Reaction[];
@@ -31,8 +31,7 @@ export interface RateTargetProps {
  * a number, which is the only thing that has to be there.
  */
 export function RateSheet(props: RateTargetProps & { onClose: () => void }) {
-  const { targetType, targetId, rating, count, myScore, subject, onClose } =
-    props;
+  const { targetType, targetId, rating, votes, myScore, subject, onClose } = props;
   const [score, setScore] = useState<number | null>(myScore);
   const [reactions, setReactions] = useState<Reaction[]>(
     props.myReactions ?? [],
@@ -92,9 +91,9 @@ export function RateSheet(props: RateTargetProps & { onClose: () => void }) {
             <div>
               <h2 className="font-display text-xl font-bold">Rate {subject}</h2>
               <p className="mt-1 text-sm text-white/50">
-                {count > 0
-                  ? `${formatRating(rating)} from ${count} rating${count === 1 ? "" : "s"}`
-                  : "No ratings yet — yours is the first."}
+                {votes > 0
+                  ? `${formatRating(rating)} from ${formatVotes(votes)}`
+                  : 'No ratings yet — yours is the first.'}
               </p>
             </div>
             <button type="button" onClick={onClose} aria-label="Close">

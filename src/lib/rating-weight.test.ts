@@ -10,7 +10,7 @@ const rater = (over: Partial<Parameters<typeof raterWeight>[0]> = {}) => ({
   status: 'active' as const,
   trusted: true,
   created_at: daysAgo(90),
-  points: 500,
+  contributions: 20,
   ...over,
 });
 
@@ -23,7 +23,7 @@ describe('raterWeight', () => {
   });
 
   it('silences nobody but discounts a brand new account', () => {
-    const fresh = raterWeight(rater({ created_at: daysAgo(0.5), points: 0 }), [], 'creator', NOW);
+    const fresh = raterWeight(rater({ created_at: daysAgo(0.5), contributions: 0 }), [], 'creator', NOW);
     assert.ok(fresh.weight > 0, 'a new account still counts for something');
     assert.ok(fresh.weight <= 0.25, `expected a heavy discount, got ${fresh.weight}`);
   });
@@ -79,7 +79,7 @@ describe('raterWeight', () => {
 
   it('never returns a weight outside 0-1', () => {
     const cases = [
-      raterWeight(rater({ created_at: daysAgo(0), points: 0 }), given(20, 'x', 10), 'x', NOW),
+      raterWeight(rater({ created_at: daysAgo(0), contributions: 0 }), given(20, 'x', 10), 'x', NOW),
       raterWeight(rater(), [], 'x', NOW),
     ];
     for (const result of cases) {

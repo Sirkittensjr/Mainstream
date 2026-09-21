@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import { BottomNav, Sidebar, type NavUser } from '@/components/Nav';
 import { RightRail } from '@/components/RightRail';
-import { levelFor } from '@/lib/progression';
 import { unreadCount } from '@/lib/services/notifications';
 import { getViewer, markActive } from '@/lib/session';
 
@@ -15,7 +14,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         username: viewer.username,
         displayName: viewer.display_name,
         avatarUrl: viewer.avatar_url,
-        level: levelFor(viewer.points).level,
         isAdmin: viewer.role === 'admin',
         unread,
       }

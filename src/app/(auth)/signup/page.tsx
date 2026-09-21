@@ -9,9 +9,9 @@ export default function SignupPage() {
     <div className="pt-6">
       <p className="chip border-fay/30 bg-fay/10 text-fay-soft">Takes about 90 seconds</p>
       <h1 className="mt-5 font-display text-4xl font-extrabold leading-[0.95] tracking-tight">
-        Start at zero.
+        Join FayTarra.
         <br />
-        <span className="gradient-text">Go up from there.</span>
+        <span className="gradient-text">Everyone starts at zero.</span>
       </h1>
       <p className="mt-3 text-white/50">
         You need an email, a username and a password. Everything else can change later.

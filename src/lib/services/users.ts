@@ -1,9 +1,7 @@
 import 'server-only';
 import { db } from '@/lib/db';
 import { newId } from '@/lib/ids';
-import { levelFor, nextFollowerGoal } from '@/lib/progression';
-import type { Activity, ID, Interest, PublicUser, User } from '@/lib/types';
-import { award } from './points';
+import type { Category, ID, PublicUser, User } from '@/lib/types';
 import { notify } from './notifications';
 
 export function toPublicUser(user: User): PublicUser {
@@ -94,8 +92,6 @@ export async function follow(followerId: ID, followingId: ID): Promise<boolean> 
     created_at: new Date().toISOString(),
   });
   const actor = await store.get('users', followerId);
-  await award(followingId, 'follow_received');
-  await award(followerId, 'follow_given');
   await notify({
     userId: followingId,
     type: 'follow',
@@ -168,96 +164,83 @@ export async function blockedList(userId: ID): Promise<PublicUser[]> {
   return users.map(toPublicUser);
 }
 
-export interface JourneyMilestone {
-  label: string;
-  value: string;
-  date: string | null;
-  done: boolean;
-}
-
-export interface Journey {
-  joined: string;
-  followers: number;
-  followerTrack: { milestone: number; reached: boolean }[];
-  nextGoal: number;
-  milestones: JourneyMilestone[];
-  level: number;
-  levelName: string;
-  points: number;
-}
-
-/**
- * "Tommy's FayTarra Journey" — a timeline built entirely from real activity so the
- * profile reads as a story rather than a set of counters.
- */
-export async function getJourney(user: User): Promise<Journey> {
-  const store = db();
-  const [stats, posts, activity] = await Promise.all([
-    getUserStats(user.id),
-    store.query('posts', { where: { author_id: user.id, removed: false } }),
-    store.query('activity', { where: { user_id: user.id } }),
-  ]);
-
-  const sortedActivity = [...activity].sort((a, b) => a.created_at.localeCompare(b.created_at));
-  const first = (type: Activity['type']) => sortedActivity.find((a) => a.type === type) ?? null;
-
-  const firstPost = [...posts].sort((a, b) => a.created_at.localeCompare(b.created_at))[0] ?? null;
-  const featured = posts.filter((p) => p.featured && p.featured_at).sort((a, b) =>
-    (a.featured_at ?? '').localeCompare(b.featured_at ?? ''),
-  )[0] ?? null;
-  const topPost = [...posts].sort((a, b) => b.views - a.views)[0] ?? null;
-  const firstChallenge = first('challenge_entry');
-  const level = levelFor(user.points);
-
-  return {
-    joined: user.created_at,
-    followers: stats.followers,
-    followerTrack: [0, 10, 100, 1_000, 10_000].map((milestone) => ({
-      milestone,
-      reached: stats.followers >= milestone,
-    })),
-    nextGoal: nextFollowerGoal(stats.followers),
-    level: level.level,
-    levelName: level.name,
-    points: user.points,
-    milestones: [
-      {
-        label: 'First post',
-        value: firstPost ? 'Posted' : 'Not yet',
-        date: firstPost?.created_at ?? null,
-        done: Boolean(firstPost),
-      },
-      {
-        label: 'First challenge',
-        value: firstChallenge ? 'Entered' : 'Not yet',
-        date: firstChallenge?.created_at ?? null,
-        done: Boolean(firstChallenge),
-      },
-      {
-        label: 'First featured post',
-        value: featured ? 'Featured' : 'Not yet',
-        date: featured?.featured_at ?? null,
-        done: Boolean(featured),
-      },
-      {
-        label: 'Highest viewed post',
-        value: topPost ? `${topPost.views.toLocaleString()} views` : '—',
-        date: topPost?.created_at ?? null,
-        done: Boolean(topPost && topPost.views > 0),
-      },
-    ],
-  };
-}
-
 export interface UpdateProfileInput {
   display_name?: string;
   bio?: string;
   avatar_url?: string | null;
   location?: string | null;
-  interests?: Interest[];
-  goal?: string;
+  interests?: Category[];
 }
 
 export async function updateProfile(userId: ID, input: UpdateProfileInput): Promise<void> {
   await db().update('users', userId, input);
+}
+
+export interface SuggestedPerson {
+  user: PublicUser;
+  followers: number;
+  rating: number | null;
+  votes: number;
+  category: Category | null;
+}
+
+/**
+ * People worth following, for the sidebar and empty states.
+ *
+ * Ordered by rating confidence among people the viewer does not already
+ * follow, with a nudge toward shared interests. Deliberately not "biggest
+ * accounts first".
+ */
+export async function suggestedPeople(
+  viewer: User | null,
+  limit = 5,
+): Promise<SuggestedPerson[]> {
+  const store = db();
+  const { ratingsIndex } = await import('./ratings');
+  const [users, posts, index, following, hidden] = await Promise.all([
+    store.query('users', { where: { status: 'active' } }),
+    store.query('posts', { where: { removed: false } }),
+    ratingsIndex(),
+    viewer ? followingIds(viewer.id) : new Set<ID>(),
+    hiddenUserIds(viewer?.id ?? null),
+  ]);
+
+  const categoryOf = new Map<ID, Category>();
+  const counts = new Map<ID, Map<Category, number>>();
+  for (const post of posts) {
+    const map = counts.get(post.author_id) ?? new Map<Category, number>();
+    map.set(post.category, (map.get(post.category) ?? 0) + 1);
+    counts.set(post.author_id, map);
+  }
+  for (const [id, map] of counts) {
+    const top = [...map.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (top) categoryOf.set(id, top[0]);
+  }
+
+  const candidates = users.filter(
+    (user) => user.id !== viewer?.id && !following.has(user.id) && !hidden.has(user.id),
+  );
+  const followers = await followerCounts(candidates.map((u) => u.id));
+  const interests = new Set(viewer?.interests ?? []);
+
+  return candidates
+    .map((user) => {
+      const summary = index.users.get(user.id);
+      const category = categoryOf.get(user.id) ?? user.interests[0] ?? null;
+      const shared = category && interests.has(category) ? 1.2 : 1;
+      return {
+        score: (summary?.overallScore ?? 0) * shared,
+        card: {
+          user: toPublicUser(user),
+          followers: followers.get(user.id) ?? 0,
+          rating: summary && summary.overallVotes > 0 ? summary.overall : null,
+          votes: summary?.overallVotes ?? 0,
+          category,
+        } satisfies SuggestedPerson,
+      };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((entry) => entry.card);
 }

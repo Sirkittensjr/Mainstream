@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Avatar } from '@/components/Avatar';
 import { FollowButton } from '@/components/FollowButton';
-import { LevelBadge } from '@/components/LevelBadge';
+import { RatingPill } from '@/components/RatingPill';
 import { PageTopBar } from '@/components/PageTopBar';
 import { PostList } from '@/components/PostList';
 import { SearchIcon } from '@/components/Icons';
@@ -27,8 +27,7 @@ export default async function SearchPage({
     query &&
     results.people.length === 0 &&
     results.posts.length === 0 &&
-    results.categories.length === 0 &&
-    results.challenges.length === 0;
+    results.categories.length === 0;
 
   return (
     <>
@@ -92,7 +91,7 @@ export default async function SearchPage({
                       @{entry.user.username} · {entry.followers} followers
                     </p>
                   </div>
-                  <LevelBadge level={entry.level} name={entry.levelName} size="xs" />
+                  <RatingPill value={entry.rating} size="sm" votes={entry.votes} />
                   {viewer && viewer.id !== entry.user.id && (
                     <FollowButton
                       userId={entry.user.id}
@@ -100,27 +99,6 @@ export default async function SearchPage({
                       signedIn={Boolean(viewer)}
                     />
                   )}
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-
-        {results.challenges.length > 0 && (
-          <section className="mt-8">
-            <SectionHeader title="Challenges" />
-            <ul className="space-y-2">
-              {results.challenges.map((challenge) => (
-                <li key={challenge.slug}>
-                  <Link
-                    href={`/challenges/${challenge.slug}`}
-                    className="card block p-4 transition hover:border-white/20"
-                  >
-                    <p className="font-display font-bold">{challenge.title}</p>
-                    <p className="mt-1 line-clamp-2 text-sm text-white/45">
-                      {challenge.description}
-                    </p>
-                  </Link>
                 </li>
               ))}
             </ul>

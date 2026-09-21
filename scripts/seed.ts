@@ -33,7 +33,6 @@ async function main() {
   // Insert in dependency order so foreign keys hold in Postgres.
   const order: TableName[] = [
     'users',
-    'challenges',
     'posts',
     'ratings',
     'likes',
@@ -42,8 +41,6 @@ async function main() {
     'blocks',
     'notifications',
     'reports',
-    'activity',
-    'rank_snapshots',
   ];
 
   for (const table of order) {

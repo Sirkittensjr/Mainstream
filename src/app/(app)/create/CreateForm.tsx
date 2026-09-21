@@ -2,21 +2,10 @@
 
 import { useActionState, useRef, useState } from 'react';
 import { createPostAction } from '@/app/actions';
-import { CloseIcon, ImageIcon, SparkIcon } from '@/components/Icons';
+import { CloseIcon, ImageIcon } from '@/components/Icons';
 import { CATEGORIES, type Media } from '@/lib/types';
 
-interface ChallengeOption {
-  id: string;
-  title: string;
-}
-
-export function CreateForm({
-  challenges,
-  defaultChallengeId,
-}: {
-  challenges: ChallengeOption[];
-  defaultChallengeId?: string;
-}) {
+export function CreateForm() {
   const [state, formAction, pending] = useActionState<{ error?: string } | null, FormData>(
     createPostAction,
     null,
@@ -24,7 +13,6 @@ export function CreateForm({
   const [media, setMedia] = useState<Media[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [shot, setShot] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
   async function upload(files: FileList | null) {
@@ -113,39 +101,18 @@ export function CreateForm({
       </div>
 
       {/* Meta ----------------------------------------------------------- */}
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <label className="label" htmlFor="category">
-            Category
-          </label>
-          <select id="category" name="category" defaultValue="Other" className="mt-2 w-full">
-            {CATEGORIES.map((category) => (
-              <option key={category} value={category}>
-                {category}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="label" htmlFor="challenge">
-            Challenge (optional)
-          </label>
-          <select
-            id="challenge"
-            name="challenge"
-            defaultValue={defaultChallengeId ?? ''}
-            className="mt-2 w-full"
-          >
-            <option value="">Not entering a challenge</option>
-            {challenges.map((challenge) => (
-              <option key={challenge.id} value={challenge.id}>
-                {challenge.title}
-              </option>
-            ))}
-          </select>
-        </div>
+      <div>
+        <label className="label" htmlFor="category">
+          Category
+        </label>
+        <select id="category" name="category" defaultValue="Life" className="mt-2 w-full">
+          {CATEGORIES.map((category) => (
+            <option key={category} value={category}>
+              {category}
+            </option>
+          ))}
+        </select>
       </div>
-
       <div>
         <label className="label" htmlFor="tags">
           Tags (optional)
@@ -157,32 +124,6 @@ export function CreateForm({
           className="mt-2 w-full"
         />
       </div>
-
-      {/* Give me a shot -------------------------------------------------- */}
-      <label
-        className={`flex cursor-pointer items-start gap-3 rounded-3xl border p-4 transition ${
-          shot ? 'border-fay/60 bg-fay/10' : 'border-white/10 bg-white/[0.03]'
-        }`}
-      >
-        <input
-          type="checkbox"
-          name="shot"
-          checked={shot}
-          onChange={(event) => setShot(event.target.checked)}
-          className="mt-1 h-5 w-5 shrink-0 rounded-md"
-        />
-        <span>
-          <span className="flex items-center gap-2 font-display font-bold">
-            <SparkIcon width={16} height={16} className="text-fay" />
-            GIVE ME A SHOT
-          </span>
-          <span className="mt-1 block text-sm leading-relaxed text-white/50">
-            Ask the community to discover you. Your post gets shown to 100 people first. If they
-            respond well it earns 1,000, then 10,000, then more. No promises of going viral — a
-            real, metered turn in front of people, and nobody can buy their way past it.
-          </span>
-        </span>
-      </label>
 
       {state?.error && (
         <p className="rounded-2xl border border-fay/40 bg-fay/10 px-4 py-3 text-sm text-fay-soft">

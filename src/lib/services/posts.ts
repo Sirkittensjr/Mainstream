@@ -1,18 +1,7 @@
 import 'server-only';
 import { db } from '@/lib/db';
 import { newId } from '@/lib/ids';
-import { levelFor } from '@/lib/progression';
-import type {
-  Category,
-  Challenge,
-  ID,
-  Media,
-  Post,
-  PublicUser,
-  User,
-} from '@/lib/types';
-import { shotProgress, shouldAdvance, type ShotProgress } from '@/lib/shot';
-import { award } from './points';
+import type { Category, ID, Media, Post, PublicUser, User } from '@/lib/types';
 import { notify, notifyMentions } from './notifications';
 import { myRatingsForPosts, ratingsIndex, type PostRatingSummary } from './ratings';
 import { followingIds, hiddenUserIds, toPublicUser } from './users';
@@ -21,51 +10,44 @@ export interface PostView {
   post: Post;
   author: PublicUser;
   authorFollowers: number;
-  authorLevel: { level: number; name: string };
+  /** The author's long-term rating, shown on the card. */
+  authorRating: number | null;
   likes: number;
   comments: number;
   liked: boolean;
   following: boolean;
-  challenge: Pick<Challenge, 'id' | 'slug' | 'title'> | null;
-  /** Community rating for this post, plus the reactions behind it. */
   rating: PostRatingSummary;
   /** What the viewer rated it, if they have. */
   myScore: number | null;
-  /** Staged exposure progress for "Give me a shot" posts. */
-  shot: ShotProgress | null;
-  /** Why this post is in front of you, e.g. "Rising creator". */
+  /** Why this is in front of you, e.g. "Popular in Music". Never shown for follows. */
   reason?: string;
 }
 
 /**
- * Loads everything the post card needs in a handful of batched queries rather
+ * Loads everything a post card needs in a handful of batched queries rather
  * than one query per post.
  */
-export async function hydratePosts(
-  posts: Post[],
-  viewerId: ID | null,
-): Promise<PostView[]> {
+export async function hydratePosts(posts: Post[], viewerId: ID | null): Promise<PostView[]> {
   if (posts.length === 0) return [];
   const store = db();
   const postIds = posts.map((p) => p.id);
   const authorIds = [...new Set(posts.map((p) => p.author_id))];
-  const challengeIds = [...new Set(posts.map((p) => p.challenge_id).filter(Boolean))] as ID[];
 
-  const [authors, likes, comments, follows, challenges, viewerFollowing, index, mine] =
-    await Promise.all([
-      store.query('users', { in: { id: authorIds } }),
-      store.query('likes', { in: { post_id: postIds } }),
-      store.query('comments', { in: { post_id: postIds } }),
-      store.query('follows', { in: { following_id: authorIds } }),
-      challengeIds.length ? store.query('challenges', { in: { id: challengeIds } }) : [],
-      viewerId ? followingIds(viewerId) : new Set<ID>(),
-      ratingsIndex(),
-      myRatingsForPosts(viewerId, postIds),
-    ]);
+  const [authors, likes, comments, follows, viewerFollowing, index, mine] = await Promise.all([
+    store.query('users', { in: { id: authorIds } }),
+    store.query('likes', { in: { post_id: postIds } }),
+    store.query('comments', { in: { post_id: postIds } }),
+    store.query('follows', { in: { following_id: authorIds } }),
+    viewerId ? followingIds(viewerId) : new Set<ID>(),
+    ratingsIndex(),
+    myRatingsForPosts(viewerId, postIds),
+  ]);
 
   const authorById = new Map(authors.map((a) => [a.id, a]));
   const followerCount = new Map<ID, number>(authorIds.map((id) => [id, 0]));
-  for (const f of follows) followerCount.set(f.following_id, (followerCount.get(f.following_id) ?? 0) + 1);
+  for (const f of follows) {
+    followerCount.set(f.following_id, (followerCount.get(f.following_id) ?? 0) + 1);
+  }
 
   const likeCount = new Map<ID, number>(postIds.map((id) => [id, 0]));
   const likedByViewer = new Set<ID>();
@@ -76,56 +58,43 @@ export async function hydratePosts(
 
   const commentCount = new Map<ID, number>(postIds.map((id) => [id, 0]));
   for (const comment of comments) {
-    if (comment.removed) continue;
-    commentCount.set(comment.post_id, (commentCount.get(comment.post_id) ?? 0) + 1);
+    if (!comment.removed) {
+      commentCount.set(comment.post_id, (commentCount.get(comment.post_id) ?? 0) + 1);
+    }
   }
-
-  const challengeById = new Map(challenges.map((c) => [c.id, c]));
 
   return posts
     .map((post) => {
       const author = authorById.get(post.author_id);
       if (!author) return null;
-      const challenge = post.challenge_id ? challengeById.get(post.challenge_id) : null;
-      const level = levelFor(author.points);
-      const rating = index.posts.get(post.id) ?? { rating: null, count: 0, reactions: [] };
-      const likeTotal = likeCount.get(post.id) ?? 0;
-      const commentTotal = commentCount.get(post.id) ?? 0;
-      const reach = Math.max(post.impressions, post.views, 1);
       return {
         post,
         author: toPublicUser(author),
         authorFollowers: followerCount.get(author.id) ?? 0,
-        authorLevel: { level: level.level, name: level.name },
-        likes: likeTotal,
-        comments: commentTotal,
+        authorRating: index.users.get(author.id)?.overallVotes
+          ? (index.users.get(author.id)?.overall ?? null)
+          : null,
+        likes: likeCount.get(post.id) ?? 0,
+        comments: commentCount.get(post.id) ?? 0,
         liked: likedByViewer.has(post.id),
         following: viewerFollowing.has(author.id),
-        challenge: challenge
-          ? { id: challenge.id, slug: challenge.slug, title: challenge.title }
-          : null,
-        rating,
+        rating: index.posts.get(post.id) ?? { rating: null, votes: 0, score: 0, reactions: [] },
         myScore: mine.get(post.id) ?? null,
-        shot: shotProgress(post, rating.rating, (likeTotal + commentTotal * 2) / reach),
       } satisfies PostView;
     })
     .filter((view): view is PostView => view !== null);
 }
 
-/** All visible posts, with blocked users and removed content filtered out. */
+/** All visible posts, with blocked and suspended accounts filtered out. */
 export async function visiblePosts(viewerId: ID | null): Promise<Post[]> {
   const store = db();
-  const [posts, hidden, suspended] = await Promise.all([
+  const [posts, hidden, users] = await Promise.all([
     store.query('posts', { where: { removed: false }, orderBy: 'created_at', desc: true }),
     hiddenUserIds(viewerId),
-    suspendedUserIds(),
+    store.query('users'),
   ]);
-  return posts.filter((post) => !hidden.has(post.author_id) && !suspended.has(post.author_id));
-}
-
-async function suspendedUserIds(): Promise<Set<ID>> {
-  const users = await db().query('users');
-  return new Set(users.filter((u) => u.status !== 'active').map((u) => u.id));
+  const inactive = new Set(users.filter((u) => u.status !== 'active').map((u) => u.id));
+  return posts.filter((post) => !hidden.has(post.author_id) && !inactive.has(post.author_id));
 }
 
 export interface CreatePostInput {
@@ -134,8 +103,6 @@ export interface CreatePostInput {
   media: Media[];
   category: Category;
   tags: string[];
-  challengeId: ID | null;
-  shot: boolean;
 }
 
 export async function createPost(input: CreatePostInput): Promise<Post> {
@@ -147,27 +114,12 @@ export async function createPost(input: CreatePostInput): Promise<Post> {
     media: input.media,
     category: input.category,
     tags: input.tags.map((tag) => tag.replace(/^#/, '').trim()).filter(Boolean).slice(0, 8),
-    challenge_id: input.challengeId,
-    shot: input.shot,
-    shot_stage: 0,
-    impressions: 0,
-    boosted: false,
     views: 0,
-    featured: false,
-    featured_at: null,
     removed: false,
     removed_reason: null,
     created_at: new Date().toISOString(),
   };
   await store.insert('posts', post);
-  await award(input.authorId, 'post', { postId: post.id });
-
-  if (input.challengeId) {
-    await award(input.authorId, 'challenge_entry', {
-      postId: post.id,
-      challengeId: input.challengeId,
-    });
-  }
 
   const author = await store.get('users', input.authorId);
   await notifyMentions(
@@ -176,9 +128,6 @@ export async function createPost(input: CreatePostInput): Promise<Post> {
     `@${author?.username ?? 'someone'} mentioned you in a post`,
     post.id,
   );
-
-  // Tell followers' timelines nothing extra — the feed reads posts directly —
-  // but let the author's followers know when it is a challenge entry.
   return post;
 }
 
@@ -191,26 +140,27 @@ export async function deletePost(postId: ID, userId: ID): Promise<boolean> {
   const post = await store.get('posts', postId);
   if (!post || post.author_id !== userId) return false;
   await store.remove('posts', postId);
-  const [likes, comments] = await Promise.all([
+  const [likes, comments, ratings] = await Promise.all([
     store.query('likes', { where: { post_id: postId } }),
     store.query('comments', { where: { post_id: postId } }),
+    store.query('ratings', { where: { target_type: 'post', target_id: postId } }),
   ]);
   await Promise.all([
-    ...likes.map((like) => store.remove('likes', like.id)),
-    ...comments.map((comment) => store.remove('comments', comment.id)),
+    ...likes.map((row) => store.remove('likes', row.id)),
+    ...comments.map((row) => store.remove('comments', row.id)),
+    ...ratings.map((row) => store.remove('ratings', row.id)),
   ]);
   return true;
 }
 
 export async function toggleLike(postId: ID, userId: ID): Promise<{ liked: boolean }> {
   const store = db();
-  const existing = await store.query('likes', { where: { post_id: postId, user_id: userId } });
   const post = await store.get('posts', postId);
   if (!post) return { liked: false };
+  const existing = await store.query('likes', { where: { post_id: postId, user_id: userId } });
 
   if (existing.length > 0) {
     for (const like of existing) await store.remove('likes', like.id);
-    await award(post.author_id, 'like_received', { postId, points: -2 });
     return { liked: false };
   }
 
@@ -220,17 +170,13 @@ export async function toggleLike(postId: ID, userId: ID): Promise<{ liked: boole
     user_id: userId,
     created_at: new Date().toISOString(),
   });
-  await award(post.author_id, 'like_received', { postId });
-  await award(userId, 'like_given', { postId });
   const actor = await store.get('users', userId);
   await notify({
     userId: post.author_id,
-    type: post.challenge_id ? 'challenge_entry' : 'like',
+    type: 'like',
     actorId: userId,
     postId,
-    body: post.challenge_id
-      ? `@${actor?.username ?? 'someone'} liked your challenge entry`
-      : `@${actor?.username ?? 'someone'} liked your post`,
+    body: `@${actor?.username ?? 'someone'} liked your post`,
   });
   return { liked: true };
 }
@@ -249,17 +195,13 @@ export async function addComment(postId: ID, userId: ID, body: string): Promise<
     removed: false,
     created_at: new Date().toISOString(),
   });
-  await award(post.author_id, 'comment_received', { postId });
-  await award(userId, 'comment_given', { postId });
   const actor = await store.get('users', userId);
   await notify({
     userId: post.author_id,
-    type: post.challenge_id ? 'challenge_entry' : 'comment',
+    type: 'comment',
     actorId: userId,
     postId,
-    body: post.challenge_id
-      ? `@${actor?.username ?? 'someone'} commented on your challenge entry`
-      : `@${actor?.username ?? 'someone'} commented on your post`,
+    body: `@${actor?.username ?? 'someone'} commented on your post`,
   });
   await notifyMentions(
     trimmed,
@@ -274,8 +216,7 @@ export async function deleteComment(commentId: ID, userId: ID): Promise<void> {
   const comment = await store.get('comments', commentId);
   if (!comment) return;
   const post = await store.get('posts', comment.post_id);
-  const canDelete = comment.user_id === userId || post?.author_id === userId;
-  if (!canDelete) return;
+  if (comment.user_id !== userId && post?.author_id !== userId) return;
   await store.remove('comments', commentId);
 }
 
@@ -308,33 +249,7 @@ export async function listComments(postId: ID, viewerId: ID | null): Promise<Com
     .filter((c): c is CommentView => c !== null);
 }
 
-/**
- * Records that discovery put these posts in front of someone.
- *
- * This is what makes "Give me a shot" real: exposure is metered, and a post
- * only graduates to a larger slice of the audience when the response to the
- * slice it already had was good enough.
- */
-export async function recordShotImpressions(views: PostView[]): Promise<void> {
-  const store = db();
-  const shots = views.filter((view) => view.post.shot).slice(0, 8);
-  await Promise.all(
-    shots.map(async (view) => {
-      const impressions = view.post.impressions + 1;
-      const reach = Math.max(impressions, view.post.views, 1);
-      const rate = (view.likes + view.comments * 2) / reach;
-      const patch: { impressions: number; shot_stage?: number } = { impressions };
-      if (
-        shouldAdvance({ shot_stage: view.post.shot_stage, impressions }, view.rating.rating, rate)
-      ) {
-        patch.shot_stage = view.post.shot_stage + 1;
-      }
-      await store.update('posts', view.post.id, patch);
-    }),
-  );
-}
-
-/** Counted once per opened post detail page. */
+/** Counted once per opened post page. */
 export async function registerView(postId: ID, viewerId: ID | null): Promise<void> {
   const store = db();
   const post = await store.get('posts', postId);
@@ -343,12 +258,11 @@ export async function registerView(postId: ID, viewerId: ID | null): Promise<voi
 }
 
 export async function postsByAuthor(authorId: ID): Promise<Post[]> {
-  const posts = await db().query('posts', {
+  return db().query('posts', {
     where: { author_id: authorId, removed: false },
     orderBy: 'created_at',
     desc: true,
   });
-  return posts;
 }
 
 export async function engagementFor(postIds: ID[]) {

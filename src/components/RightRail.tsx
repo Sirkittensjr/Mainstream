@@ -1,57 +1,46 @@
 import Link from 'next/link';
-import { levelFor } from '@/lib/progression';
-import { timeLeft } from '@/lib/time';
-import { activeChallenges } from '@/lib/services/challenges';
-import { risingCreatorCards } from '@/lib/services/discover';
+import { formatVotes } from '@/lib/ratings';
 import { userRating } from '@/lib/services/ratings';
 import { userRanks } from '@/lib/services/rankings';
-import { RatingPill } from './RatingPill';
+import { suggestedPeople } from '@/lib/services/users';
 import type { User } from '@/lib/types';
 import { Avatar } from './Avatar';
 import { FollowButton } from './FollowButton';
-import { LevelMeter } from './LevelBadge';
-import { ArrowIcon } from './Icons';
+import { RatingPill } from './RatingPill';
 
-/** Desktop-only sidebar: progress, the live challenge and people to discover. */
+/** Desktop-only sidebar: your ratings and people worth following. */
 export async function RightRail({ viewer }: { viewer: User | null }) {
-  const [challenges, creators, rating, ranks] = await Promise.all([
-    activeChallenges(),
-    risingCreatorCards(viewer?.id ?? null, null, 3),
+  const [people, rating, ranks] = await Promise.all([
+    suggestedPeople(viewer, 4),
     viewer ? userRating(viewer.id) : Promise.resolve(null),
     viewer ? userRanks(viewer.id) : Promise.resolve(null),
   ]);
-  const challenge = challenges[0];
-  const level = viewer ? levelFor(viewer.points) : null;
 
   return (
     <aside className="sticky top-0 hidden h-dvh w-80 shrink-0 space-y-4 overflow-y-auto px-4 py-6 xl:block">
-      {viewer && level && rating && ranks ? (
+      {viewer && rating && ranks ? (
         <div className="card p-5">
-          <p className="label">Your FayTarra</p>
+          <p className="label">Your ratings</p>
           <div className="mt-3 flex items-center gap-2">
-            <RatingPill value={rating.overall} label="overall" />
-            <RatingPill value={rating.current} label="now" trend={rating.trend} />
+            <RatingPill
+              value={rating.overallVotes > 0 ? rating.overall : null}
+              label="overall"
+              votes={rating.overallVotes}
+            />
+            <RatingPill
+              value={rating.recentVotes > 0 ? rating.recent : null}
+              label="30d"
+              trend={rating.trend}
+              votes={rating.recentVotes}
+            />
           </div>
-          <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
-            {[
-              { label: 'Overall', value: ranks.overall },
-              { label: 'Current', value: ranks.current },
-              { label: 'Rising', value: ranks.rising },
-            ].map((entry) => (
-              <div key={entry.label} className="rounded-xl bg-black/25 px-2 py-2">
-                <dt className="text-[10px] uppercase tracking-wide text-white/35">{entry.label}</dt>
-                <dd className="font-display text-sm font-bold tabular-nums">
-                  {entry.value ? `#${entry.value}` : '—'}
-                </dd>
-              </div>
-            ))}
-          </dl>
-          <p className="mb-2 mt-4 text-[13px] text-white/45">
-            Level {level.level} — {level.name} · {viewer.points.toLocaleString()} pts
+          <p className="mt-3 text-[13px] text-white/45">
+            {ranks.overall
+              ? `#${ranks.overall} of ${ranks.total.toLocaleString()} rated people`
+              : `${ranks.votesNeeded} more rating${ranks.votesNeeded === 1 ? '' : 's'} and you appear in Discover`}
           </p>
-          <LevelMeter points={viewer.points} compact />
-          <Link href="/rankings" className="btn-ghost mt-4 w-full text-sm">
-            See rankings
+          <Link href={`/u/${viewer.username}`} className="btn-ghost mt-4 w-full text-sm">
+            View profile
           </Link>
         </div>
       ) : (
@@ -60,7 +49,7 @@ export async function RightRail({ viewer }: { viewer: User | null }) {
             Everyone starts <span className="gradient-text">at zero.</span>
           </p>
           <p className="mt-2 text-sm text-white/50">
-            Make an account and your first post can be discovered today.
+            Post what you are into, follow people, rate what you like.
           </p>
           <Link href="/signup" className="btn-primary mt-4 w-full">
             Join FayTarra
@@ -68,56 +57,37 @@ export async function RightRail({ viewer }: { viewer: User | null }) {
         </div>
       )}
 
-      {challenge && (
-        <div className="card p-5">
-          <p className="label">Live challenge</p>
-          <h3 className="mt-2 font-display text-lg font-bold">{challenge.title}</h3>
-          <p className="mt-1 line-clamp-3 text-sm text-white/50">{challenge.description}</p>
-          <p className="mt-3 text-xs font-semibold text-solar">{timeLeft(challenge.ends_at)}</p>
-          <Link
-            href={`/challenges/${challenge.slug}`}
-            className="btn-ghost mt-4 w-full text-sm"
-          >
-            See entries
-          </Link>
-        </div>
-      )}
-
-      {creators.length > 0 && (
+      {people.length > 0 && (
         <div className="card p-5">
           <div className="mb-3 flex items-center justify-between">
-            <p className="label">Rising creators</p>
+            <p className="label">People to follow</p>
             <Link href="/discover" className="text-xs text-white/40 hover:text-white">
               See all
             </Link>
           </div>
           <ul className="space-y-3">
-            {creators.map((creator) => (
-              <li key={creator.user.id} className="flex items-center gap-3">
+            {people.map((person) => (
+              <li key={person.user.id} className="flex items-center gap-3">
                 <Avatar
-                  username={creator.user.username}
-                  displayName={creator.user.display_name}
-                  src={creator.user.avatar_url}
+                  username={person.user.username}
+                  displayName={person.user.display_name}
+                  src={person.user.avatar_url}
                   size="sm"
                 />
                 <div className="min-w-0 flex-1">
                   <Link
-                    href={`/u/${creator.user.username}`}
+                    href={`/u/${person.user.username}`}
                     className="block truncate text-sm font-semibold hover:underline"
                   >
-                    {creator.user.display_name}
+                    {person.user.display_name}
                   </Link>
                   <p className="flex items-center gap-1.5 truncate text-xs text-white/40">
-                    <RatingPill value={creator.rating} size="sm" />
-                    {creator.followers} followers
+                    <RatingPill value={person.rating} size="sm" votes={person.votes} />
+                    {person.category ?? formatVotes(person.votes)}
                   </p>
                 </div>
-                {viewer && viewer.id !== creator.user.id && (
-                  <FollowButton
-                    userId={creator.user.id}
-                    initialFollowing={false}
-                    signedIn={Boolean(viewer)}
-                  />
+                {viewer && (
+                  <FollowButton userId={person.user.id} initialFollowing={false} signedIn />
                 )}
               </li>
             ))}
@@ -130,16 +100,13 @@ export async function RightRail({ viewer }: { viewer: User | null }) {
           Community rules
         </Link>
         {' · '}
-        <Link href="/rankings" className="hover:text-white/60">
-          Rankings
+        <Link href="/discover" className="hover:text-white/60">
+          Discover
         </Link>
         {' · '}
         <Link href="/settings" className="hover:text-white/60">
           Settings
         </Link>
-        <p className="mt-2 flex items-center gap-1">
-          Everyone starts at zero <ArrowIcon width={13} height={13} />
-        </p>
       </div>
     </aside>
   );

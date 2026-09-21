@@ -1,8 +1,8 @@
 import 'server-only';
 import { db } from '@/lib/db';
-import { levelFor } from '@/lib/progression';
 import { DAY } from '@/lib/time';
 import type { Category, ID, PublicUser } from '@/lib/types';
+import { ratingsIndex } from './ratings';
 import { followerCounts, toPublicUser } from './users';
 
 export interface AdminStats {
@@ -12,46 +12,37 @@ export interface AdminStats {
     comments: number;
     likes: number;
     follows: number;
-    challengeEntries: number;
-    openReports: number;
     ratings: number;
     ratedPosts: number;
     untrusted: number;
+    openReports: number;
   };
   active: { dau: number; wau: number; mau: number };
   newUsers: { today: number; week: number; month: number };
   categories: { category: Category; posts: number }[];
   topPosts: { id: ID; caption: string; views: number; author: string }[];
-  topCreators: { user: PublicUser; followers: number; level: number; points: number }[];
-  challengeParticipation: { title: string; entries: number; creators: number }[];
+  topRated: { user: PublicUser; rating: number; votes: number; followers: number }[];
   recentUsers: { user: PublicUser; joined: string; status: string }[];
 }
 
 /** Everything the admin dashboard needs, in one pass over the tables. */
 export async function adminStats(): Promise<AdminStats> {
   const store = db();
-  const [users, posts, comments, likes, follows, challenges, reports, activity, ratings] =
-    await Promise.all([
-      store.query('users'),
-      store.query('posts'),
-      store.query('comments'),
-      store.query('likes'),
-      store.query('follows'),
-      store.query('challenges'),
-      store.query('reports'),
-      store.query('activity'),
-      store.query('ratings'),
-    ]);
+  const [users, posts, comments, likes, follows, reports, ratings, index] = await Promise.all([
+    store.query('users'),
+    store.query('posts'),
+    store.query('comments'),
+    store.query('likes'),
+    store.query('follows'),
+    store.query('reports'),
+    store.query('ratings'),
+    ratingsIndex(),
+  ]);
 
   const now = Date.now();
   const since = (days: number) => new Date(now - days * DAY).toISOString();
-  const activeSince = (days: number) => {
-    const cutoff = since(days);
-    const ids = new Set<ID>();
-    for (const entry of activity) if (entry.created_at >= cutoff) ids.add(entry.user_id);
-    for (const user of users) if (user.last_active_at >= cutoff) ids.add(user.id);
-    return ids.size;
-  };
+  const activeSince = (days: number) =>
+    users.filter((user) => user.last_active_at >= since(days)).length;
 
   const categoryCounts = new Map<Category, number>();
   for (const post of posts) {
@@ -70,13 +61,12 @@ export async function adminStats(): Promise<AdminStats> {
       comments: comments.filter((c) => !c.removed).length,
       likes: likes.length,
       follows: follows.length,
-      challengeEntries: posts.filter((p) => p.challenge_id && !p.removed).length,
-      openReports: reports.filter((r) => r.status === 'open').length,
       ratings: ratings.length,
       ratedPosts: new Set(
         ratings.filter((r) => r.target_type === 'post').map((r) => r.target_id),
       ).size,
       untrusted: users.filter((u) => !u.trusted).length,
+      openReports: reports.filter((r) => r.status === 'open').length,
     },
     active: { dau: activeSince(1), wau: activeSince(7), mau: activeSince(30) },
     newUsers: {
@@ -97,33 +87,28 @@ export async function adminStats(): Promise<AdminStats> {
         views: post.views,
         author: usernameById.get(post.author_id) ?? 'unknown',
       })),
-    topCreators: [...activeUsers]
-      .sort((a, b) => b.points - a.points)
-      .slice(0, 8)
+    topRated: activeUsers
       .map((user) => ({
         user: toPublicUser(user),
+        rating: index.users.get(user.id)?.overall ?? 0,
+        votes: index.users.get(user.id)?.overallVotes ?? 0,
+        score: index.users.get(user.id)?.overallScore ?? 0,
+        rankable: index.users.get(user.id)?.rankable ?? false,
         followers: followers.get(user.id) ?? 0,
-        level: levelFor(user.points).level,
-        points: user.points,
+      }))
+      .filter((row) => row.rankable)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8)
+      .map(({ user, rating, votes, followers: f }) => ({
+        user,
+        rating,
+        votes,
+        followers: f,
       })),
-    challengeParticipation: challenges
-      .map((challenge) => {
-        const entries = posts.filter((p) => p.challenge_id === challenge.id && !p.removed);
-        return {
-          title: challenge.title,
-          entries: entries.length,
-          creators: new Set(entries.map((e) => e.author_id)).size,
-        };
-      })
-      .sort((a, b) => b.entries - a.entries),
     recentUsers: [...users]
       .sort((a, b) => b.created_at.localeCompare(a.created_at))
       .slice(0, 12)
-      .map((user) => ({
-        user: toPublicUser(user),
-        joined: user.created_at,
-        status: user.status,
-      })),
+      .map((user) => ({ user: toPublicUser(user), joined: user.created_at, status: user.status })),
   };
 }
 
@@ -132,12 +117,17 @@ export interface AdminUserRow {
   email: string;
   followers: number;
   posts: number;
-  level: number;
+  rating: number | null;
+  votes: number;
 }
 
 export async function adminUsers(query: string, limit = 40): Promise<AdminUserRow[]> {
   const store = db();
-  const [users, posts] = await Promise.all([store.query('users'), store.query('posts')]);
+  const [users, posts, index] = await Promise.all([
+    store.query('users'),
+    store.query('posts'),
+    ratingsIndex(),
+  ]);
   const needle = query.trim().toLowerCase();
   const matched = users
     .filter(
@@ -153,11 +143,15 @@ export async function adminUsers(query: string, limit = 40): Promise<AdminUserRo
   const postCounts = new Map<ID, number>();
   for (const post of posts) postCounts.set(post.author_id, (postCounts.get(post.author_id) ?? 0) + 1);
 
-  return matched.map((user) => ({
-    user: toPublicUser(user),
-    email: user.email,
-    followers: followers.get(user.id) ?? 0,
-    posts: postCounts.get(user.id) ?? 0,
-    level: levelFor(user.points).level,
-  }));
+  return matched.map((user) => {
+    const summary = index.users.get(user.id);
+    return {
+      user: toPublicUser(user),
+      email: user.email,
+      followers: followers.get(user.id) ?? 0,
+      posts: postCounts.get(user.id) ?? 0,
+      rating: summary && summary.overallVotes > 0 ? summary.overall : null,
+      votes: summary?.overallVotes ?? 0,
+    };
+  });
 }

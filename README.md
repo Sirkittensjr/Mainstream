@@ -2,26 +2,17 @@
 
 **Everyone starts at zero.**
 
-FayTarra is a social platform for people who are still becoming somebody — creators,
-musicians, gamers, artists, athletes, entrepreneurs, comedians, anyone trying to
-get known for something.
+FayTarra is a social network for the things people actually make and do — music,
+art, games, cooking, fitness, photography, or just their day. You follow people,
+post what you are into, and rate what is good.
 
-Two ideas hold the product together:
+The thing that makes it FayTarra is the rating: every post and every profile can
+be rated 1–10, and those ratings drive discovery instead of follower count.
 
-1. **Follower count does not decide who gets discovered.** Discovery ranks work
-   by how well it performs *relative to the audience the creator already has*.
-2. **Everyone has a rating, and it cannot be bought.** Ratings are the answer to
-   "how well is this person doing?" and "how good is this piece of content?" —
-   separate from likes, separate from followers, and defended against
-   manipulation.
-
-The core loop is: **Create → Get rated → Improve → Rise → Get discovered → Gain
-followers → Create again.**
-
-This repository is a working mobile-first website, not a mockup. Authentication,
-profiles, posts, ratings, rankings, likes, comments, follows, feed, discovery,
-challenges, points and levels, notifications, reporting, blocking, rating
-integrity and the admin dashboard are all implemented and persisted.
+This repository is a working mobile-first website, not a mockup. Accounts,
+profiles, posts, the two feeds, following, likes, comments, ratings, rankings,
+notifications, search, reporting, blocking and moderation are all implemented
+and persisted.
 
 ---
 
@@ -33,128 +24,133 @@ npm run seed      # creates ./.data/faytarra.json with a sample community
 npm run dev       # http://localhost:3000
 ```
 
-No configuration is required. With no Supabase keys present, FayTarra runs on a
-bundled file-backed JSON driver, auto-seeded with ~168 accounts, ~265 posts,
-~3,100 ratings, 7 challenges and the months of rank history behind them.
+No configuration required. With no Supabase keys set, FayTarra runs on a
+bundled file-backed JSON driver, auto-seeded with ~168 accounts, ~280 posts and
+~3,500 ratings.
 
 **Sample logins** (local demo data only):
 
 | Account | Email | Password |
 | --- | --- | --- |
-| Creator | `tommy@faytarra.app` | `faydemo123` |
+| Person | `tommy@faytarra.app` | `faydemo123` |
 | Admin | `admin@faytarra.app` | `faydemo123` |
-
-Every seeded creator shares that password — `mirabeats@faytarra.app`,
-`novaplays@faytarra.app`, `sunnyclay@faytarra.app` (six days old, two followers).
 
 ```bash
 npm run reset     # wipe local data and re-seed
 npm run build     # production build (emits .next/standalone)
 npm start         # run the production server
+npm test          # unit tests for the rating rules
 npm run lint      # eslint
 npm run typecheck # tsc --noEmit
 ```
 
 ---
 
-## The FayTarra rating system
+## What is in the MVP
+
+| Route | What it does |
+| --- | --- |
+| `/` | Landing page |
+| `/signup`, `/login` | Email, username, password, what you are into, profile |
+| `/home` | **Following** and **Recommended** feeds |
+| `/discover` | Rankings: Overall, Last 30 days, and by category |
+| `/create` | Post photos, video or text |
+| `/u/[username]` | Profile: posts, both ratings, rank, followers |
+| `/post/[id]` | Post detail, community rating, comments |
+| `/notifications` | Follows, likes, comments, ratings |
+| `/search` | People, posts, categories |
+| `/settings` | Profile, blocked accounts, sign out, delete account |
+| `/admin` | Reports, rating integrity, users, platform stats |
+| `/rules` | Community rules |
+
+Deliberately **not** in the MVP: challenges, "give me a shot", levels, points
+and anything else that made the product feel like a competition. The rating
+system is a feature of a social network here, not the point of it.
+
+---
+
+## The rating system
 
 Anyone can rate a post or a profile **1–10** and optionally add reactions (Fire,
-Funny, Creative, Interesting, Love It, Would Collaborate). The maths lives in
-[`src/lib/ratings.ts`](src/lib/ratings.ts) and
-[`src/lib/services/ratings.ts`](src/lib/services/ratings.ts).
+Funny, Creative, Interesting, Love It, Would Collaborate).
 
-### Post rating
+Profiles carry two numbers:
 
-A weighted average, shrunk toward the platform's own live mean so a single 10/10
-cannot outrank forty ratings averaging 9.3. Shown next to likes, comments, views
-and shares — never instead of them.
+- **Overall** — built from every rating the person has ever received. Heavily
+  smoothed, so it moves slowly and one bad post cannot sink it.
+- **Last 30 days** — the same maths over the last month only, starting from
+  their overall rating and moving quickly as new ratings arrive. The arrow next
+  to it compares the last 30 days against the 30 before, so it means "getting
+  better" rather than "is above average".
 
-### Overall rating — the slow number
+Posts carry a rating and a vote count.
 
-Anchored to every rating a creator has ever received, heavily shrunk, then
-adjusted by up to ±0.8 for behaviour: consistency, engagement relative to
-audience size, follower growth, community participation and account history. One
-bad post cannot move it.
+### Votes count, not just the average
 
-### Current rating — the fast number
+This is the part that matters, and it is documented in full in
+[`src/lib/ratings.ts`](src/lib/ratings.ts). A raw average is a bad ranking key:
+a 10.0 from three friends is not better than a 9.2 from eight hundred people.
+So FayTarra computes two different numbers from the same votes:
 
-The same maths over the **last 30 days only**, starting from the creator's
-all-time average and moving quickly as new ratings arrive. Go quiet and it
-drifts down while the overall rating stays put.
+1. **The rating people see** — a weighted average pulled toward the platform
+   mean by a prior worth a handful of imaginary average votes. This is what
+   stops a single 10/10 from displaying as a perfect 10.0.
+2. **The ranking score** — that rating minus a confidence penalty,
+   `z · σ / √n`, the lower bound of a confidence interval. More votes shrink
+   the penalty toward zero; few votes pay a large one. Two things with the same
+   average always order by how much evidence stands behind them.
 
-### The trend arrow
+On top of that, **nothing enters a ranking until it has at least 10 ratings**.
+That floor is the blunt guarantee that a new account cannot land at #1 off six
+votes, and it holds no matter where the ratings sit on the scale.
 
-Movement is measured **window over window** — the last 30 days against the 30
-before it — not current against overall. Comparing against overall would show an
-arrow up for every above-average creator forever, which says nothing.
+You can see this on the live Discover page: an 8.5 from 24 ratings ranks above
+an 8.6 from 13. The vote count is shown on every row so the order is
+explicable.
+
+The rules are covered by unit tests in
+[`src/lib/ratings.test.ts`](src/lib/ratings.test.ts), including the case from
+the product brief directly.
 
 ---
 
 ## Rating integrity
 
-The system is worthless if a hundred throwaway accounts can hand someone a 10.
-Defence is layered, and every layer is explainable
-([`rating-integrity.ts`](src/lib/services/rating-integrity.ts)):
+The system is worthless if throwaway accounts can hand someone a 10
+([`rating-weight.ts`](src/lib/rating-weight.ts),
+[`rating-integrity.ts`](src/lib/services/rating-integrity.ts)):
 
-- **One rating per person per target.** Rating again updates your rating; it
-  never stacks.
-- **Weighted raters.** A rating carries 0–1 weight. Accounts under a day old
-  count for a quarter, under a week for 60%, accounts with no activity are
-  discounted, and an account that rates almost everything 9–10 (or 1–2) is
-  heavily discounted.
-- **Concentration collapse.** Rating the same creator repeatedly drops your
-  weight to 25%. If over half your ratings target one creator, everything you
+- **One rating per person per target.** Rating again updates it; it never stacks.
+- **Weighted raters.** Each rating carries 0–1 weight. Accounts under a day old
+  count for a quarter, accounts that have barely posted are discounted, and an
+  account that rates almost everything 9–10 (or 1–2) is heavily discounted.
+- **Concentration collapse.** Rating the same person repeatedly drops your
+  weight to 25%. If over half your ratings target one person, everything you
   cast drops to 35%.
 - **Hard rate limits.** 25 an hour, 80 a day.
 - **No self-rating, no rating across a block, no rating removed posts.**
 - **Detection queue.** `/admin → Integrity` lists accounts whose behaviour looks
   automated, with the same numbers the weighting used, and a moderator can
   revoke an account's rating weight retroactively.
-- **Paid exposure can never touch a rating.** The `boosted` flag on a post is
-  excluded from every rating and ranking calculation by construction.
 
-The seed deliberately includes a small three-account rating ring so the
-integrity queue has something real to catch on first run.
+The seed includes a three-account rating ring so the queue has a real catch on
+first run.
 
 ---
 
-## Ranking
+## Feeds and ranking
 
-Three boards, four time windows (Today / This week / This month / All time) and
-every category — see [`rankings.ts`](src/lib/services/rankings.ts).
+**Following** is exactly what it says: posts from people you follow, newest
+first. No ranking, no surprises.
 
-| Board | Ranked by |
-| --- | --- |
-| **Overall** | Long-term rating. Slow, hard to fake, impossible to buy. |
-| **Current** | Last 30 days of community response. |
-| **Rising** | Momentum: improvement against your own baseline, growth relative to the audience you already had, and showing up. |
+**Recommended** ranks on engagement relative to the audience the author already
+has, the post's community rating, freshness, and whether it matches what you
+are into. Follower count only ever appears as a denominator, so a large account
+gets no free ride, and a slice of genuinely new posts is reserved so people are
+seen on their first day.
 
-In the seeded data the Current board is topped by creators with 3, 4 and 26
-followers sitting above accounts with 100+ — which is the entire point.
-
-Profiles show **Overall rank**, **Current rank** and **Rising rank**, plus a
-month-by-month **rank history** so the platform reads as a climb rather than a
-scoreboard. `/admin → Integrity → Capture this month's ranks` freezes a snapshot.
-
----
-
-## Give me a shot — staged exposure
-
-A "Give me a shot" post is not promised virality. It is promised a *test*
-([`src/lib/shot.ts`](src/lib/shot.ts)):
-
-```
-100 impressions → 1,000 → 10,000 → 100,000
-```
-
-Exposure is metered: impressions are recorded as discovery actually serves the
-post. When a post uses up its slice it either graduates — if its rating is 7.4+
-or its engagement rate clears the bar — or it rests, freeing rotation slots for
-creators who have not had their turn. Progress is visible on the post itself.
-Nothing about this ladder can be bought.
-
----
+**Discover** ranks people by rating confidence — Overall, Last 30 days, and
+within each category.
 
 ## Website first, then real apps
 
@@ -170,9 +166,9 @@ The architecture is built for step 3 now:
 - All product logic lives in `src/lib/services`, above a six-method storage
   interface. Nothing important lives in a React component.
 - A versioned **JSON API** under `/api/v1` already exposes the same services:
-  `POST /api/v1/auth/login`, `GET /api/v1/me`, `GET /api/v1/feed`,
+  `POST /api/v1/auth/login`, `GET /api/v1/me`, `GET /api/v1/feed?tab=`,
   `GET /api/v1/discover`, `GET /api/v1/users/[username]`,
-  `GET /api/v1/posts/[id]`, `POST /api/v1/ratings`, `GET /api/v1/rankings`.
+  `GET /api/v1/posts/[id]`, `POST /api/v1/ratings`.
 - **One auth system.** The website sends the signed session token as an
   HTTP-only cookie; a native client sends the identical token as
   `Authorization: Bearer <token>`. Same accounts, same database, same ratings
@@ -284,33 +280,6 @@ else needs to change, because everything reads `getViewer()`.
 
 ---
 
-## What is in the app
-
-| Route | What it does |
-| --- | --- |
-| `/` | Landing page — the pitch, ratings, ranking, live creators, challenges |
-| `/signup`, `/login` | Fast signup: email, username, password, what you're becoming, profile |
-| `/welcome` | Three-step orientation for a new account |
-| `/home` | Mixed feed: follows, rising, recommended, live challenge entries |
-| `/discover` | Rising · Trending · New · Give me a shot, by category |
-| `/create` | Text, images, video, category, challenge, tags, Give me a shot |
-| `/challenges`, `/challenges/[slug]` | Weekly challenges, entries, featured entries |
-| `/u/[username]` | Profile: both ratings, three ranks, rank history, journey |
-| `/post/[id]` | Post detail, community rating, reactions, comments |
-| `/rankings` | Overall · Current · Rising, by period and category |
-| `/notifications` | Follows, ratings, likes, comments, mentions, features, level ups |
-| `/search` | People, posts, categories, challenges |
-| `/settings` | Profile, blocked accounts, sign out, delete account |
-| `/admin` | Overview · Reports · Integrity · Users |
-| `/rules` | Community rules, including rating manipulation |
-
-Alongside ratings, creators earn **FayTarra points** for participation across
-seven levels (Rookie → Icon). Points cannot be bought either; they are awarded
-in exactly one place, [`points.ts`](src/lib/services/points.ts), and every award
-is written to an `activity` ledger.
-
----
-
 ## Project structure
 
 ```
@@ -323,10 +292,10 @@ src/
     actions.ts        # server actions (rate, like, follow, comment, report, admin…)
   components/         # PostCard, RateSheet, RatingPill, Nav, Journey…
   lib/
-    ratings.ts        # rating maths (pure, shared client/server)
-    shot.ts           # staged exposure ladder
+    ratings.ts        # rating maths, fully documented (pure, shared)
+    rating-weight.ts  # how much a rater counts (pure, unit tested)
     db/               # driver interface + local JSON driver + Supabase driver
-    services/         # ratings, rankings, feed, discover, integrity, moderation…
+    services/         # ratings, rankings, feed, posts, integrity, moderation…
     seed/             # the sample community
 supabase/schema.sql   # tables, indexes, RLS, storage bucket
 Dockerfile            # container image for any Node host
@@ -337,9 +306,9 @@ scripts/
 
 ## Deliberately not built yet
 
-Direct messages, collaborations, live streaming, monetisation and paid boosts,
-brand partnerships, a creator marketplace, verified profiles, AI creator tools,
-native apps, creator analytics and sponsorships. The seams exist: `activity` is
-an append-only event ledger, ratings and ranking are isolated modules, the
-`boosted` field is already excluded from every score, and the driver interface
-takes new tables without touching feature code.
+Challenges, "give me a shot", levels and points were all removed to get the
+core social experience right first; they may come back. Direct messages,
+collaborations, live streaming, monetisation, verified profiles and native apps
+have not been started. The seams exist: ratings and ranking are isolated,
+documented modules, and the driver interface takes new tables without touching
+feature code.

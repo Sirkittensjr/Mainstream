@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation';
 import { currentUserId } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import type { User } from '@/lib/types';
-import { touchDailyActive } from '@/lib/services/points';
+import { db as database } from '@/lib/db';
 
 /**
  * The signed-in user for the current request. Cached per request so a page can
@@ -30,8 +30,10 @@ export async function requireAdmin(): Promise<User> {
   return viewer;
 }
 
-/** Awards the once-a-day participation points. Called from the app shell. */
+/** Keeps `last_active_at` fresh, at most once a day. Called from the app shell. */
 export async function markActive(viewer: User | null): Promise<void> {
   if (!viewer || viewer.status !== 'active') return;
-  await touchDailyActive(viewer.id);
+  const today = new Date().toISOString().slice(0, 10);
+  if (viewer.last_active_at.slice(0, 10) === today) return;
+  await database().update('users', viewer.id, { last_active_at: new Date().toISOString() });
 }

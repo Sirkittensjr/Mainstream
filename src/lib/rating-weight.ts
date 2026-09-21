@@ -23,8 +23,13 @@ export interface WeightBreakdown {
   reasons: string[];
 }
 
+export interface RaterProfile extends Pick<User, 'status' | 'trusted' | 'created_at'> {
+  /** Posts plus comments — evidence this is a participant, not a drive-by. */
+  contributions: number;
+}
+
 export function raterWeight(
-  rater: Pick<User, 'status' | 'trusted' | 'created_at' | 'points'>,
+  rater: RaterProfile,
   ratingsGiven: Pick<Rating, 'score' | 'owner_id'>[],
   targetOwnerId: ID,
   now: number = Date.now(),
@@ -43,9 +48,9 @@ export function raterWeight(
     reasons.push('account is less than a week old');
   }
 
-  if (rater.points < 20) {
+  if (rater.contributions < 2) {
     weight *= 0.7;
-    reasons.push('little activity on the account');
+    reasons.push('has barely used the account');
   }
 
   if (ratingsGiven.length >= 10) {

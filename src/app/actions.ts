@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { clearSessionCookie } from '@/lib/auth/session';
 import { db } from '@/lib/db';
-import { CATEGORIES, type Category, type Interest, type Media } from '@/lib/types';
+import { CATEGORIES, type Category, type Media } from '@/lib/types';
 import { getViewer, requireAdmin, requireViewer } from '@/lib/session';
 import {
   addComment,
@@ -19,7 +19,6 @@ import {
   removePost,
   resolveReport,
   restorePost,
-  setFeatured,
   setUserStatus,
   submitReport,
 } from '@/lib/services/moderation';
@@ -27,7 +26,6 @@ import { blockUser, follow, unblockUser, unfollow, updateProfile } from '@/lib/s
 import { deleteAccount } from '@/lib/services/account';
 import { submitRating } from '@/lib/services/ratings';
 import { setRaterTrust } from '@/lib/services/rating-integrity';
-import { captureRankSnapshot } from '@/lib/services/rankings';
 import type { Reaction, RatingTarget } from '@/lib/types';
 
 export async function likeAction(postId: string) {
@@ -124,9 +122,8 @@ export async function createPostAction(_prev: unknown, formData: FormData) {
   if (!caption && media.length === 0) {
     return { error: 'Add a caption or some media before posting.' };
   }
-  const categoryInput = String(formData.get('category') || 'Other') as Category;
-  const category = CATEGORIES.includes(categoryInput) ? categoryInput : 'Other';
-  const challengeId = String(formData.get('challenge') || '') || null;
+  const categoryInput = String(formData.get('category') || 'Life') as Category;
+  const category = CATEGORIES.includes(categoryInput) ? categoryInput : 'Life';
 
   const post = await createPost({
     authorId: viewer.id,
@@ -136,8 +133,6 @@ export async function createPostAction(_prev: unknown, formData: FormData) {
     tags: String(formData.get('tags') || '')
       .split(/[\s,]+/)
       .filter(Boolean),
-    challengeId,
-    shot: formData.get('shot') === 'on',
   });
   revalidatePath('/home');
   revalidatePath('/discover');
@@ -154,12 +149,11 @@ export async function markNotificationsReadAction() {
 
 export async function updateProfileAction(_prev: unknown, formData: FormData) {
   const viewer = await requireViewer('/settings');
-  const interests = formData.getAll('interests').map(String) as Interest[];
+  const interests = formData.getAll('interests').map(String) as Category[];
   await updateProfile(viewer.id, {
     display_name: String(formData.get('display_name') || viewer.display_name).slice(0, 40),
     bio: String(formData.get('bio') || '').slice(0, 240),
     location: String(formData.get('location') || '').slice(0, 60) || null,
-    goal: String(formData.get('goal') || '').slice(0, 60) || viewer.goal,
     avatar_url: String(formData.get('avatar_url') || '') || null,
     ...(interests.length > 0 ? { interests } : {}),
   });
@@ -225,24 +219,10 @@ export async function adminResolveReportAction(
   revalidatePath('/admin');
 }
 
-export async function adminFeatureAction(postId: string, featured: boolean) {
-  await requireAdmin();
-  await setFeatured(postId, featured);
-  revalidatePath('/admin');
-  revalidatePath('/discover');
-}
-
 export async function adminSetTrustAction(userId: string, trusted: boolean) {
   await requireAdmin();
   await setRaterTrust(userId, trusted);
   revalidatePath('/admin');
-}
-
-export async function adminCaptureRanksAction() {
-  await requireAdmin();
-  const count = await captureRankSnapshot();
-  revalidatePath('/admin');
-  return { ok: true as const, count };
 }
 
 /** Used by the admin "view user" panel. */

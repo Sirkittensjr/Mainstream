@@ -5,7 +5,7 @@ import { db } from '@/lib/db';
 import { newId } from '@/lib/ids';
 import { setSessionCookie } from '@/lib/auth/session';
 import { signIn, signUp } from '@/lib/services/account';
-import { INTERESTS, type Interest } from '@/lib/types';
+import { CATEGORIES, type Category } from '@/lib/types';
 
 export interface AuthState {
   error?: string;
@@ -22,7 +22,7 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
   const interests = formData
     .getAll('interests')
     .map(String)
-    .filter((value): value is Interest => (INTERESTS as readonly string[]).includes(value));
+    .filter((value): value is Category => (CATEGORIES as readonly string[]).includes(value));
 
   // The avatar rides along with the signup form so we never need an upload
   // endpoint that accepts files from people without an account.
@@ -46,14 +46,13 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
     display_name: String(formData.get('display_name') || ''),
     bio: String(formData.get('bio') || ''),
     location: String(formData.get('location') || ''),
-    goal: String(formData.get('goal') || ''),
     avatar_url: avatarUrl,
     interests,
   });
   if (!result.ok) return { error: result.error };
 
   await setSessionCookie(result.value.id);
-  redirect('/welcome');
+  redirect('/home?tab=recommended');
 }
 
 export async function loginAction(_prev: AuthState, formData: FormData): Promise<AuthState> {
