@@ -61,7 +61,7 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
   const view = views[0];
   if (!view) notFound();
 
-  const items: CommentItem[] = comments.map((comment) => ({
+  const toItem = (comment: (typeof comments)[number]): CommentItem => ({
     id: comment.comment.id,
     body: comment.comment.body,
     createdAt: comment.comment.created_at,
@@ -71,7 +71,9 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
       displayName: comment.author.display_name,
       avatarUrl: comment.author.avatar_url,
     },
-  }));
+    replies: comment.replies.map(toItem),
+  });
+  const items: CommentItem[] = comments.map(toItem);
 
   return (
     <>

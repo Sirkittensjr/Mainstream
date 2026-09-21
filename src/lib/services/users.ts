@@ -223,24 +223,40 @@ export async function suggestedPeople(
   const followers = await followerCounts(candidates.map((u) => u.id));
   const interests = new Set(viewer?.interests ?? []);
 
-  return candidates
-    .map((user) => {
-      const summary = index.users.get(user.id);
-      const category = categoryOf.get(user.id) ?? user.interests[0] ?? null;
-      const shared = category && interests.has(category) ? 1.2 : 1;
-      return {
-        score: (summary?.overallScore ?? 0) * shared,
-        card: {
-          user: toPublicUser(user),
-          followers: followers.get(user.id) ?? 0,
-          rating: summary && summary.overallVotes > 0 ? summary.overall : null,
-          votes: summary?.overallVotes ?? 0,
-          category,
-        } satisfies SuggestedPerson,
-      };
-    })
-    .filter((entry) => entry.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map((entry) => entry.card);
+  const postCounts = new Map<ID, number>();
+  for (const post of posts) postCounts.set(post.author_id, (postCounts.get(post.author_id) ?? 0) + 1);
+
+  const scored = candidates.map((user) => {
+    const summary = index.users.get(user.id);
+    const category = categoryOf.get(user.id) ?? user.interests[0] ?? null;
+    const shared = category && interests.has(category) ? 1.2 : 1;
+    return {
+      score: (summary?.overallScore ?? 0) * shared,
+      posts: postCounts.get(user.id) ?? 0,
+      joined: user.created_at,
+      card: {
+        user: toPublicUser(user),
+        followers: followers.get(user.id) ?? 0,
+        rating: summary && summary.overallVotes > 0 ? summary.overall : null,
+        votes: summary?.overallVotes ?? 0,
+        category,
+      } satisfies SuggestedPerson,
+    };
+  });
+
+  const rated = scored.filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score);
+  if (rated.length >= limit) return rated.slice(0, limit).map((entry) => entry.card);
+
+  /**
+   * Cold start. On a new platform nobody has a rating yet, so ranking on
+   * rating alone suggests nobody at all and the sidebar is permanently empty —
+   * which is exactly when people most need somewhere to go. Top up with
+   * accounts that have actually posted, newest first.
+   */
+  const chosen = new Set(rated.map((entry) => entry.card.user.id));
+  const newcomers = scored
+    .filter((entry) => !chosen.has(entry.card.user.id) && entry.posts > 0)
+    .sort((a, b) => b.posts - a.posts || b.joined.localeCompare(a.joined));
+
+  return [...rated, ...newcomers].slice(0, limit).map((entry) => entry.card);
 }

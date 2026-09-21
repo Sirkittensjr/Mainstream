@@ -267,10 +267,11 @@ first-class Next.js support.
 2. Run [`supabase/schema.sql`](supabase/schema.sql) — tables, indexes, RLS, the
    `faytarra-media` storage bucket, and the `on_auth_user_created` trigger that
    gives every new Supabase Auth user a FayTarra profile.
-   *Upgrading a database created before Supabase Auth?* Run
-   [`supabase/migrations/0001_supabase_auth.sql`](supabase/migrations/0001_supabase_auth.sql)
-   instead — it drops `password_hash`, points `public.users.id` at
-   `auth.users`, and installs the same trigger.
+   *Upgrading an existing database?* Run the migrations in
+   [`supabase/migrations/`](supabase/migrations) in order instead:
+   `0001_supabase_auth.sql` moves identity to Supabase Auth, and
+   `0002_mvp_hardening.sql` locks down what the anon key can do, adds comment
+   replies and adds the missing indexes.
 3. In **Authentication → URL configuration**, set the site URL to your domain
    and add `https://your-domain/auth/callback` to the redirect allow-list.
    Confirmation and reset links land there.
@@ -289,6 +290,30 @@ first-class Next.js support.
 The driver is chosen automatically: Supabase when those keys are set, the local
 JSON store otherwise. Uploads follow the same rule — Supabase Storage in
 production, local disk served through `/api/media/[file]` in development.
+
+### What a leaked anon key can do
+
+The anon key ships to every browser, so it has to be assumed public. Supabase
+grants `anon` and `authenticated` full table access by default and relies on
+RLS — but **RLS decides which rows, not which columns**. Left at the default
+that meant two things were possible with nothing but the anon key:
+
+- reading every email address on the platform, through the public-profiles
+  policy;
+- a signed-in person PATCHing their own profile row to `role = 'admin'`,
+  lifting their own ban, or restoring a `trusted` flag a moderator had revoked.
+
+`supabase/schema.sql` therefore revokes the table grant on `public.users` and
+grants back only the safe columns — SELECT on everything except `email`, and
+UPDATE on the five profile fields a person owns. A column-level `REVOKE` is not
+enough on its own: a table-level grant covers every column and outranks it.
+Every other table keeps RLS on with no policies, so the API roles read and
+write nothing there at all. **If you add a column to `public.users`, add it to
+that grant list too.** `scripts/e2e/rls-checks.sql` proves all of this.
+
+The app itself is unaffected by any of it: it talks to the database with the
+service role and enforces blocking, moderation and rating integrity in one
+place in `src/lib/services`.
 
 ### Authentication
 

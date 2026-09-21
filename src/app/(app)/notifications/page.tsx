@@ -17,6 +17,7 @@ const ICONS: Record<NotificationType, string> = {
   rating: '★',
   like: '❤️',
   comment: '💬',
+  reply: '↩',
   mention: '@',
 };
 
@@ -48,8 +49,8 @@ export default async function NotificationsPage() {
         {notifications.length === 0 ? (
           <EmptyState
             title="Nothing yet"
-            body="When someone follows you, likes a post or you level up, it shows here."
-            cta={{ href: '/discover', label: 'Find creators' }}
+            body="Follows, likes, comments, replies and ratings all land here. Post something or follow a few people to get started."
+            cta={{ href: '/discover', label: 'Find people' }}
           />
         ) : (
           <ul className="space-y-2 pb-10">

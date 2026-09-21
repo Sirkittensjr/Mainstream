@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { rateAction } from "@/app/actions";
 import { formatRating, formatVotes, ratingTone } from "@/lib/ratings";
 import { REACTIONS, type Reaction, type RatingTarget } from "@/lib/types";
@@ -183,6 +183,7 @@ export function RateButton({
 }: RateTargetProps & { compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const router = useRouter();
+  const pathname = usePathname();
   const tone = ratingTone(props.rating);
   const rated = props.myScore != null;
 
@@ -191,7 +192,11 @@ export function RateButton({
       <button
         type="button"
         onClick={() =>
-          props.signedIn ? setOpen(true) : router.push("/login?next=/home")
+          props.signedIn
+            ? setOpen(true)
+            : // Back to whatever they were looking at, so the rating they came
+              // to give is still one tap away after signing in.
+              router.push(`/login?next=${encodeURIComponent(pathname)}`)
         }
         className={`inline-flex items-center gap-1.5 rounded-full border font-display font-bold tabular-nums transition active:scale-95 ${
           compact ? "px-2.5 py-1.5 text-[13px]" : "px-3.5 py-2 text-sm"
@@ -200,7 +205,7 @@ export function RateButton({
             ? "border-mint/50 bg-mint/10 text-mint"
             : tone === "none"
               ? "border-dashed border-white/20 text-white/45 hover:text-white"
-              : "border-white/12 bg-white/[0.05] text-white hover:bg-white/10"
+              : "border-white/[0.12] bg-white/[0.05] text-white hover:bg-white/10"
         }`}
         aria-label={
           rated

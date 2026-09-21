@@ -5,6 +5,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { likeAction } from '@/app/actions';
 import { formatCount } from '@/lib/format';
+import { formatVotes } from '@/lib/ratings';
 import { timeAgo } from '@/lib/time';
 import type { Media, Reaction } from '@/lib/types';
 import { Avatar } from './Avatar';
@@ -194,6 +195,11 @@ export function PostCard({
         )}
 
         <span className="ml-auto flex items-center gap-1">
+          {data.ratingVotes > 0 && (
+            <span className="hidden text-[11px] text-white/30 sm:inline">
+              {formatVotes(data.ratingVotes)}
+            </span>
+          )}
           <RateButton
             compact
             targetType="post"
