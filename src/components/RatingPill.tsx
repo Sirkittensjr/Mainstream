@@ -1,4 +1,4 @@
-import { formatRating, ratingTone, TREND_ARROW, type Trend } from '@/lib/ratings';
+import { formatRating, formatVotes, ratingTone, TREND_ARROW, type Trend } from '@/lib/ratings';
 
 const TONE = {
   high: 'border-mint/40 bg-mint/10 text-mint',
@@ -14,27 +14,30 @@ const SIZES = {
   lg: 'px-3 py-1.5 text-base',
 } as const;
 
-/** The number that answers "how is this doing?" — used on posts and profiles. */
+/** The rating badge. Always pair a rating with how many people gave it. */
 export function RatingPill({
   value,
   label,
   trend,
   size = 'md',
-  count,
+  votes,
 }: {
   value: number | null;
   label?: string;
   trend?: Trend;
   size?: keyof typeof SIZES;
-  count?: number;
+  votes?: number;
 }) {
-  const tone = TONE[ratingTone(value)];
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border font-display font-bold tabular-nums ${tone} ${SIZES[size]}`}
-      title={count != null ? `${count} rating${count === 1 ? '' : 's'}` : undefined}
+      className={`inline-flex items-center gap-1.5 rounded-full border font-display font-bold tabular-nums ${TONE[ratingTone(value)]} ${SIZES[size]}`}
+      title={votes != null ? formatVotes(votes) : undefined}
     >
-      {label && <span className="font-sans text-[10px] font-semibold uppercase tracking-wider opacity-70">{label}</span>}
+      {label && (
+        <span className="font-sans text-[10px] font-semibold uppercase tracking-wider opacity-70">
+          {label}
+        </span>
+      )}
       {formatRating(value)}
       {trend && trend !== 'steady' && (
         <span aria-label={trend === 'up' ? 'rising' : 'falling'}>{TREND_ARROW[trend]}</span>
@@ -43,12 +46,7 @@ export function RatingPill({
   );
 }
 
-/** Distribution bar used on the post page. */
-export function ReactionBar({
-  reactions,
-}: {
-  reactions: { reaction: string; count: number }[];
-}) {
+export function ReactionBar({ reactions }: { reactions: { reaction: string; count: number }[] }) {
   const shown = reactions.filter((entry) => entry.count > 0);
   if (shown.length === 0) return null;
   return (

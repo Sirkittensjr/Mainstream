@@ -18,10 +18,6 @@ const ICONS: Record<NotificationType, string> = {
   like: '❤️',
   comment: '💬',
   mention: '@',
-  featured: '⭐',
-  level_up: '🚀',
-  challenge_ending: '⏳',
-  challenge_entry: '🏆',
 };
 
 export default async function NotificationsPage() {

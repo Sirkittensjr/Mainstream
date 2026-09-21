@@ -5,7 +5,7 @@
 -- seed the sample community with `npm run seed`.
 --
 -- The application talks to these tables through the server-side service role
--- and enforces its own rules (blocking, moderation, FayTarra points) in one place.
+-- and enforces its own rules (blocking, moderation, rating integrity) in one place.
 -- RLS is still enabled on every table so that nothing is readable or writable
 -- with the anon key by accident.
 -- ---------------------------------------------------------------------------
@@ -23,11 +23,9 @@ create table if not exists public.users (
   avatar_url    text,
   location      text,
   interests     text[] not null default '{}',
-  goal          text not null default '100 followers',
   role          text not null default 'user'   check (role in ('user', 'admin')),
   status        text not null default 'active' check (status in ('active', 'suspended', 'banned')),
   status_reason text,
-  points        integer not null default 0,
   -- Rating integrity: a moderator can revoke the weight an account's ratings carry.
   trusted       boolean not null default true,
   created_at    timestamptz not null default now(),
@@ -35,22 +33,7 @@ create table if not exists public.users (
 );
 
 create index if not exists users_username_idx on public.users (username);
-create index if not exists users_points_idx on public.users (points desc);
 
--- Challenges ---------------------------------------------------------------
-create table if not exists public.challenges (
-  id                uuid primary key default gen_random_uuid(),
-  slug              text not null unique,
-  title             text not null,
-  description       text not null,
-  category          text not null default 'Any',
-  starts_at         timestamptz not null,
-  ends_at           timestamptz not null,
-  featured_post_ids uuid[] not null default '{}',
-  created_at        timestamptz not null default now()
-);
-
-create index if not exists challenges_window_idx on public.challenges (starts_at, ends_at);
 
 -- Posts --------------------------------------------------------------------
 create table if not exists public.posts (
@@ -60,14 +43,7 @@ create table if not exists public.posts (
   media          jsonb not null default '[]',
   category       text not null default 'Other',
   tags           text[] not null default '{}',
-  challenge_id   uuid references public.challenges (id) on delete set null,
-  shot           boolean not null default false,   -- "GIVE ME A SHOT"
-  shot_stage     integer not null default 0,       -- staged exposure ladder
-  impressions    integer not null default 0,       -- metered discovery exposure
-  boosted        boolean not null default false,   -- reserved for paid exposure
   views          integer not null default 0,
-  featured       boolean not null default false,
-  featured_at    timestamptz,
   removed        boolean not null default false,
   removed_reason text,
   created_at     timestamptz not null default now()
@@ -75,9 +51,7 @@ create table if not exists public.posts (
 
 create index if not exists posts_author_idx on public.posts (author_id);
 create index if not exists posts_created_idx on public.posts (created_at desc);
-create index if not exists posts_challenge_idx on public.posts (challenge_id);
 create index if not exists posts_category_idx on public.posts (category);
-create index if not exists posts_shot_idx on public.posts (shot) where shot;
 
 -- Likes --------------------------------------------------------------------
 create table if not exists public.likes (
@@ -148,23 +122,6 @@ create index if not exists ratings_target_idx on public.ratings (target_type, ta
 create index if not exists ratings_owner_idx on public.ratings (owner_id);
 create index if not exists ratings_rater_idx on public.ratings (rater_id, updated_at desc);
 
--- Rank snapshots -----------------------------------------------------------
--- Monthly freeze of the live ranking, so a profile can show its climb.
-create table if not exists public.rank_snapshots (
-  id             uuid primary key default gen_random_uuid(),
-  user_id        uuid not null references public.users (id) on delete cascade,
-  period         text not null,               -- e.g. '2026-09'
-  overall_rank   integer not null,
-  current_rank   integer not null,
-  rising_rank    integer not null,
-  overall_rating real not null,
-  current_rating real not null,
-  created_at     timestamptz not null default now(),
-  unique (user_id, period)
-);
-
-create index if not exists rank_snapshots_period_idx on public.rank_snapshots (period);
-
 -- Notifications ------------------------------------------------------------
 create table if not exists public.notifications (
   id           uuid primary key default gen_random_uuid(),
@@ -172,7 +129,6 @@ create table if not exists public.notifications (
   type         text not null,
   actor_id     uuid references public.users (id) on delete set null,
   post_id      uuid references public.posts (id) on delete cascade,
-  challenge_id uuid references public.challenges (id) on delete set null,
   body         text not null,
   read         boolean not null default false,
   created_at   timestamptz not null default now()
@@ -195,20 +151,6 @@ create table if not exists public.reports (
 
 create index if not exists reports_status_idx on public.reports (status, created_at desc);
 
--- Activity (FayTarra point ledger) ---------------------------------------------
-create table if not exists public.activity (
-  id           uuid primary key default gen_random_uuid(),
-  user_id      uuid not null references public.users (id) on delete cascade,
-  type         text not null,
-  points       integer not null default 0,
-  post_id      uuid references public.posts (id) on delete set null,
-  challenge_id uuid references public.challenges (id) on delete set null,
-  created_at   timestamptz not null default now()
-);
-
-create index if not exists activity_user_idx on public.activity (user_id, created_at desc);
-create index if not exists activity_created_idx on public.activity (created_at desc);
-
 -- Row level security --------------------------------------------------------
 -- Every table is locked down: the app server uses the service role key, which
 -- bypasses RLS. Add explicit policies here if you later let browsers talk to
@@ -219,12 +161,9 @@ alter table public.likes         enable row level security;
 alter table public.comments      enable row level security;
 alter table public.follows       enable row level security;
 alter table public.blocks        enable row level security;
-alter table public.challenges    enable row level security;
 alter table public.ratings       enable row level security;
-alter table public.rank_snapshots enable row level security;
 alter table public.notifications enable row level security;
 alter table public.reports       enable row level security;
-alter table public.activity      enable row level security;
 
 -- Storage -------------------------------------------------------------------
 -- Uploaded images and video go to this bucket. Public read so posts render.

@@ -84,8 +84,6 @@ class SupabaseDriver implements Driver {
 
   async clear() {
     const tables: TableName[] = [
-      'activity',
-      'rank_snapshots',
       'ratings',
       'notifications',
       'reports',
@@ -94,7 +92,6 @@ class SupabaseDriver implements Driver {
       'comments',
       'likes',
       'posts',
-      'challenges',
       'users',
     ];
     for (const table of tables) {

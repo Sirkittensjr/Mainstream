@@ -8,7 +8,7 @@ import { listReports } from '@/lib/services/moderation';
 import { requireAdmin } from '@/lib/session';
 import { formatShortDate, timeAgo } from '@/lib/time';
 import { suspiciousRaters } from '@/lib/services/rating-integrity';
-import { CaptureRanksButton, ReportActions, TrustActions, UserActions } from './AdminActions';
+import { ReportActions, TrustActions, UserActions } from './AdminActions';
 
 export const metadata: Metadata = { title: 'Admin' };
 export const dynamic = 'force-dynamic';
@@ -76,7 +76,7 @@ export default async function AdminPage({
               <Metric label="Comments" value={stats.totals.comments} />
               <Metric label="Likes" value={stats.totals.likes} />
               <Metric label="Follows" value={stats.totals.follows} />
-              <Metric label="Challenge entries" value={stats.totals.challengeEntries} />
+              <Metric label="Follows" value={stats.totals.follows} />
               <Metric label="Ratings cast" value={stats.totals.ratings} />
               <Metric label="Open reports" value={stats.totals.openReports} accent />
             </div>
@@ -122,20 +122,6 @@ export default async function AdminPage({
               </div>
 
               <div className="card p-5">
-                <h2 className="font-display text-lg font-bold">Challenge participation</h2>
-                <ul className="mt-4 space-y-2 text-sm">
-                  {stats.challengeParticipation.map((entry) => (
-                    <li key={entry.title} className="flex justify-between gap-3">
-                      <span className="truncate text-white/60">{entry.title}</span>
-                      <span className="shrink-0 text-white/40">
-                        {entry.entries} entries · {entry.creators} creators
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="card p-5">
                 <h2 className="font-display text-lg font-bold">Most viewed posts</h2>
                 <ul className="mt-4 space-y-2 text-sm">
                   {stats.topPosts.map((post) => (
@@ -152,15 +138,15 @@ export default async function AdminPage({
               </div>
 
               <div className="card p-5">
-                <h2 className="font-display text-lg font-bold">Top creators</h2>
+                <h2 className="font-display text-lg font-bold">Best rated</h2>
                 <ul className="mt-4 space-y-2 text-sm">
-                  {stats.topCreators.map((entry) => (
+                  {stats.topRated.map((entry) => (
                     <li key={entry.user.id} className="flex items-baseline justify-between gap-3">
                       <Link href={`/u/${entry.user.username}`} className="truncate hover:underline">
                         @{entry.user.username}
                       </Link>
                       <span className="shrink-0 text-white/40">
-                        L{entry.level} · {entry.points.toLocaleString()} pts ·{' '}
+                        {entry.rating.toFixed(1)} · {Math.round(entry.votes)} ratings ·{' '}
                         {entry.followers.toLocaleString()} followers
                       </span>
                     </li>
@@ -239,15 +225,6 @@ export default async function AdminPage({
               </ul>
             )}
 
-            <div className="card flex flex-wrap items-center justify-between gap-4 p-5">
-              <div>
-                <h2 className="font-display text-lg font-bold">Rank history</h2>
-                <p className="mt-1 text-sm text-white/50">
-                  Freeze this month&rsquo;s ranks so profiles can show the climb.
-                </p>
-              </div>
-              <CaptureRanksButton />
-            </div>
           </div>
         )}
 
@@ -365,8 +342,8 @@ export default async function AdminPage({
                       @{entry.user.username}
                     </Link>
                     <p className="truncate text-xs text-white/40">
-                      {entry.email} · L{entry.level} · {entry.followers} followers · {entry.posts}{' '}
-                      posts · {entry.user.status}
+                      {entry.email} · {entry.rating ? `${entry.rating.toFixed(1)} rated` : 'unrated'}{' '}
+                      · {entry.followers} followers · {entry.posts} posts · {entry.user.status}
                     </p>
                   </div>
                   <UserActions userId={entry.user.id} status={entry.user.status} />

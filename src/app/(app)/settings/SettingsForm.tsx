@@ -2,7 +2,7 @@
 
 import { useActionState, useState } from 'react';
 import { updateProfileAction } from '@/app/actions';
-import { INTERESTS, type Interest } from '@/lib/types';
+import { CATEGORIES, type Category } from '@/lib/types';
 
 export function SettingsForm({
   defaults,
@@ -11,16 +11,15 @@ export function SettingsForm({
     displayName: string;
     bio: string;
     location: string;
-    goal: string;
     avatarUrl: string | null;
-    interests: Interest[];
+    interests: Category[];
   };
 }) {
   const [state, formAction, pending] = useActionState<
     { ok?: true; message?: string } | null,
     FormData
   >(updateProfileAction, null);
-  const [selected, setSelected] = useState<Interest[]>(defaults.interests);
+  const [selected, setSelected] = useState<Category[]>(defaults.interests);
   const [avatar, setAvatar] = useState<string | null>(defaults.avatarUrl);
   const [uploading, setUploading] = useState(false);
 
@@ -105,7 +104,7 @@ export function SettingsForm({
         />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div>
         <div>
           <label className="label" htmlFor="location">
             Location
@@ -119,24 +118,12 @@ export function SettingsForm({
             className="mt-2 w-full"
           />
         </div>
-        <div>
-          <label className="label" htmlFor="goal">
-            Current goal
-          </label>
-          <input
-            id="goal"
-            name="goal"
-            defaultValue={defaults.goal}
-            maxLength={60}
-            className="mt-2 w-full"
-          />
-        </div>
       </div>
 
       <fieldset>
-        <legend className="label mb-3">What are you trying to become?</legend>
+        <legend className="label mb-3">What are you into?</legend>
         <div className="flex flex-wrap gap-2">
-          {INTERESTS.map((interest) => {
+          {CATEGORIES.map((interest) => {
             const active = selected.includes(interest);
             return (
               <button

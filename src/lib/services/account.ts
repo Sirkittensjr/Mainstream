@@ -2,8 +2,7 @@ import 'server-only';
 import { db } from '@/lib/db';
 import { newId } from '@/lib/ids';
 import { hashPassword, verifyPassword } from '@/lib/auth/password';
-import type { Interest, User } from '@/lib/types';
-import { notify } from './notifications';
+import type { Category, User } from '@/lib/types';
 import { getUserByEmail, getUserByUsername } from './users';
 
 export const USERNAME_RULES = 'letters, numbers and underscores, 3–20 characters';
@@ -22,8 +21,7 @@ export interface SignUpInput {
   bio?: string;
   location?: string;
   avatar_url?: string | null;
-  interests: Interest[];
-  goal?: string;
+  interests: Category[];
 }
 
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -42,7 +40,7 @@ export async function signUp(input: SignUpInput): Promise<Result<User>> {
   }
   if (!input.display_name.trim()) return { ok: false, error: 'Add a display name.' };
   if (input.interests.length === 0) {
-    return { ok: false, error: 'Pick at least one thing you are trying to become.' };
+    return { ok: false, error: 'Pick at least one thing you are into.' };
   }
   if (await getUserByEmail(email)) return { ok: false, error: 'That email is already registered.' };
   if (await getUserByUsername(username)) return { ok: false, error: 'That username is taken.' };
@@ -63,22 +61,15 @@ export async function signUp(input: SignUpInput): Promise<Result<User>> {
     avatar_url: input.avatar_url ?? null,
     location: (input.location ?? '').trim().slice(0, 60) || null,
     interests: input.interests.slice(0, 6),
-    goal: (input.goal ?? '100 followers').trim().slice(0, 60),
     role: adminEmails.includes(email) ? 'admin' : 'user',
     status: 'active',
     status_reason: null,
     trusted: true,
-    points: 0,
     created_at: now,
     last_active_at: now,
   };
   await db().insert('users', user);
 
-  await notify({
-    userId: user.id,
-    type: 'level_up',
-    body: 'Welcome to FayTarra. You are Level 1 — Rookie. Everyone starts at zero.',
-  });
   return { ok: true, value: user };
 }
 
@@ -115,12 +106,13 @@ export async function changePassword(
 
 export async function deleteAccount(userId: string): Promise<void> {
   const store = db();
-  const [posts, likes, comments, follows, notifications] = await Promise.all([
+  const [posts, likes, comments, follows, notifications, ratings] = await Promise.all([
     store.query('posts', { where: { author_id: userId } }),
     store.query('likes', { where: { user_id: userId } }),
     store.query('comments', { where: { user_id: userId } }),
     store.query('follows', { where: { follower_id: userId } }),
     store.query('notifications', { where: { user_id: userId } }),
+    store.query('ratings', { where: { rater_id: userId } }),
   ]);
   await Promise.all([
     ...posts.map((row) => store.remove('posts', row.id)),
@@ -128,6 +120,7 @@ export async function deleteAccount(userId: string): Promise<void> {
     ...comments.map((row) => store.remove('comments', row.id)),
     ...follows.map((row) => store.remove('follows', row.id)),
     ...notifications.map((row) => store.remove('notifications', row.id)),
+    ...ratings.map((row) => store.remove('ratings', row.id)),
   ]);
   const inbound = await store.query('follows', { where: { following_id: userId } });
   await Promise.all(inbound.map((row) => store.remove('follows', row.id)));

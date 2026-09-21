@@ -4,26 +4,22 @@ import { notFound } from 'next/navigation';
 import { Avatar } from '@/components/Avatar';
 import { EmptyState } from '@/components/EmptyState';
 import { FollowButton } from '@/components/FollowButton';
-import { Journey } from '@/components/Journey';
-import { LevelBadge, LevelMeter } from '@/components/LevelBadge';
 import { PageTopBar } from '@/components/PageTopBar';
 import { PostList } from '@/components/PostList';
 import { ProfileMenu } from '@/components/ProfileMenu';
 import { RatingPill, ReactionBar } from '@/components/RatingPill';
 import { RateButton } from '@/components/RateSheet';
-import { formatCount, levelFor } from '@/lib/progression';
+import { formatCount } from '@/lib/format';
+import { formatVotes, MIN_VOTES_FOR_RANKING, topReactions } from '@/lib/ratings';
 import { hydratePosts, postsByAuthor } from '@/lib/services/posts';
+import { myRating, userRating } from '@/lib/services/ratings';
+import { userRanks } from '@/lib/services/rankings';
 import {
-  getJourney,
   getUserByUsername,
   getUserStats,
   isBlockedEitherWay,
   isFollowing,
 } from '@/lib/services/users';
-import { db } from '@/lib/db';
-import { myRating, userRating } from '@/lib/services/ratings';
-import { rankHistory, userRanks } from '@/lib/services/rankings';
-import { topReactions } from '@/lib/ratings';
 import { getViewer } from '@/lib/session';
 import { formatMonthYear } from '@/lib/time';
 
@@ -39,7 +35,7 @@ export async function generateMetadata({
   return { title: user ? `${user.display_name} (@${user.username})` : 'Profile' };
 }
 
-const TABS = ['posts', 'challenges', 'about'] as const;
+const TABS = ['posts', 'about'] as const;
 
 export default async function ProfilePage({
   params,
@@ -60,32 +56,24 @@ export default async function ProfilePage({
   const viewer = await getViewer();
   const isSelf = viewer?.id === user.id;
   const blocked = viewer && !isSelf ? await isBlockedEitherWay(viewer.id, user.id) : false;
-
   if (user.status === 'banned' && !isSelf && viewer?.role !== 'admin') notFound();
 
-  const [stats, following, allPosts, journey, challenges, rating, ranks, history, mine] =
-    await Promise.all([
-      getUserStats(user.id),
-      viewer && !isSelf ? isFollowing(viewer.id, user.id) : Promise.resolve(false),
-      postsByAuthor(user.id),
-      getJourney(user),
-      db().query('challenges'),
-      userRating(user.id),
-      userRanks(user.id),
-      rankHistory(user.id),
-      myRating(viewer?.id ?? null, 'user', user.id),
-    ]);
+  const [stats, following, allPosts, rating, ranks, mine] = await Promise.all([
+    getUserStats(user.id),
+    viewer && !isSelf ? isFollowing(viewer.id, user.id) : Promise.resolve(false),
+    postsByAuthor(user.id),
+    userRating(user.id),
+    userRanks(user.id),
+    myRating(viewer?.id ?? null, 'user', user.id),
+  ]);
 
-  const challengeById = new Map(challenges.map((entry) => [entry.id, entry]));
-  const shown = tab === 'challenges' ? allPosts.filter((post) => post.challenge_id) : allPosts;
-  const posts = blocked ? [] : await hydratePosts(shown.slice(0, 40), viewer?.id ?? null);
-  const level = levelFor(user.points);
+  const posts = blocked ? [] : await hydratePosts(allPosts.slice(0, 40), viewer?.id ?? null);
+  const rated = rating.overallVotes > 0;
 
   return (
     <>
       <PageTopBar title={`@${user.username}`} />
       <div className="mx-auto max-w-2xl px-4 pt-4 lg:pt-8">
-        {/* Header ------------------------------------------------------- */}
         <header className="card p-6">
           <div className="flex items-start gap-4">
             <Avatar
@@ -94,94 +82,97 @@ export default async function ProfilePage({
               src={user.avatar_url}
               size="xl"
               href={false}
-              ring
             />
             <div className="min-w-0 flex-1">
               <h1 className="truncate font-display text-2xl font-extrabold tracking-tight">
                 {user.display_name}
               </h1>
               <p className="text-white/45">@{user.username}</p>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <LevelBadge level={level.level} name={level.name} />
-                {user.status === 'suspended' && (
-                  <span className="chip border-fay/40 bg-fay/10 text-fay">Suspended</span>
-                )}
-              </div>
+              {user.status === 'suspended' && (
+                <span className="chip mt-2 border-fay/40 bg-fay/10 text-fay">Suspended</span>
+              )}
             </div>
           </div>
 
-          {user.interests.length > 0 && (
-            <p className="mt-4 text-sm font-semibold text-white/70">
-              {user.interests.join(' / ')}
-            </p>
-          )}
           {user.bio && (
-            <p className="mt-2 whitespace-pre-wrap text-[15px] leading-relaxed text-white/80">
+            <p className="mt-4 whitespace-pre-wrap text-[15px] leading-relaxed text-white/80">
               {user.bio}
             </p>
           )}
-          {user.location && <p className="mt-2 text-sm text-white/35">📍 {user.location}</p>}
+
+          {user.interests.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {user.interests.map((interest) => (
+                <Link
+                  key={interest}
+                  href={`/discover?category=${encodeURIComponent(interest)}`}
+                  className="chip hover:bg-white/10"
+                >
+                  {interest}
+                </Link>
+              ))}
+            </div>
+          )}
+          {user.location && <p className="mt-3 text-sm text-white/35">📍 {user.location}</p>}
 
           <dl className="mt-5 flex flex-wrap gap-x-6 gap-y-2 text-sm">
             <Stat label="Followers" value={formatCount(stats.followers)} />
             <Stat label="Following" value={formatCount(stats.following)} />
             <Stat label="Posts" value={formatCount(stats.posts)} />
-            <Stat label="Views" value={formatCount(stats.views)} />
           </dl>
 
           <div className="mt-5 grid grid-cols-2 gap-3">
             <div className="rounded-2xl border border-white/[0.07] bg-black/20 p-4">
               <p className="label">Overall</p>
               <div className="mt-2">
-                <RatingPill value={rating.overall} size="lg" count={rating.ratingsReceived} />
+                <RatingPill
+                  value={rated ? rating.overall : null}
+                  size="lg"
+                  votes={rating.overallVotes}
+                />
               </div>
               <p className="mt-2 text-xs text-white/35">
-                {rating.ratingsReceived} rating{rating.ratingsReceived === 1 ? '' : 's'} ·{' '}
-                {rating.raters} people
+                {rated ? formatVotes(rating.overallVotes) : 'Not rated yet'}
               </p>
             </div>
             <div className="rounded-2xl border border-white/[0.07] bg-black/20 p-4">
-              <p className="label">Current · 30d</p>
+              <p className="label">Last 30 days</p>
               <div className="mt-2">
-                <RatingPill value={rating.current} trend={rating.trend} size="lg" />
+                <RatingPill
+                  value={rating.recentVotes > 0 ? rating.recent : null}
+                  trend={rating.trend}
+                  size="lg"
+                  votes={rating.recentVotes}
+                />
               </div>
               <p className="mt-2 text-xs text-white/35">
-                {rating.delta === 0 && 'holding steady'}
-                {rating.delta !== 0 && (
-                  <span className={rating.delta > 0 ? 'text-mint' : 'text-fay-soft'}>
-                    {rating.delta > 0 ? '+' : ''}
-                    {rating.delta.toFixed(1)} vs previous 30 days
-                  </span>
-                )}
+                {rating.recentVotes > 0 ? formatVotes(rating.recentVotes) : 'No ratings this month'}
               </p>
             </div>
           </div>
 
-          <p className="label mt-5">Rank of {ranks.total.toLocaleString()} creators</p>
-          <dl className="mt-2 grid grid-cols-3 gap-2">
-            <RankCell label="Overall" value={ranks.overall} />
-            <RankCell label="Current" value={ranks.current} />
-            <RankCell label="Rising" value={ranks.rising} />
-          </dl>
+          {ranks.overall ? (
+            <p className="mt-3 text-sm text-white/50">
+              <Link href="/discover" className="font-semibold text-white hover:underline">
+                #{ranks.overall}
+              </Link>{' '}
+              of {ranks.total.toLocaleString()} rated people
+              {ranks.category && ranks.categoryRank
+                ? ` · #${ranks.categoryRank} in ${ranks.category}`
+                : ''}
+            </p>
+          ) : (
+            <p className="mt-3 text-sm text-white/35">
+              Needs {MIN_VOTES_FOR_RANKING} ratings to be ranked
+              {rating.overallVotes > 0 ? ` — ${ranks.votesNeeded} to go` : ''}.
+            </p>
+          )}
 
           {topReactions(rating.reactions, 4).length > 0 && (
-            <div className="mt-3">
+            <div className="mt-4">
               <ReactionBar reactions={topReactions(rating.reactions, 4)} />
             </div>
           )}
-
-          <div className="mt-5">
-            <div className="mb-2 flex items-baseline justify-between">
-              <p className="text-sm font-semibold">
-                Level {level.level} — {level.name}
-              </p>
-              <p className="text-xs text-white/40">{user.points.toLocaleString()} pts</p>
-            </div>
-            <LevelMeter points={user.points} />
-            <p className="mt-3 text-sm text-white/55">
-              Goal: <span className="font-semibold text-white">{user.goal}</span>
-            </p>
-          </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-2">
             {isSelf ? (
@@ -204,8 +195,8 @@ export default async function ProfilePage({
                 <RateButton
                   targetType="user"
                   targetId={user.id}
-                  rating={rating.overall}
-                  count={rating.ratingsReceived}
+                  rating={rated ? rating.overall : null}
+                  votes={rating.overallVotes}
                   myScore={mine?.score ?? null}
                   myReactions={mine?.reactions ?? []}
                   signedIn={Boolean(viewer)}
@@ -219,7 +210,6 @@ export default async function ProfilePage({
           </div>
         </header>
 
-        {/* Tabs --------------------------------------------------------- */}
         <nav className="mt-6 flex gap-2">
           {TABS.map((entry) => (
             <Link
@@ -232,110 +222,47 @@ export default async function ProfilePage({
           ))}
         </nav>
 
-        <div className="mt-4 space-y-4">
+        <div className="mt-4 space-y-4 pb-10">
           {blocked ? (
             <EmptyState
               title="This profile is hidden"
               body="You and this person have blocked each other, so posts are not shown."
             />
           ) : tab === 'about' ? (
-            <>
-              <Journey name={user.display_name} journey={journey} history={history} />
-              <section className="card p-6">
-                <h2 className="font-display text-lg font-bold">What feeds this rating</h2>
-                <p className="mt-1 text-sm text-white/45">
-                  Ratings from the community are most of it. The rest is what the account
-                  actually does.
-                </p>
-                <ul className="mt-4 space-y-3">
-                  {[
-                    { label: 'Consistency', value: rating.signals.consistency },
-                    { label: 'Engagement', value: rating.signals.engagement },
-                    { label: 'Follower growth', value: rating.signals.growth },
-                    { label: 'Community participation', value: rating.signals.participation },
-                    { label: 'Account history', value: rating.signals.history },
-                  ].map((signal) => (
-                    <li key={signal.label} className="flex items-center gap-3 text-sm">
-                      <span className="w-44 shrink-0 text-white/55">{signal.label}</span>
-                      <span className="h-2 flex-1 overflow-hidden rounded-full bg-white/[0.07]">
-                        <span
-                          className="block h-full rounded-full bg-gradient-to-r from-aura to-fay"
-                          style={{ width: `${Math.round(signal.value * 10)}%` }}
-                        />
-                      </span>
-                      <span className="w-8 text-right tabular-nums text-white/40">
-                        {signal.value.toFixed(1)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-              <section className="card p-6">
-                <h2 className="font-display text-lg font-bold">About</h2>
-                <dl className="mt-4 space-y-3 text-sm">
-                  <Row label="Joined" value={formatMonthYear(user.created_at)} />
-                  <Row label="Trying to become" value={user.interests.join(', ') || '—'} />
-                  <Row label="Location" value={user.location ?? 'Not shared'} />
-                  <Row label="Current goal" value={user.goal} />
-                  <Row
-                    label="Challenges entered"
-                    value={String(
-                      new Set(
-                        allPosts.filter((post) => post.challenge_id).map((post) => post.challenge_id),
-                      ).size,
-                    )}
-                  />
-                  <Row label="Likes received" value={formatCount(stats.likesReceived)} />
-                </dl>
-              </section>
-            </>
+            <section className="card p-6">
+              <h2 className="font-display text-lg font-bold">About</h2>
+              <dl className="mt-4 space-y-3 text-sm">
+                <Row label="Joined" value={formatMonthYear(user.created_at)} />
+                <Row label="Into" value={user.interests.join(', ') || '—'} />
+                <Row label="Location" value={user.location ?? 'Not shared'} />
+                <Row label="Posts" value={String(stats.posts)} />
+                <Row label="Likes received" value={formatCount(stats.likesReceived)} />
+                <Row
+                  label="Ratings received"
+                  value={rated ? formatVotes(rating.overallVotes) : 'None yet'}
+                />
+              </dl>
+            </section>
           ) : (
-            <>
-              {tab === 'challenges' && posts.length > 0 && (
-                <p className="text-sm text-white/45">
-                  Entries in{' '}
-                  {[
-                    ...new Set(
-                      shown
-                        .map((post) => challengeById.get(post.challenge_id ?? '')?.title)
-                        .filter(Boolean),
-                    ),
-                  ].join(', ')}
-                </p>
-              )}
-              <PostList
-                posts={posts}
-                viewerId={viewer?.id ?? null}
-                empty={
-                  <EmptyState
-                    title={
-                      tab === 'challenges' ? 'No challenge entries yet' : 'Nothing posted yet'
-                    }
-                    body={
-                      isSelf
-                        ? 'Your first post earns 10 FayTarra points and goes straight into Discover.'
-                        : `${user.display_name} has not posted here yet. Follow to be there when they do.`
-                    }
-                    cta={isSelf ? { href: '/create', label: 'Create a post' } : undefined}
-                  />
-                }
-              />
-            </>
+            <PostList
+              posts={posts}
+              viewerId={viewer?.id ?? null}
+              empty={
+                <EmptyState
+                  title="Nothing posted yet"
+                  body={
+                    isSelf
+                      ? 'Post a photo, a video or just a thought. It shows up here.'
+                      : `${user.display_name} has not posted yet. Follow to be there when they do.`
+                  }
+                  cta={isSelf ? { href: '/create', label: 'Create a post' } : undefined}
+                />
+              }
+            />
           )}
         </div>
       </div>
     </>
-  );
-}
-
-function RankCell({ label, value }: { label: string; value: number | null }) {
-  return (
-    <div className="rounded-2xl border border-white/[0.07] bg-black/20 px-3 py-2.5 text-center">
-      <dt className="text-[10px] uppercase tracking-wide text-white/40">{label}</dt>
-      <dd className="mt-0.5 font-display text-base font-extrabold tabular-nums">
-        {value ? `#${value.toLocaleString()}` : '—'}
-      </dd>
-    </div>
   );
 }
 

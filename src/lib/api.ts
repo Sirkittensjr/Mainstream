@@ -1,6 +1,5 @@
 import 'server-only';
 import { NextResponse } from 'next/server';
-import { levelFor } from '@/lib/progression';
 import type { PostView } from '@/lib/services/posts';
 import type { UserRatingSummary } from '@/lib/services/ratings';
 import type { PublicUser, User } from '@/lib/types';
@@ -21,7 +20,6 @@ export function apiError(message: string, status = 400) {
 }
 
 export function serialiseUser(user: PublicUser | User, rating?: UserRatingSummary) {
-  const level = levelFor(user.points);
   return {
     id: user.id,
     username: user.username,
@@ -30,17 +28,15 @@ export function serialiseUser(user: PublicUser | User, rating?: UserRatingSummar
     avatarUrl: user.avatar_url,
     location: user.location,
     interests: user.interests,
-    goal: user.goal,
-    points: user.points,
-    level: { level: level.level, name: level.name },
     joinedAt: user.created_at,
     rating: rating
       ? {
           overall: rating.overall,
-          current: rating.current,
+          overallVotes: rating.overallVotes,
+          last30Days: rating.recent,
+          last30DaysVotes: rating.recentVotes,
           trend: rating.trend,
           delta: rating.delta,
-          count: rating.ratingsReceived,
         }
       : undefined,
   };
@@ -54,23 +50,13 @@ export function serialisePost(view: PostView) {
     category: view.post.category,
     tags: view.post.tags,
     createdAt: view.post.created_at,
-    shot: view.post.shot,
-    boosted: view.post.boosted,
-    featured: view.post.featured,
-    counts: {
-      likes: view.likes,
-      comments: view.comments,
-      views: view.post.views,
-      impressions: view.post.impressions,
-    },
+    counts: { likes: view.likes, comments: view.comments, views: view.post.views },
     rating: {
       value: view.rating.rating,
-      count: view.rating.count,
+      votes: view.rating.votes,
       reactions: view.rating.reactions.filter((entry) => entry.count > 0),
       mine: view.myScore,
     },
-    shotProgress: view.shot,
-    challenge: view.challenge,
     viewer: { liked: view.liked, following: view.following },
     author: {
       id: view.author.id,
@@ -78,7 +64,7 @@ export function serialisePost(view: PostView) {
       displayName: view.author.display_name,
       avatarUrl: view.author.avatar_url,
       followers: view.authorFollowers,
-      level: view.authorLevel,
+      rating: view.authorRating,
     },
     reason: view.reason ?? null,
   };

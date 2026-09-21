@@ -6,8 +6,7 @@ import { DeletePostButton } from '@/components/DeletePostButton';
 import { PageTopBar } from '@/components/PageTopBar';
 import { PostCard } from '@/components/PostCard';
 import { RatingPill, ReactionBar } from '@/components/RatingPill';
-import { formatCap, SHOT_STAGES } from '@/lib/shot';
-import { topReactions } from '@/lib/ratings';
+import { formatVotes, topReactions } from '@/lib/ratings';
 import { getPost, hydratePosts, listComments, registerView } from '@/lib/services/posts';
 import { getUser, hiddenUserIds } from '@/lib/services/users';
 import { getViewer } from '@/lib/session';
@@ -92,36 +91,16 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
             <div>
               <h2 className="font-display text-lg font-bold">Community rating</h2>
               <p className="mt-1 text-sm text-white/45">
-                {view.rating.count > 0
-                  ? `${view.rating.count} rating${view.rating.count === 1 ? '' : 's'} from the community`
+                {view.rating.votes > 0
+                  ? formatVotes(view.rating.votes)
                   : 'Not rated yet. First rating counts the most.'}
               </p>
             </div>
-            <RatingPill value={view.rating.rating} size="lg" count={view.rating.count} />
+            <RatingPill value={view.rating.rating} size="lg" votes={view.rating.votes} />
           </div>
           {topReactions(view.rating.reactions, 6).length > 0 && (
             <div className="mt-4">
               <ReactionBar reactions={topReactions(view.rating.reactions, 6)} />
-            </div>
-          )}
-          {view.shot && (
-            <div className="mt-5 rounded-2xl border border-white/[0.07] bg-black/20 p-4">
-              <p className="label">Give me a shot</p>
-              <p className="mt-2 text-sm text-white/60">
-                Stage {view.shot.stage + 1} of {SHOT_STAGES.length} ·{' '}
-                {view.post.impressions.toLocaleString()} of {formatCap(view.shot.cap)} impressions
-                used · {view.shot.status}
-              </p>
-              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-aura to-fay"
-                  style={{ width: `${Math.max(3, view.shot.progress)}%` }}
-                />
-              </div>
-              <p className="mt-3 text-xs leading-relaxed text-white/35">
-                Exposure is handed out in slices. Respond well to a slice and the post earns a
-                bigger one. Nothing about this can be bought.
-              </p>
             </div>
           )}
         </section>

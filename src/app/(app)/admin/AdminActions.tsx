@@ -3,8 +3,6 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  adminCaptureRanksAction,
-  adminFeatureAction,
   adminSetTrustAction,
   adminRemoveCommentAction,
   adminRemovePostAction,
@@ -178,40 +176,6 @@ export function TrustActions({ userId, trusted }: { userId: string; trusted: boo
       onClick={() => run(() => adminSetTrustAction(userId, !trusted))}
     >
       {trusted ? 'Revoke rating weight' : 'Restore rating weight'}
-    </button>
-  );
-}
-
-export function CaptureRanksButton() {
-  const { pending, run } = useAction();
-  const [done, setDone] = useState(false);
-  return (
-    <button
-      type="button"
-      disabled={pending}
-      className="btn-ghost px-5 py-2.5 text-sm"
-      onClick={() =>
-        run(async () => {
-          await adminCaptureRanksAction();
-          setDone(true);
-        })
-      }
-    >
-      {pending ? 'Capturing…' : done ? 'Captured' : "Capture this month's ranks"}
-    </button>
-  );
-}
-
-export function FeatureButton({ postId, featured }: { postId: string; featured: boolean }) {
-  const { pending, run } = useAction();
-  return (
-    <button
-      type="button"
-      disabled={pending}
-      className={`${BUTTON} ${featured ? 'border-solar/40 text-solar' : 'hover:bg-white/10'}`}
-      onClick={() => run(() => adminFeatureAction(postId, !featured))}
-    >
-      {featured ? 'Unfeature' : 'Feature'}
     </button>
   );
 }

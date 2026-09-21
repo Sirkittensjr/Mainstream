@@ -45,12 +45,9 @@ const EMPTY: Store = {
   comments: [],
   follows: [],
   blocks: [],
-  challenges: [],
   ratings: [],
-  rank_snapshots: [],
   notifications: [],
   reports: [],
-  activity: [],
 };
 
 /**

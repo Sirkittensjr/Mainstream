@@ -10,7 +10,6 @@ interface NotifyInput {
   body: string;
   actorId?: ID | null;
   postId?: ID | null;
-  challengeId?: ID | null;
 }
 
 export async function notify(input: NotifyInput): Promise<void> {
@@ -22,7 +21,6 @@ export async function notify(input: NotifyInput): Promise<void> {
     type: input.type,
     actor_id: input.actorId ?? null,
     post_id: input.postId ?? null,
-    challenge_id: input.challengeId ?? null,
     body: input.body,
     read: false,
     created_at: new Date().toISOString(),

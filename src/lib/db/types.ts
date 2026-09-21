@@ -1,13 +1,10 @@
 import type {
-  Activity,
   Block,
-  Challenge,
   Comment,
   Follow,
   Like,
   Notification,
   Post,
-  RankSnapshot,
   Rating,
   Report,
   User,
@@ -21,12 +18,9 @@ export interface Schema {
   comments: Comment;
   follows: Follow;
   blocks: Block;
-  challenges: Challenge;
   ratings: Rating;
-  rank_snapshots: RankSnapshot;
   notifications: Notification;
   reports: Report;
-  activity: Activity;
 }
 
 export type TableName = keyof Schema;
@@ -44,8 +38,8 @@ export interface QueryOptions<T> {
 
 /**
  * The entire storage contract. Deliberately tiny: ranking, feed mixing and the
- * FayTarra point maths all live in plain TypeScript on top of these primitives so
- * that swapping drivers can never change product behaviour.
+ * rating maths all live in plain TypeScript on top of these primitives so that
+ * swapping drivers can never change product behaviour.
  */
 export interface Driver {
   readonly name: 'local' | 'supabase';

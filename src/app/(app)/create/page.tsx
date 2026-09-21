@@ -1,22 +1,14 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { PageTopBar } from '@/components/PageTopBar';
-import { activeChallenges } from '@/lib/services/challenges';
 import { requireViewer } from '@/lib/session';
 import { CreateForm } from './CreateForm';
 
 export const metadata: Metadata = { title: 'Create' };
 export const dynamic = 'force-dynamic';
 
-export default async function CreatePage({
-  searchParams,
-}: {
-  searchParams: Promise<{ challenge?: string }>;
-}) {
+export default async function CreatePage() {
   const viewer = await requireViewer('/create');
-  const { challenge } = await searchParams;
-  const challenges = await activeChallenges();
-  const preselected = challenges.find((entry) => entry.slug === challenge);
 
   return (
     <>
@@ -25,8 +17,7 @@ export default async function CreatePage({
         <div className="mb-6">
           <h1 className="font-display text-3xl font-extrabold tracking-tight">Create</h1>
           <p className="mt-1 text-white/45">
-            Posting is worth 10 FayTarra points, and every post is eligible for Discover the moment it
-            goes up.
+            A photo, a video, or just something you want to say.
           </p>
         </div>
 
@@ -43,10 +34,7 @@ export default async function CreatePage({
             </p>
           </div>
         ) : (
-          <CreateForm
-            challenges={challenges.map((entry) => ({ id: entry.id, title: entry.title }))}
-            defaultChallengeId={preselected?.id}
-          />
+          <CreateForm />
         )}
       </div>
     </>

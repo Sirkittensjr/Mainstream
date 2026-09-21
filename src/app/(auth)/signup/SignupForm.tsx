@@ -1,17 +1,15 @@
 'use client';
 
 import { useActionState, useState } from 'react';
-import { INTERESTS, type Interest } from '@/lib/types';
+import { CATEGORIES, type Category } from '@/lib/types';
 import { signupAction, type AuthState } from '../actions';
-
-const GOALS = ['100 followers', '1,000 followers', '10,000 followers', 'Get featured once'];
 
 export function SignupForm() {
   const [state, formAction, pending] = useActionState<AuthState, FormData>(signupAction, {});
-  const [selected, setSelected] = useState<Interest[]>([]);
+  const [selected, setSelected] = useState<Category[]>([]);
   const [preview, setPreview] = useState<string | null>(null);
 
-  function toggle(interest: Interest) {
+  function toggle(interest: Category) {
     setSelected((current) =>
       current.includes(interest)
         ? current.filter((value) => value !== interest)
@@ -77,12 +75,12 @@ export function SignupForm() {
 
       {/* Interests ------------------------------------------------------ */}
       <fieldset>
-        <legend className="font-display text-xl font-bold">
-          What are you trying to become?
-        </legend>
-        <p className="mb-4 mt-1 text-sm text-white/45">Pick everything that fits. Up to six.</p>
+        <legend className="font-display text-xl font-bold">What are you into?</legend>
+        <p className="mb-4 mt-1 text-sm text-white/45">
+          Pick a few. It shapes what you see and where you show up.
+        </p>
         <div className="flex flex-wrap gap-2">
-          {INTERESTS.map((interest) => {
+          {CATEGORIES.map((interest) => {
             const active = selected.includes(interest);
             return (
               <button
@@ -161,18 +159,6 @@ export function SignupForm() {
           className="w-full"
         />
 
-        <div>
-          <label className="label" htmlFor="goal">
-            Your first goal
-          </label>
-          <select id="goal" name="goal" defaultValue={GOALS[0]} className="mt-2 w-full">
-            {GOALS.map((goal) => (
-              <option key={goal} value={goal}>
-                {goal}
-              </option>
-            ))}
-          </select>
-        </div>
       </fieldset>
 
       {state.error && (

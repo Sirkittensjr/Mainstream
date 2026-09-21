@@ -118,25 +118,3 @@ export async function setUserStatus(
 ): Promise<void> {
   await db().update('users', userId, { status, status_reason: reason || null });
 }
-
-/** Admins can feature a post, which is also a FayTarra point award for the author. */
-export async function setFeatured(postId: ID, featured: boolean): Promise<void> {
-  const store = db();
-  const post = await store.get('posts', postId);
-  if (!post || post.featured === featured) return;
-  await store.update('posts', postId, {
-    featured,
-    featured_at: featured ? new Date().toISOString() : null,
-  });
-  const { award } = await import('./points');
-  const { notify } = await import('./notifications');
-  await award(post.author_id, 'featured', { postId, points: featured ? 100 : -100 });
-  if (featured) {
-    await notify({
-      userId: post.author_id,
-      type: 'featured',
-      postId,
-      body: 'Your post was featured on Discover.',
-    });
-  }
-}
