@@ -11,7 +11,7 @@ export default function SignupPage() {
       <h1 className="mt-5 font-display text-4xl font-extrabold leading-[0.95] tracking-tight">
         Join FayTarra.
         <br />
-        <span className="gradient-text">Everyone starts at zero.</span>
+        <span className="gradient-text">Share what you&rsquo;re into.</span>
       </h1>
       <p className="mt-3 text-white/50">
         You need an email, a username and a password. Everything else can change later.

@@ -2,7 +2,7 @@
   "name": "faytarra",
   "version": "0.1.0",
   "private": true,
-  "description": "FayTarra — everyone starts at zero. A social platform for people who are still becoming somebody.",
+  "description": "FayTarra — share what you're into. A social network for music, art, gaming, food, sport and everything else.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

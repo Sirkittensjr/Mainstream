@@ -37,15 +37,17 @@ export default async function LandingPage() {
 
       {/* Hero ------------------------------------------------------------- */}
       <section className="mx-auto max-w-6xl px-5 pb-16 pt-10 sm:pt-20">
-        <h1 className="max-w-4xl animate-fade-up font-display text-[14vw] font-extrabold leading-[0.9] tracking-[-0.04em] sm:text-7xl lg:text-8xl">
-          Post your life.
+        <h1 className="max-w-4xl animate-fade-up font-display text-[13vw] font-extrabold uppercase leading-[0.9] tracking-[-0.04em] sm:text-7xl lg:text-8xl">
+          Share what
           <br />
-          <span className="gradient-text">Everyone starts at zero.</span>
+          <span className="gradient-text">you&rsquo;re into.</span>
         </h1>
         <p className="mt-6 max-w-xl animate-fade-up text-lg leading-relaxed text-white/60 sm:text-xl">
-          FayTarra is a social network for the stuff you actually make and do — your music, your
-          art, your games, your cooking, your day. Follow people, share things, and rate what you
-          like.
+          Music. Jokes. Gaming. Art. Food. Sports. Random moments. Whatever you want to share,
+          there&rsquo;s a place for it here.
+        </p>
+        <p className="mt-4 animate-fade-up font-display text-xl font-bold text-white sm:text-2xl">
+          Post it. Find people who get it. Have some fun.
         </p>
         <div className="mt-8 flex animate-fade-up flex-wrap gap-3">
           <Link href="/signup" className="btn-primary px-8 py-4 text-base">
@@ -62,7 +64,7 @@ export default async function LandingPage() {
         <div className="grid gap-4 sm:grid-cols-3">
           {[
             {
-              title: 'Share what you are into',
+              title: 'Post anything',
               body: 'Photos, video, or just a thought. Pick a category so the right people find it.',
             },
             {
@@ -177,7 +179,7 @@ export default async function LandingPage() {
             <span className="gradient-text">See where it goes.</span>
           </h2>
           <p className="mx-auto mt-5 max-w-lg text-white/55">
-            Takes about a minute to join. Nobody here started with an audience.
+            Takes about a minute to join. Post the first thing you feel like sharing.
           </p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <Link href="/signup" className="btn-primary px-8 py-4 text-base">
@@ -201,7 +203,7 @@ export default async function LandingPage() {
               Community rules
             </Link>
           </div>
-          <p>Everyone starts at zero.</p>
+          <p>Share what you&rsquo;re into.</p>
         </div>
       </footer>
     </div>

@@ -395,7 +395,7 @@ export const FILLER_CAPTIONS: Record<Category, string[]> = {
 
 export const FILLER_BIOS = [
   'Here to figure it out in public.',
-  'Starting at zero, on purpose.',
+  'Here for the music and the nonsense.',
   'New here. Be nice.',
   'Making things after work.',
   'Consistency over talent.',

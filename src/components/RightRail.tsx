@@ -46,10 +46,10 @@ export async function RightRail({ viewer }: { viewer: User | null }) {
       ) : (
         <div className="card p-5">
           <p className="font-display text-xl font-bold leading-tight">
-            Everyone starts <span className="gradient-text">at zero.</span>
+            Share what <span className="gradient-text">you&rsquo;re into.</span>
           </p>
           <p className="mt-2 text-sm text-white/50">
-            Post what you are into, follow people, rate what you like.
+            Post it, find people who get it, have some fun.
           </p>
           <Link href="/signup" className="btn-primary mt-4 w-full">
             Join FayTarra

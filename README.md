@@ -1,10 +1,10 @@
 # FayTarra
 
-**Everyone starts at zero.**
+**Share what you're into.**
 
-FayTarra is a social network for the things people actually make and do — music,
-art, games, cooking, fitness, photography, or just their day. You follow people,
-post what you are into, and rate what is good.
+Music. Jokes. Gaming. Art. Food. Sports. Random moments. Whatever you want to
+share, there's a place for it here — post it, find people who get it, have some
+fun. You follow people, post what you are into, and rate what is good.
 
 The thing that makes it FayTarra is the rating: every post and every profile can
 be rated 1–10, and those ratings drive discovery instead of follower count.
