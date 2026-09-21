@@ -49,7 +49,8 @@ Every seeded creator shares that password — `mirabeats@faytarra.app`,
 
 ```bash
 npm run reset     # wipe local data and re-seed
-npm run build     # production build
+npm run build     # production build (emits .next/standalone)
+npm start         # run the production server
 npm run lint      # eslint
 npm run typecheck # tsc --noEmit
 ```
@@ -187,6 +188,56 @@ curl -s localhost:3000/api/v1/me -H "Authorization: Bearer $TOKEN" | jq
 
 ---
 
+## Deploying
+
+FayTarra is **server-rendered**, not a static site: server actions, dynamic
+pages, route handlers, uploads and a database. There is no `out/` or `static/`
+folder to hand a CDN — the deployable artefact is a Node server.
+
+`npm run build` produces a self-contained one:
+
+```bash
+npm run build     # next build + copies static assets into the bundle
+npm start         # node .next/standalone/server.js
+```
+
+The build writes `.next/standalone/` (server + traced dependencies) and the
+`postbuild` step copies `.next/static` into it. That copy matters: without it
+the server answers with HTML whose every stylesheet and script 404s, which
+looks like a broken deploy rather than a missing step.
+
+**Containers** — a multi-stage `Dockerfile` is included, so anything that runs
+an image works (Cloud Run, Fly, Render, Railway, Kubernetes):
+
+```bash
+docker build -t faytarra .
+docker run -p 3000:3000 \
+  -e AUTH_SECRET=... \
+  -e NEXT_PUBLIC_SUPABASE_URL=... \
+  -e SUPABASE_SERVICE_ROLE_KEY=... \
+  faytarra
+```
+
+**Platform-managed Next.js** (Vercel, Netlify, Amplify, Firebase App Hosting)
+— these detect Next.js and build it themselves; point them at the repo, set
+the environment variables below, and ignore the standalone output.
+
+### Before the first production deploy
+
+| Variable | Why it matters |
+| --- | --- |
+| `AUTH_SECRET` | Signs session cookies and bearer tokens. Without it every restart signs everyone out. |
+| `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | Without these the app runs on the bundled JSON driver, which writes to `./.data`. On a container or serverless host that is ephemeral or read-only, so **every account, post and rating disappears on restart**. The server logs a warning if you deploy this way. |
+| `SUPABASE_STORAGE_BUCKET` | Where uploads go. Local disk uploads do not survive a redeploy either. |
+| `ADMIN_EMAILS` | Accounts that get the admin role at signup. |
+
+If a deploy pipeline reports *"no functions, static, or services directory"*,
+it is expecting a static export or its own bundle layout. FayTarra cannot be
+statically exported — use a Node runtime, the container image, or a host with
+first-class Next.js support.
+
+---
+
 ## Running on Supabase
 
 1. Create a Supabase project.
@@ -264,6 +315,10 @@ src/
     services/         # ratings, rankings, feed, discover, integrity, moderation…
     seed/             # the sample community
 supabase/schema.sql   # tables, indexes, RLS, storage bucket
+Dockerfile            # container image for any Node host
+scripts/
+  seed.ts             # seeds whichever driver is configured
+  prepare-standalone.mjs  # completes the standalone build output
 ```
 
 ## Deliberately not built yet

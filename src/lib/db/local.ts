@@ -2,7 +2,29 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { Driver, QueryOptions, Row, Schema, TableName } from './types';
 
-const DATA_DIR = path.join(process.cwd(), '.data');
+/**
+ * Where the local driver keeps its data.
+ *
+ * `output: 'standalone'` makes the generated server chdir into
+ * .next/standalone before it handles a request, so a plain
+ * `process.cwd()/.data` silently resolves to a *different* directory than the
+ * one `npm run seed` wrote — the server quietly serves its own auto-seeded
+ * copy and every write lands somewhere nobody looks. Resolve back to the
+ * project root in that case, and let a host override it outright.
+ */
+function resolveDataDir(): string {
+  const override = process.env.FAYTARRA_DATA_DIR;
+  if (override) return path.resolve(override);
+
+  const cwd = process.cwd();
+  const standaloneSuffix = path.join('.next', 'standalone');
+  if (cwd.endsWith(standaloneSuffix)) {
+    return path.join(cwd.slice(0, -standaloneSuffix.length), '.data');
+  }
+  return path.join(cwd, '.data');
+}
+
+const DATA_DIR = resolveDataDir();
 const DB_FILE = path.join(DATA_DIR, 'faytarra.json');
 const MEDIA_DIR = path.join(DATA_DIR, 'uploads');
 
