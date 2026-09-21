@@ -228,6 +228,10 @@ docker run -p 3000:3000 \
 - **Set the environment variables below.** Vercel's filesystem is read-only
   apart from `/tmp`, so without Supabase the app runs per-instance and
   ephemerally: it serves fine and says so in the logs, but nothing is saved.
+- **Do not set `NODE_ENV=production` as a Vercel environment variable.** It
+  makes the install skip devDependencies. `vercel.json` pins the Next.js
+  framework preset and everything `next build` needs is a real dependency, so
+  the build survives it either way — but it is still not a setting you want.
 
 **Netlify, Amplify, Firebase App Hosting** — these also detect Next.js and
 build it themselves; set the same variables and ignore the standalone output.

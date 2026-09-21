@@ -96,10 +96,13 @@ class LocalDriver implements Driver {
     this.pending ??= new Promise<void>((resolve, reject) => {
       setTimeout(() => {
         this.pending = null;
+        if (this.persistenceDisabled) {
+          resolve();
+          return;
+        }
         const snapshot = JSON.stringify(this.store);
         this.writeChain = this.writeChain
           .then(async () => {
-            if (this.persistenceDisabled) return;
             try {
               await fs.mkdir(DATA_DIR, { recursive: true });
               await fs.writeFile(DB_FILE, snapshot, 'utf8');
