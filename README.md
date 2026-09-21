@@ -24,11 +24,18 @@ npm run seed      # creates ./.data/faytarra.json with a sample community
 npm run dev       # http://localhost:3000
 ```
 
-No configuration required. With no Supabase keys set, FayTarra runs on a
+Browsing needs no configuration: with no Supabase keys set, FayTarra runs on a
 bundled file-backed JSON driver, auto-seeded with ~168 accounts, ~280 posts and
 ~3,500 ratings.
 
-**Sample logins** (local demo data only):
+**Accounts need Supabase.** Signing up and signing in are handled by
+**Supabase Auth** — FayTarra never hashes, stores or checks a password. Without
+`NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` the sign-in and
+sign-up screens say accounts are switched off, rather than falling back to some
+imitation of a login. See [Running on Supabase](#running-on-supabase).
+
+**Sample logins** (after `npm run seed` against a Supabase project — the seed
+creates these as real Supabase Auth users):
 
 | Account | Email | Password |
 | --- | --- | --- |
@@ -51,7 +58,10 @@ npm run typecheck # tsc --noEmit
 | Route | What it does |
 | --- | --- |
 | `/` | Landing page |
-| `/signup`, `/login` | Email, username, password, what you are into, profile |
+| `/signup`, `/login` | Supabase Auth: email, username, password, what you are into, profile |
+| `/verify-email` | After signup — confirm the address, or send the mail again |
+| `/forgot-password`, `/reset-password` | Password reset, by email link |
+| `/auth/callback` | Where Supabase's email links land; exchanges the code for a session |
 | `/home` | **Following** and **Recommended** feeds |
 | `/discover` | Rankings: Overall, Last 30 days, and by category |
 | `/create` | Post photos, video or text |
@@ -169,15 +179,16 @@ The architecture is built for step 3 now:
   `POST /api/v1/auth/login`, `GET /api/v1/me`, `GET /api/v1/feed?tab=`,
   `GET /api/v1/discover`, `GET /api/v1/users/[username]`,
   `GET /api/v1/posts/[id]`, `POST /api/v1/ratings`.
-- **One auth system.** The website sends the signed session token as an
-  HTTP-only cookie; a native client sends the identical token as
-  `Authorization: Bearer <token>`. Same accounts, same database, same ratings
-  and ranks.
+- **One auth system: Supabase Auth.** The website holds the Supabase session in
+  HTTP-only cookies; a native client signs in with the Supabase SDK (or
+  `POST /api/v1/auth/login`) and sends the same access token as
+  `Authorization: Bearer <token>`. Both are verified by asking Supabase, so it
+  is the same accounts, the same database, the same ratings and ranks.
 
 ```bash
 TOKEN=$(curl -s -X POST localhost:3000/api/v1/auth/login \
   -H 'content-type: application/json' \
-  -d '{"identifier":"tommy@faytarra.app","password":"faydemo123"}' | jq -r .token)
+  -d '{"email":"tommy@faytarra.app","password":"faydemo123"}' | jq -r .accessToken)
 
 curl -s localhost:3000/api/v1/me -H "Authorization: Bearer $TOKEN" | jq
 ```
@@ -208,9 +219,10 @@ an image works (Cloud Run, Fly, Render, Railway, Kubernetes):
 ```bash
 docker build -t faytarra .
 docker run -p 3000:3000 \
-  -e AUTH_SECRET=... \
   -e NEXT_PUBLIC_SUPABASE_URL=... \
+  -e NEXT_PUBLIC_SUPABASE_ANON_KEY=... \
   -e SUPABASE_SERVICE_ROLE_KEY=... \
+  -e NEXT_PUBLIC_SITE_URL=https://your-domain \
   faytarra
 ```
 
@@ -236,8 +248,9 @@ build it themselves; set the same variables and ignore the standalone output.
 
 | Variable | Why it matters |
 | --- | --- |
-| `AUTH_SECRET` | Signs session cookies and bearer tokens. Without it every restart signs everyone out. |
-| `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | Without these the app runs on the bundled JSON driver, which writes to `./.data`. On a container or serverless host that is ephemeral or read-only, so **every account, post and rating disappears on restart**. The server logs a warning if you deploy this way. |
+| `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase Auth. Without them **nobody can sign up or sign in** — the auth screens say so. |
+| `NEXT_PUBLIC_SITE_URL` | The absolute URL Supabase puts in confirmation and reset emails. On Vercel it falls back to the deployment URL, which is fine for previews and wrong for a custom domain. |
+| `SUPABASE_SERVICE_ROLE_KEY` | The database driver, and deleting an account's Supabase Auth user. Without it the app runs on the bundled JSON driver, which writes to `./.data`. On a container or serverless host that is ephemeral or read-only, so **every post and rating disappears on restart**. The server logs a warning if you deploy this way. |
 | `SUPABASE_STORAGE_BUCKET` | Where uploads go. Local disk uploads do not survive a redeploy either. |
 | `ADMIN_EMAILS` | Accounts that get the admin role at signup. |
 
@@ -251,32 +264,54 @@ first-class Next.js support.
 ## Running on Supabase
 
 1. Create a Supabase project.
-2. Run [`supabase/schema.sql`](supabase/schema.sql) — tables, indexes, RLS and
-   the `faytarra-media` storage bucket.
-3. Copy `.env.example` to `.env.local`:
+2. Run [`supabase/schema.sql`](supabase/schema.sql) — tables, indexes, RLS, the
+   `faytarra-media` storage bucket, and the `on_auth_user_created` trigger that
+   gives every new Supabase Auth user a FayTarra profile.
+   *Upgrading a database created before Supabase Auth?* Run
+   [`supabase/migrations/0001_supabase_auth.sql`](supabase/migrations/0001_supabase_auth.sql)
+   instead — it drops `password_hash`, points `public.users.id` at
+   `auth.users`, and installs the same trigger.
+3. In **Authentication → URL configuration**, set the site URL to your domain
+   and add `https://your-domain/auth/callback` to the redirect allow-list.
+   Confirmation and reset links land there.
+4. Copy `.env.example` to `.env.local`:
 
    ```
    NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=...
    SUPABASE_SERVICE_ROLE_KEY=...
-   AUTH_SECRET=<long random string>
+   NEXT_PUBLIC_SITE_URL=https://your-domain
    ADMIN_EMAILS=you@example.com
    ```
 
-4. `npm run seed` to load the sample community, or skip it and start empty.
+5. `npm run seed` to load the sample community, or skip it and start empty.
 
 The driver is chosen automatically: Supabase when those keys are set, the local
 JSON store otherwise. Uploads follow the same rule — Supabase Storage in
 production, local disk served through `/api/media/[file]` in development.
 
-`AUTH_SECRET` signs the session cookie and the bearer token. Any Supabase-backed
-deployment must set it. A local demo falls back to a temporary per-process key
-and warns.
+### Authentication
 
-**A note on authentication:** auth is a self-contained email + username +
-password layer (scrypt hashes, signed HTTP-only cookies) so the same code path
-works on both drivers with zero setup. Supabase Auth can replace it later by
-swapping `src/lib/auth/session.ts` and `src/lib/services/account.ts` — nothing
-else needs to change, because everything reads `getViewer()`.
+Identity is **Supabase Auth**, end to end:
+
+- `auth.users` holds the email and the password. FayTarra has no password
+  hashing code and no `password_hash` column — `public.users` is a profile
+  keyed by the auth user's id.
+- The profile is created by the `on_auth_user_created` trigger **inside the
+  signup transaction**, so a duplicate username aborts the whole signup instead
+  of leaving an auth account with no profile. A case-insensitive unique index on
+  `username` is what actually guarantees uniqueness; the form's check is only
+  there to fail politely.
+- Email addresses are confirmed before the first sign-in (Supabase's default).
+  The link goes to `/auth/callback`, which exchanges the code for a session.
+- `src/middleware.ts` refreshes the access token on every navigation and gates
+  `/create`, `/settings`, `/notifications` and `/admin`. The pages check again
+  on the server — middleware is the fast path, never the only lock.
+- `getViewer()` (`src/lib/session.ts`) calls `supabase.auth.getUser()`, which
+  verifies the token with Supabase rather than trusting the cookie's contents.
+  It accepts a bearer token too, for native clients.
+- Password reset is Supabase's, via `/forgot-password` → email →
+  `/auth/callback?next=/reset-password`.
 
 ---
 

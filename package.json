@@ -15,6 +15,7 @@
     "reset": "rm -rf .data && npm run seed"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.58.0",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",

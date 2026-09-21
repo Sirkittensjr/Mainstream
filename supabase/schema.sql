@@ -4,6 +4,9 @@
 -- Run this once in the Supabase SQL editor (or `supabase db execute -f`), then
 -- seed the sample community with `npm run seed`.
 --
+-- Authentication is Supabase Auth. `auth.users` holds identity and passwords;
+-- `public.users` below is only the profile that hangs off it.
+--
 -- The application talks to these tables through the server-side service role
 -- and enforces its own rules (blocking, moderation, rating integrity) in one place.
 -- RLS is still enabled on every table so that nothing is readable or writable
@@ -13,12 +16,15 @@
 create extension if not exists "pgcrypto";
 
 -- Users --------------------------------------------------------------------
+-- This is a PROFILE table. Identity and passwords live in `auth.users`, which
+-- Supabase Auth owns — FayTarra never sees or stores a password. The id here
+-- is the auth user's id, and the profile row is created by the
+-- `on_auth_user_created` trigger at the bottom of this file.
 create table if not exists public.users (
-  id            uuid primary key default gen_random_uuid(),
+  id            uuid primary key references auth.users (id) on delete cascade,
   email         text not null unique,
   username      text not null unique,
   display_name  text not null,
-  password_hash text not null,
   bio           text not null default '',
   avatar_url    text,
   location      text,
@@ -33,6 +39,8 @@ create table if not exists public.users (
 );
 
 create index if not exists users_username_idx on public.users (username);
+-- Usernames are unique case-insensitively: "Tommy" must not be a second "tommy".
+create unique index if not exists users_username_lower_idx on public.users (lower(username));
 
 
 -- Posts --------------------------------------------------------------------
@@ -170,3 +178,103 @@ alter table public.reports       enable row level security;
 insert into storage.buckets (id, name, public)
 values ('faytarra-media', 'faytarra-media', true)
 on conflict (id) do nothing;
+
+
+-- Supabase Auth ------------------------------------------------------------
+-- 2. A profile is created automatically for every new auth user ------------
+-- Running inside the signup transaction means a duplicate username aborts the
+-- whole signup rather than leaving an auth account with no profile.
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  desired_username text;
+  desired_display text;
+begin
+  desired_username := lower(coalesce(new.raw_user_meta_data ->> 'username', ''));
+  desired_display := coalesce(new.raw_user_meta_data ->> 'display_name', desired_username);
+
+  if desired_username = '' then
+    raise exception 'username is required';
+  end if;
+
+  if exists (select 1 from public.users where lower(username) = desired_username) then
+    raise exception 'username_taken' using errcode = 'unique_violation';
+  end if;
+
+  insert into public.users (
+    id, email, username, display_name, bio, avatar_url, location,
+    interests, role, status, status_reason, trusted, created_at, last_active_at
+  )
+  values (
+    new.id,
+    new.email,
+    desired_username,
+    desired_display,
+    coalesce(new.raw_user_meta_data ->> 'bio', ''),
+    nullif(new.raw_user_meta_data ->> 'avatar_url', ''),
+    nullif(new.raw_user_meta_data ->> 'location', ''),
+    coalesce(
+      (select array_agg(value::text) from jsonb_array_elements_text(
+        coalesce(new.raw_user_meta_data -> 'interests', '[]'::jsonb)) as value),
+      '{}'
+    ),
+    case
+      when new.email = any (string_to_array(current_setting('app.admin_emails', true), ','))
+      then 'admin' else 'user'
+    end,
+    'active',
+    null,
+    true,
+    now(),
+    now()
+  );
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+-- 3. Keep the mirrored email in step with the auth record ------------------
+create or replace function public.handle_user_email_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.email is distinct from old.email then
+    update public.users set email = new.email where id = new.id;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_email_changed on auth.users;
+create trigger on_auth_user_email_changed
+  after update of email on auth.users
+  for each row execute function public.handle_user_email_change();
+
+-- 4. Row level security ----------------------------------------------------
+-- The application reads and writes with the service role, which bypasses RLS,
+-- because rules like blocking and rating integrity are enforced in one place
+-- in the service layer. These policies exist so that a leaked anon key cannot
+-- be used to read or write anything it should not.
+alter table public.users enable row level security;
+
+drop policy if exists "profiles are publicly readable" on public.users;
+create policy "profiles are publicly readable"
+  on public.users for select
+  using (status <> 'banned');
+
+drop policy if exists "people can edit their own profile" on public.users;
+create policy "people can edit their own profile"
+  on public.users for update
+  using (auth.uid() = id)
+  with check (auth.uid() = id);

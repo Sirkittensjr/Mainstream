@@ -2,7 +2,6 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { clearSessionCookie } from '@/lib/auth/session';
 import { db } from '@/lib/db';
 import { CATEGORIES, type Category, type Media } from '@/lib/types';
 import { getViewer, requireAdmin, requireViewer } from '@/lib/session';
@@ -23,7 +22,7 @@ import {
   submitReport,
 } from '@/lib/services/moderation';
 import { blockUser, follow, unblockUser, unfollow, updateProfile } from '@/lib/services/users';
-import { deleteAccount } from '@/lib/services/account';
+import { deleteAccount, signOut } from '@/lib/services/account';
 import { submitRating } from '@/lib/services/ratings';
 import { setRaterTrust } from '@/lib/services/rating-integrity';
 import type { Reaction, RatingTarget } from '@/lib/types';
@@ -168,13 +167,15 @@ export async function deleteAccountAction(confirmation: string) {
   if (confirmation.trim().toLowerCase() !== viewer.username) {
     return { ok: false as const, error: 'Type your username exactly to confirm.' };
   }
+  // deleteAccount removes the profile, the content and the Supabase Auth user,
+  // and signs this browser out on the way.
   await deleteAccount(viewer.id);
-  await clearSessionCookie();
   redirect('/');
 }
 
 export async function logoutAction() {
-  await clearSessionCookie();
+  // Supabase clears its own cookies and revokes the refresh token.
+  await signOut();
   redirect('/');
 }
 

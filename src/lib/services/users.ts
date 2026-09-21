@@ -5,7 +5,7 @@ import type { Category, ID, PublicUser, User } from '@/lib/types';
 import { notify } from './notifications';
 
 export function toPublicUser(user: User): PublicUser {
-  const { password_hash: _hash, email: _email, ...rest } = user;
+  const { email: _email, ...rest } = user;
   return rest;
 }
 
