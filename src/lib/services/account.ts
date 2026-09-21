@@ -1,5 +1,5 @@
 import 'server-only';
-import { db } from '@/lib/db';
+import { db, storageIsDurable } from '@/lib/db';
 import { AUTH_NOT_CONFIGURED, authConfigured } from '@/lib/supabase/config';
 import { createAdminAuthClient, createAuthClient } from '@/lib/supabase/server';
 import { CATEGORIES, type Category, type User } from '@/lib/types';
@@ -55,6 +55,18 @@ export async function isUsernameAvailable(username: string): Promise<boolean> {
  */
 export async function signUp(input: SignUpInput): Promise<Result<SignUpOutcome>> {
   if (!authConfigured()) return { ok: false, error: AUTH_NOT_CONFIGURED };
+
+  // Auth can be configured while the database is not. Creating the account
+  // anyway would hand somebody a real login whose profile is written to
+  // storage that does not survive the next request.
+  if (!storageIsDurable()) {
+    return {
+      ok: false,
+      error:
+        'Accounts are switched off on this deployment: it has no database configured, so a ' +
+        'profile created now would not be saved. Set SUPABASE_SERVICE_ROLE_KEY and redeploy.',
+    };
+  }
 
   const email = input.email.trim().toLowerCase();
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: false, error: 'Enter a valid email.' };
@@ -320,9 +332,15 @@ export async function deleteAccount(userId: string): Promise<void> {
   await signOut();
 }
 
-/** Absolute URL for links Supabase emails out. */
+/**
+ * Absolute URL for links Supabase emails out.
+ *
+ * `SITE_URL` is accepted alongside the public name for the same reason as the
+ * Supabase keys: it is read at runtime, so setting it on the deployment works
+ * without depending on what the build inlined.
+ */
 export function siteUrl(): string {
-  const configured = process.env.NEXT_PUBLIC_SITE_URL;
+  const configured = process.env.NEXT_PUBLIC_SITE_URL || process.env.SITE_URL;
   if (configured) return configured.replace(/\/$/, '');
   if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
     return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;

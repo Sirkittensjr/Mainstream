@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { apiError, json, serialiseUser } from '@/lib/api';
 import { profileForAuthUser } from '@/lib/services/account';
-import { SUPABASE_ANON_KEY, SUPABASE_URL, authConfigured } from '@/lib/supabase/config';
+import { authConfigured, supabaseAnonKey, supabaseUrl } from '@/lib/supabase/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     return apiError('email and password are required', 422);
   }
 
-  const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  const client = createClient(supabaseUrl(), supabaseAnonKey(), {
     auth: { persistSession: false, autoRefreshToken: false },
   });
   const { data, error } = await client.auth.signInWithPassword({

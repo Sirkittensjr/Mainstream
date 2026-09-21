@@ -1,10 +1,19 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { SignupForm } from './SignupForm';
-import { authConfigured } from '@/lib/supabase/config';
+import { authConfigured, missingAuthVars } from '@/lib/supabase/config';
 import { AuthNotConfigured } from '../AuthNotConfigured';
 
 export const metadata: Metadata = { title: 'Join FayTarra' };
+
+/**
+ * Rendered per request, not prerendered.
+ *
+ * As a static page, whether accounts were available was decided once at build
+ * time and baked into the HTML, so setting the Supabase variables afterwards
+ * left the page still saying accounts were off.
+ */
+export const dynamic = 'force-dynamic';
 
 export default function SignupPage() {
   return (
@@ -19,7 +28,7 @@ export default function SignupPage() {
         You need an email, a username and a password. Everything else can change later.
       </p>
 
-      {authConfigured() ? <SignupForm /> : <AuthNotConfigured />}
+      {authConfigured() ? <SignupForm /> : <AuthNotConfigured missing={missingAuthVars()} />}
 
       <p className="mt-6 text-center text-sm text-white/50">
         Already on FayTarra?{' '}

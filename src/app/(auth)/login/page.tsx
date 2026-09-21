@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { LoginForm } from './LoginForm';
 import { DEMO_LOGIN } from '@/lib/seed/data';
 import { supabaseConfigured } from '@/lib/db';
-import { authConfigured } from '@/lib/supabase/config';
+import { authConfigured, missingAuthVars } from '@/lib/supabase/config';
 import { AuthNotConfigured } from '../AuthNotConfigured';
 
 export const metadata: Metadata = { title: 'Sign in' };
@@ -24,7 +24,7 @@ export default async function LoginPage({
         <h1 className="font-display text-4xl font-extrabold leading-tight tracking-tight">
           Welcome back.
         </h1>
-        <AuthNotConfigured />
+        <AuthNotConfigured missing={missingAuthVars()} />
       </div>
     );
   }

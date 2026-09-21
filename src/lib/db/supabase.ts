@@ -13,10 +13,13 @@ const PAGE_SIZE = 1000;
  */
 const HARD_CAP = 50_000;
 
+/** The URL, under either name. See src/lib/supabase/config.ts for why both. */
+function url(): string {
+  return process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';
+}
+
 export function supabaseConfigured(): boolean {
-  return Boolean(
-    process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY,
-  );
+  return Boolean(url() && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
 
 /**
@@ -30,7 +33,7 @@ class SupabaseDriver implements Driver {
 
   constructor() {
     this.client = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL as string,
+      url(),
       process.env.SUPABASE_SERVICE_ROLE_KEY as string,
       { auth: { persistSession: false, autoRefreshToken: false } },
     );
