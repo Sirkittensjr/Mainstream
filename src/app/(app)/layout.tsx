@@ -2,12 +2,15 @@ import Link from 'next/link';
 import { BottomNav, Sidebar, type NavUser } from '@/components/Nav';
 import { RightRail } from '@/components/RightRail';
 import { unreadCount } from '@/lib/services/notifications';
+import { unreadMessageCount } from '@/lib/services/messages';
 import { getViewer, markActive } from '@/lib/session';
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const viewer = await getViewer();
   await markActive(viewer);
-  const unread = viewer ? await unreadCount(viewer.id) : 0;
+  const [unread, unreadMessages] = viewer
+    ? await Promise.all([unreadCount(viewer.id), unreadMessageCount(viewer.id)])
+    : [0, 0];
 
   const navUser: NavUser | null = viewer
     ? {
@@ -16,6 +19,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         avatarUrl: viewer.avatar_url,
         isAdmin: viewer.role === 'admin',
         unread,
+        unreadMessages,
       }
     : null;
 

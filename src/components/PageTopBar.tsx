@@ -1,4 +1,5 @@
 import { unreadCount } from '@/lib/services/notifications';
+import { unreadMessageCount } from '@/lib/services/messages';
 import { getViewer } from '@/lib/session';
 import { TopBar } from './Nav';
 
@@ -8,7 +9,9 @@ import { TopBar } from './Nav';
  */
 export async function PageTopBar({ title }: { title?: string }) {
   const viewer = await getViewer();
-  const unread = viewer ? await unreadCount(viewer.id) : 0;
+  const [unread, unreadMessages] = viewer
+    ? await Promise.all([unreadCount(viewer.id), unreadMessageCount(viewer.id)])
+    : [0, 0];
   return (
     <TopBar
       title={title}
@@ -20,6 +23,7 @@ export async function PageTopBar({ title }: { title?: string }) {
               avatarUrl: viewer.avatar_url,
               isAdmin: viewer.role === 'admin',
               unread,
+              unreadMessages,
             }
           : null
       }

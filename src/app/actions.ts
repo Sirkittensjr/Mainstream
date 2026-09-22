@@ -24,7 +24,9 @@ import {
   submitReport,
 } from '@/lib/services/moderation';
 import { blockUser, follow, unblockUser, unfollow, updateProfile } from '@/lib/services/users';
-import { deleteAccount, signOut } from '@/lib/services/account';
+import { changeUsername, deleteAccount, signOut } from '@/lib/services/account';
+import { send as sendMessage, markThreadRead } from '@/lib/services/messages';
+import { getUserByUsername } from '@/lib/services/users';
 import { submitRating } from '@/lib/services/ratings';
 import { setRaterTrust } from '@/lib/services/rating-integrity';
 import type { Reaction, RatingTarget } from '@/lib/types';
@@ -166,6 +168,56 @@ export async function createPostAction(_prev: unknown, formData: FormData) {
   revalidatePath('/discover');
   revalidatePath(`/u/${viewer.username}`);
   redirect(`/post/${post.id}`);
+}
+
+/**
+ * Sends a direct message.
+ *
+ * The recipient is resolved from a username, and the mutual-follow rule is
+ * enforced inside sendMessage() and again by a database trigger — calling this
+ * action directly with somebody else's handle gets you nowhere.
+ */
+export async function sendMessageAction(username: string, body: string) {
+  const viewer = await getViewer();
+  if (!viewer) return { ok: false as const, error: 'Sign in to send messages.' };
+  const recipient = await getUserByUsername(username);
+  if (!recipient) return { ok: false as const, error: 'That account does not exist.' };
+
+  const result = await sendMessage(viewer.id, recipient.id, body);
+  if (!result.ok) return { ok: false as const, error: result.error };
+
+  revalidatePath(`/messages/${recipient.username}`);
+  revalidatePath('/messages');
+  return { ok: true as const };
+}
+
+export async function markThreadReadAction(username: string) {
+  const viewer = await getViewer();
+  if (!viewer) return;
+  const other = await getUserByUsername(username);
+  if (!other) return;
+  await markThreadRead(viewer.id, other.id);
+  revalidatePath('/messages');
+}
+
+/**
+ * Changes the signed-in person's @username.
+ *
+ * The account id never changes, so everything attached to it stays attached.
+ */
+export async function changeUsernameAction(_prev: unknown, formData: FormData) {
+  const viewer = await requireViewer('/settings');
+  const result = await changeUsername(viewer.id, String(formData.get('username') || ''));
+  if (!result.ok) return { ok: false as const, error: result.error };
+
+  // The handle appears in the navigation, on every card and in every link, so
+  // the whole tree is stale now, not just this page.
+  revalidatePath('/', 'layout');
+  return {
+    ok: true as const,
+    message: `You are now @${result.username}.`,
+    username: result.username,
+  };
 }
 
 export async function markNotificationsReadAction() {

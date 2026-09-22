@@ -12,8 +12,7 @@ export const POST_BOARDS: { key: PostBoard; label: string; blurb: string }[] = [
   {
     key: 'top',
     label: 'Top rated',
-    blurb:
-      'The highest rated posts, weighted by how many people have actually rated them — a 9.8 from four votes does not beat an 8.9 from four hundred.',
+    blurb: 'The posts the community has rated highest.',
   },
   {
     key: 'trending',
@@ -44,17 +43,26 @@ export async function discoverPosts({
   limit = 30,
 }: Options): Promise<PostView[]> {
   const all = await visiblePosts(viewerId);
-  const pool = category ? all.filter((post) => post.category === category) : all;
-  if (pool.length === 0) return [];
+  const inCategory = category ? all.filter((post) => post.category === category) : all;
+  if (inCategory.length === 0) return [];
+
+  // Discover is for finding other people's work. Somebody's own posts are
+  // filtered out unless that leaves nothing at all, which is the case for the
+  // very first person to post in a category.
+  const others = inCategory.filter((post) => post.author_id !== viewerId);
+  const pool = others.length > 0 ? others : inCategory;
 
   const index = await ratingsIndex();
   let ordered: Post[];
 
   if (board === 'top') {
     // A vote floor, for the same reason the people rankings have one: a
-    // handful of ratings is not yet a community opinion.
+    // handful of ratings is not yet a community opinion. It decides the
+    // ORDER — it is not a gate on the page having anything in it.
     ordered = pool
-      .filter((post) => (index.posts.get(post.id)?.votes ?? 0) >= MIN_VOTES_FOR_POST_RANKING)
+      .filter(
+        (post) => (index.posts.get(post.id)?.weightedVotes ?? 0) >= MIN_VOTES_FOR_POST_RANKING,
+      )
       .sort((a, b) => (index.posts.get(b.id)?.score ?? 0) - (index.posts.get(a.id)?.score ?? 0));
   } else {
     const recent = pool.filter(
@@ -69,6 +77,21 @@ export async function discoverPosts({
       ((likes.get(post.id) ?? 0) * 3 + (comments.get(post.id) ?? 0) * 6 + post.views * 0.05) *
       recency(post.created_at, now);
     ordered = [...recent].sort((a, b) => heat(b) - heat(a));
+  }
+
+  // Top up with the newest posts nobody has rated or reacted to yet.
+  //
+  // Without this, a young FayTarra shows an empty Discover: nothing has four
+  // ratings, nothing has a week of engagement, so both boards come back with
+  // nothing even though there are posts to read. A post should not have to
+  // earn its way onto the page before anyone can see it — that is the loop
+  // that keeps a new platform empty.
+  if (ordered.length < limit) {
+    const already = new Set(ordered.map((post) => post.id));
+    const newest = pool
+      .filter((post) => !already.has(post.id))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    ordered = [...ordered, ...newest];
   }
 
   return hydratePosts(ordered.slice(0, limit), viewerId);

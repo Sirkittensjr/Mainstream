@@ -111,6 +111,19 @@ export function AccountMenu({
             View profile
           </Link>
           <Link
+            href="/messages"
+            role="menuitem"
+            onClick={() => setOpen(false)}
+            className="flex items-center justify-between px-4 py-2.5 text-sm text-white/70 transition hover:bg-white/5 hover:text-white"
+          >
+            Messages
+            {user.unreadMessages > 0 && (
+              <span className="rounded-full bg-fay px-2 py-0.5 text-[11px] font-bold text-ink-950">
+                {user.unreadMessages > 9 ? '9+' : user.unreadMessages}
+              </span>
+            )}
+          </Link>
+          <Link
             href="/settings"
             role="menuitem"
             onClick={() => setOpen(false)}

@@ -6,10 +6,11 @@ import { FollowButton } from '@/components/FollowButton';
 import { PageTopBar } from '@/components/PageTopBar';
 import { PostList } from '@/components/PostList';
 import { RatingPill } from '@/components/RatingPill';
-import { formatVotes, MIN_VOTES_FOR_RANKING } from '@/lib/ratings';
+import { formatVotes } from '@/lib/ratings';
 import { POST_BOARDS, activeCategories, discoverPosts, type PostBoard } from '@/lib/services/discovery';
 import {
   RANK_BOARDS,
+  newPeople,
   rankedCategories,
   rankings,
   userRanks,
@@ -223,11 +224,12 @@ async function PeopleTab({
   viewerUsername: string | null;
   href: HrefFn;
 }) {
-  const [rows, categories, mine, following] = await Promise.all([
+  const [rows, categories, mine, following, newcomers] = await Promise.all([
     rankings({ board, category, limit: 50 }),
     rankedCategories(),
     viewerId ? userRanks(viewerId) : Promise.resolve(null),
     viewerId ? followingIds(viewerId) : Promise.resolve(new Set<string>()),
+    newPeople({ viewerId, limit: 12 }),
   ]);
   const active = RANK_BOARDS.find((entry) => entry.key === board)!;
 
@@ -247,8 +249,7 @@ async function PeopleTab({
               </p>
             ) : (
               <p className="mt-1 text-sm text-white/55">
-                {mine.votesNeeded} more rating{mine.votesNeeded === 1 ? '' : 's'} and you appear
-                here. Everyone needs {MIN_VOTES_FOR_RANKING}.
+                Not ranked yet — keep posting and see where you land.
               </p>
             )}
           </div>
@@ -281,12 +282,16 @@ async function PeopleTab({
         unit="people"
       />
 
-      <h2 className="mt-7 font-display text-2xl font-extrabold tracking-tight">
-        {category ?? 'Everyone'}
-      </h2>
-      <p className="text-sm text-white/35">{active.label}</p>
+      {rows.length > 0 && (
+        <>
+          <h2 className="mt-7 font-display text-2xl font-extrabold tracking-tight">
+            {category ?? 'Everyone'}
+          </h2>
+          <p className="text-sm text-white/35">{active.label}</p>
+        </>
+      )}
 
-      <ol className="mt-4 space-y-2 pb-10">
+      <ol className={`space-y-2 pb-10 ${rows.length > 0 ? 'mt-4' : 'mt-7'}`}>
         {rows.map((row) => (
           <li
             key={row.user.id}
@@ -335,14 +340,66 @@ async function PeopleTab({
             )}
           </li>
         ))}
-        {rows.length === 0 && (
-          <EmptyState
-            title="Nobody here yet"
-            body={`People appear once they have at least ${MIN_VOTES_FOR_RANKING} ratings, so a handful of votes cannot jump the queue.`}
-            cta={{ href: '/discover', label: 'Browse posts' }}
-          />
-        )}
       </ol>
+
+      {/* Everyone who is not on the leaderboard yet. Keeping them in their own
+          section is what lets the ranking stay strict without Discover looking
+          abandoned on a young platform. */}
+      {newcomers.length > 0 && (
+        <section className="pb-10">
+          <h2 className="font-display text-2xl font-extrabold tracking-tight">
+            {rows.length === 0 ? 'People on FayTarra' : 'New here'}
+          </h2>
+          <p className="mb-4 text-sm text-white/35">
+            {rows.length === 0
+              ? 'Find someone worth following.'
+              : 'Recently joined, and worth a look.'}
+          </p>
+          <ul className="space-y-2">
+            {newcomers.map((entry) => (
+              <li key={entry.user.id} className="card flex items-center gap-3 p-4">
+                <Avatar
+                  username={entry.user.username}
+                  displayName={entry.user.display_name}
+                  src={entry.user.avatar_url}
+                  size="sm"
+                />
+                <div className="min-w-0 flex-1">
+                  <Link
+                    href={`/u/${entry.user.username}`}
+                    className="block truncate font-semibold hover:underline"
+                  >
+                    {entry.user.display_name}
+                  </Link>
+                  <p className="truncate text-xs text-white/40">
+                    @{entry.user.username}
+                    {entry.posts > 0 ? ` · ${entry.posts} post${entry.posts === 1 ? '' : 's'}` : ''}
+                    {entry.category ? ` · ${entry.category}` : ''}
+                  </p>
+                </div>
+                {entry.rating != null && (
+                  <RatingPill value={entry.rating} size="sm" votes={entry.votes} />
+                )}
+                {viewerId && (
+                  <FollowButton
+                    userId={entry.user.id}
+                    initialFollowing={following.has(entry.user.id)}
+                    signedIn
+                  />
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {rows.length === 0 && newcomers.length === 0 && (
+        <EmptyState
+          title="Nobody here yet"
+          body="Be the first. Post something and people will find you."
+          cta={{ href: '/create', label: 'Create a post' }}
+        />
+      )}
     </>
   );
 }

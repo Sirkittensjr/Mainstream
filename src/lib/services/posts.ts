@@ -83,7 +83,9 @@ export async function hydratePosts(posts: Post[], viewerId: ID | null): Promise<
         comments: commentCount.get(post.id) ?? 0,
         liked: likedByViewer.has(post.id),
         following: viewerFollowing.has(author.id),
-        rating: index.posts.get(post.id) ?? { rating: null, votes: 0, score: 0, reactions: [] },
+        rating:
+          index.posts.get(post.id) ??
+          { rating: null, votes: 0, weightedVotes: 0, score: 0, reactions: [] },
         myScore: mine.get(post.id) ?? null,
       } satisfies PostView;
     })

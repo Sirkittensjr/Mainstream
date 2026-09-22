@@ -122,6 +122,7 @@ class SupabaseDriver implements Driver {
 
   async clear() {
     const tables: TableName[] = [
+      'messages',
       'ratings',
       'notifications',
       'reports',

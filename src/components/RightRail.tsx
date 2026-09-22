@@ -37,7 +37,7 @@ export async function RightRail({ viewer }: { viewer: User | null }) {
           <p className="mt-3 text-[13px] text-white/45">
             {ranks.overall
               ? `#${ranks.overall} of ${ranks.total.toLocaleString()} rated people`
-              : `${ranks.votesNeeded} more rating${ranks.votesNeeded === 1 ? '' : 's'} and you appear in Discover`}
+              : 'Keep posting — rankings build as more people rate you.'}
           </p>
           <Link href={`/u/${viewer.username}`} className="btn-ghost mt-4 w-full text-sm">
             View profile

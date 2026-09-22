@@ -16,7 +16,7 @@ has never been installed.
 | Row 1 says | Run |
 | --- | --- |
 | `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including both migrations. |
-| `9 of 9` — ALL PRESENT | `0001` then `0002`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 300 lines over a live database to get two changes. |
+| `9 of 9` — ALL PRESENT | `0001`, `0002`, then `0003`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
 | anything between | Stop and ask. A half-installed schema needs looking at, not a migration. |
 
 If the storage bucket row shows `none`, create it in the dashboard
@@ -112,6 +112,39 @@ is destructive** — no drops, no deletes, no data rewritten.
 | 1 | `revoke all on public.users from anon, authenticated`, then `grant select (…13 columns)` and `grant update (5 columns)` | Permissions only | None to data. This is the security fix |
 | 2 | `add column if not exists parent_id` on `comments` + index | Adds a nullable column | None. Existing comments get `null` |
 | 3 | Eight `create index if not exists` | Adds indexes | None. Brief write locks while each builds |
+
+## 0003_messages_and_username_changes.sql
+
+Adds direct messages and lets people change their @username. Safe to run twice.
+**Nothing in this file is destructive** — no drops, no deletes, no existing row
+rewritten.
+
+| Step | Statement | What it touches | Risk |
+| --- | --- | --- | --- |
+| 1 | `add column if not exists username_changed_at` on `users` | Adds a nullable column | None. Existing rows get `null`, meaning "never changed", so everyone may change once immediately |
+| 2 | `create table if not exists public.messages` + four indexes + `enable row level security` | Adds a new table | None to existing data |
+| 3 | `enforce_message_permitted()` + a `before insert` trigger on `messages` | Adds a function and trigger | None |
+
+### Why the trigger, when the app already checks
+
+A rule that lives only in application code is one forgotten call site away from
+not existing, and hiding a button is not enforcement at all. The trigger runs
+inside the insert, so **no** request can write a message between two people who
+do not both follow each other — not the app, not a leaked key, not a direct SQL
+session holding the service role.
+
+It refuses with `not_mutual_follow`, or `blocked` when either person has
+blocked the other. `scripts/e2e/dm-checks.sql` proves both, plus that a one-way
+follow is not enough, that unfollowing stops new messages, and that neither API
+role can read anybody's messages.
+
+### What happens to history when somebody unfollows
+
+Nothing is deleted. The conversation stops being writable and the app will not
+open it, but silently destroying what two people said to each other because one
+of them unfollowed would be its own kind of wrong. It stays private either way:
+`messages` has RLS on with no policies, so the anon and authenticated roles
+cannot read a single row.
 
 ### Why step 1 matters
 

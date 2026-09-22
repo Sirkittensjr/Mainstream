@@ -122,6 +122,7 @@ export function seedInto(store: Store): Store {
     status: 'active',
     status_reason: null,
     trusted: true,
+    username_changed_at: null,
     created_at: iso(200, 0),
     last_active_at: iso(0, 1),
   };
@@ -142,6 +143,7 @@ export function seedInto(store: Store): Store {
       status: 'active',
       status_reason: null,
       trusted: true,
+      username_changed_at: null,
       created_at: iso(creator.joinedDaysAgo),
       last_active_at: iso(between(0, 2)),
     };
@@ -201,6 +203,7 @@ export function seedInto(store: Store): Store {
       status: 'active',
       status_reason: null,
       trusted: true,
+      username_changed_at: null,
       created_at: iso(joined),
       last_active_at: iso(between(0, 6)),
     };
@@ -380,6 +383,7 @@ export function seedInto(store: Store): Store {
         status: 'active',
         status_reason: null,
         trusted: true,
+        username_changed_at: null,
         created_at: iso(between(1, 4)),
         last_active_at: iso(0),
       };
@@ -505,6 +509,7 @@ export function buildSeedStore(): Store {
     ratings: [],
     notifications: [],
     reports: [],
+    messages: [],
   };
   return seedInto(empty);
 }

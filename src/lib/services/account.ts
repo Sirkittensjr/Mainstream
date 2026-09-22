@@ -1,5 +1,6 @@
 import 'server-only';
 import { db, storageIsDurable } from '@/lib/db';
+import { DAY } from '@/lib/time';
 import { AUTH_NOT_CONFIGURED, authConfigured } from '@/lib/supabase/config';
 import { createAdminAuthClient, createAuthClient } from '@/lib/supabase/server';
 import { CATEGORIES, type Category, type User } from '@/lib/types';
@@ -60,6 +61,76 @@ export function validateUsername(raw: string): Result<string> {
 
 export async function isUsernameAvailable(username: string): Promise<boolean> {
   return (await getUserByUsername(username)) === null;
+}
+
+/**
+ * How long somebody must wait between @username changes.
+ *
+ * Long enough that a handle cannot be cycled to dodge a block or confuse
+ * people who just learned it, short enough that a typo is not permanent.
+ */
+export const USERNAME_COOLDOWN_DAYS = 14;
+
+export type ChangeUsernameResult =
+  | { ok: true; username: string }
+  | { ok: false; error: string };
+
+/**
+ * Changes the @username on an EXISTING account.
+ *
+ * Nothing else moves. The row's id is the Supabase Auth user id and is never
+ * touched, so posts, comments, followers, following, ratings, notifications
+ * and messages all stay attached — they reference the id, not the handle.
+ */
+export async function changeUsername(
+  userId: string,
+  desired: string,
+  now: number = Date.now(),
+): Promise<ChangeUsernameResult> {
+  const store = db();
+  const user = await store.get('users', userId);
+  if (!user) return { ok: false, error: 'Sign in again to change your username.' };
+
+  const validated = validateUsername(desired);
+  if (!validated.ok) return { ok: false, error: validated.error };
+  const username = validated.value;
+
+  if (username === user.username) {
+    return { ok: false, error: 'That is already your username.' };
+  }
+
+  if (user.username_changed_at) {
+    const readyAt = new Date(user.username_changed_at).getTime() + USERNAME_COOLDOWN_DAYS * DAY;
+    if (now < readyAt) {
+      const days = Math.max(1, Math.ceil((readyAt - now) / DAY));
+      return {
+        ok: false,
+        error: `You can change your username again in ${days} day${days === 1 ? '' : 's'}.`,
+      };
+    }
+  }
+
+  // Friendly check first; the case-insensitive unique index is what actually
+  // guarantees it, and is what catches two people racing for the same handle.
+  const taken = await getUserByUsername(username);
+  if (taken && taken.id !== userId) {
+    return { ok: false, error: 'That username is taken.' };
+  }
+
+  try {
+    await store.update('users', userId, {
+      username,
+      username_changed_at: new Date(now).toISOString(),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message.toLowerCase() : '';
+    if (message.includes('unique') || message.includes('duplicate')) {
+      return { ok: false, error: 'That username is taken.' };
+    }
+    throw error;
+  }
+
+  return { ok: true, username };
 }
 
 /**
@@ -215,6 +286,7 @@ export async function ensureProfile(
       status: 'active',
       status_reason: null,
       trusted: true,
+      username_changed_at: null,
       created_at: now,
       last_active_at: now,
     });

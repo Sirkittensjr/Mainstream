@@ -15,6 +15,7 @@ psql -v ON_ERROR_STOP=1 -d faytarra_test -f scripts/e2e/supabase-shim.sql
 psql -v ON_ERROR_STOP=1 -d faytarra_test -f supabase/schema.sql
 psql -d faytarra_test -f scripts/e2e/schema-checks.sql
 psql -d faytarra_test -f scripts/e2e/rls-checks.sql
+psql -d faytarra_test -f scripts/e2e/dm-checks.sql
 ```
 
 `rls-checks.sql` is the one to re-run after touching grants or policies. It
@@ -24,6 +25,12 @@ and that a signed-in person cannot PATCH their own profile row to
 another person's username — while still being able to edit their own bio and
 not anybody else's. Every line marked "must fail" is expected to print an
 error; that is the check passing.
+
+`dm-checks.sql` proves the messaging rule is enforced by the DATABASE, not just
+the UI: strangers cannot message, a one-way follow is not enough, mutual follows
+work in both directions, a block stops it, unfollowing stops new messages while
+history survives, and neither API role can read a single message row. The lines
+marked "must fail" are expected to print an error.
 
 `schema-checks.sql` checks that a new `auth.users` row gets a FayTarra profile in the same
 transaction, that `public.users` has no password column, that a duplicate or
@@ -108,6 +115,26 @@ cleared.
 ```bash
 node scripts/e2e/signup-form-state.mjs
 ```
+
+### 6. Messaging, usernames, Discover and ratings — `features-flow.mjs`
+
+Starts from a **completely empty database** — no seed, no demo accounts — and
+creates three real accounts through the real signup flow, so it exercises
+exactly what a brand-new FayTarra looks like.
+
+```bash
+node scripts/e2e/features-flow.mjs
+```
+
+Covers: a new account being discoverable and a zero-engagement post appearing in
+Discover; Discover falling back to your own post when nothing else exists and
+dropping it once somebody else posts; a single rating of 10 displaying as 10.0
+with "1 rating"; a second rating of 8 making it 9.0; no page explaining the
+ranking maths; messaging refused one-way and at the URL not just the button;
+messaging working both ways once mutual; unfollowing closing the composer while
+history survives; and a username change that keeps the account id, posts,
+profile and ratings, refuses a handle in use, refuses reserved handles, and
+applies a cooldown.
 
 ---
 
