@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { Avatar } from '@/components/Avatar';
 import { PageTopBar } from '@/components/PageTopBar';
 import { logoutAction } from '@/app/actions';
+import { UsernameForm } from './UsernameForm';
 import { UnblockButton } from './UnblockButton';
 import { SettingsForm } from './SettingsForm';
 import { DangerZone } from './DangerZone';
@@ -89,6 +90,11 @@ export default async function SettingsPage() {
               <dd>{supabaseConfigured() ? 'Supabase' : 'Local demo data'}</dd>
             </div>
           </dl>
+          <div className="mt-5 border-t border-white/[0.06] pt-5">
+            <p className="label">Your @username</p>
+            <UsernameForm current={viewer.username} />
+          </div>
+
           <form action={logoutAction} className="mt-5">
             <button type="submit" className="btn-ghost w-full">
               Log out

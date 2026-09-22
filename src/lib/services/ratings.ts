@@ -6,9 +6,9 @@ import {
   MIN_VOTES_FOR_RANKING,
   PLATFORM_MEAN,
   PRIOR_VOTES,
-  bayesianRating,
   effectiveVotes,
   rankingScore,
+  rawAverage,
   roundRating,
   trendFor,
   type ReactionCount,
@@ -27,17 +27,25 @@ import {
 const WINDOW_DAYS = 30;
 
 export interface PostRatingSummary {
-  /** The number shown on the post. Null until somebody has rated it. */
+  /**
+   * The number shown on the post: the plain average of what people actually
+   * gave it. One rating of 10 shows 10.0. Null until somebody has rated it.
+   */
   rating: number | null;
-  /** Trustworthy evidence behind it, after integrity weighting. */
+  /** DISPLAYED: how many people actually rated it. One rater is 1. */
   votes: number;
+  /** Internal: the same ratings after integrity weighting. Never shown. */
+  weightedVotes: number;
   /** Ordering key — see src/lib/ratings.ts. */
   score: number;
   reactions: ReactionCount[];
 }
 
 export interface UserRatingSummary {
-  /** Long-term rating across everything this person has ever been rated on. */
+  /**
+   * DISPLAYED. The plain average across everything this person has been rated
+   * on — not adjusted by anything. The ranking keys below are separate.
+   */
   overall: number;
   overallVotes: number;
   /** How the community has rated them over the last 30 days. */
@@ -117,9 +125,14 @@ export const ratingsIndex = cache(async (): Promise<RatingsIndex> => {
     const list = byPost.get(post.id) ?? [];
     const samples = toSamples(list);
     const votes = effectiveVotes(samples);
+    const average = rawAverage(samples);
     postSummaries.set(post.id, {
-      rating: votes >= 0.1 ? roundRating(bayesianRating(samples, PRIOR_VOTES.post, platformMean)) : null,
-      votes: Math.round(votes * 10) / 10,
+      // Shown to people: the real average, untouched.
+      rating: votes >= 0.1 && average != null ? roundRating(average) : null,
+      // Shown to people: the real count. A single rater reads "1 rating", not
+      // "0 ratings" because their integrity weight happened to be 0.2.
+      votes: list.length,
+      weightedVotes: Math.round(votes * 10) / 10,
       score: rankingScore(samples, PRIOR_VOTES.post, platformMean),
       reactions: countReactions(list),
     });
@@ -129,16 +142,16 @@ export const ratingsIndex = cache(async (): Promise<RatingsIndex> => {
   for (const user of users) {
     const received = byOwner.get(user.id) ?? [];
     const all = toSamples(received);
-    const overallRaw = bayesianRating(all, PRIOR_VOTES.userOverall, platformMean);
-    const overall = roundRating(overallRaw);
 
-    // The last 30 days start from the person's own long-term rating and move
-    // as new ratings arrive, so a quiet month reads as "no change" rather than
-    // a collapse to the platform average.
+    // DISPLAYED: the plain average of the ratings this person was actually
+    // given. One rating of 10 reads 10.0.
+    const overallAverage = rawAverage(all);
+    const overall = overallAverage == null ? PLATFORM_MEAN : roundRating(overallAverage);
+
     const recentRatings = received.filter((rating) => rating.updated_at >= windowStart);
     const recentSamples = toSamples(recentRatings);
-    const recentRaw = bayesianRating(recentSamples, PRIOR_VOTES.userRecent, overallRaw);
-    const recent = roundRating(recentRaw);
+    const recentAverage = rawAverage(recentSamples);
+    const recent = recentAverage == null ? overall : roundRating(recentAverage);
 
     // Movement is measured window over window. Comparing the recent rating
     // against the overall one would show an arrow up for every above-average
@@ -146,20 +159,21 @@ export const ratingsIndex = cache(async (): Promise<RatingsIndex> => {
     const previous = received.filter(
       (rating) => rating.updated_at >= previousStart && rating.updated_at < windowStart,
     );
-    const baseline =
-      previous.length >= 3
-        ? bayesianRating(toSamples(previous), PRIOR_VOTES.userRecent, overallRaw)
-        : overallRaw;
+    const previousAverage = previous.length >= 3 ? rawAverage(toSamples(previous)) : null;
+    const baseline = previousAverage ?? overallAverage ?? PLATFORM_MEAN;
+    const recentForTrend = recentAverage ?? baseline;
 
     userSummaries.set(user.id, {
       overall,
-      overallVotes: Math.round(effectiveVotes(all) * 10) / 10,
+      overallVotes: received.length,
       recent,
-      recentVotes: Math.round(effectiveVotes(recentSamples) * 10) / 10,
-      trend: trendFor(recentRaw, baseline),
-      delta: Math.round((recentRaw - baseline) * 10) / 10,
+      recentVotes: recentRatings.length,
+      trend: trendFor(recentForTrend, baseline),
+      delta: Math.round((recentForTrend - baseline) * 10) / 10,
+      // RANKING ONLY, never shown: confidence-adjusted so one glowing rating
+      // cannot outrank a long record. See src/lib/ratings.ts.
       overallScore: rankingScore(all, PRIOR_VOTES.userOverall, platformMean),
-      recentScore: rankingScore(recentSamples, PRIOR_VOTES.userRecent, overallRaw),
+      recentScore: rankingScore(recentSamples, PRIOR_VOTES.userRecent, platformMean),
       rankable: effectiveVotes(all) >= MIN_VOTES_FOR_RANKING,
       reactions: countReactions(received),
     });
@@ -185,7 +199,9 @@ function emptyUser(): UserRatingSummary {
 
 export async function postRating(postId: ID): Promise<PostRatingSummary> {
   const index = await ratingsIndex();
-  return index.posts.get(postId) ?? { rating: null, votes: 0, score: 0, reactions: [] };
+  return (
+    index.posts.get(postId) ?? { rating: null, votes: 0, weightedVotes: 0, score: 0, reactions: [] }
+  );
 }
 
 export async function userRating(userId: ID): Promise<UserRatingSummary> {

@@ -12,7 +12,7 @@ export const RANK_BOARDS: { key: RankBoard; label: string; blurb: string }[] = [
   {
     key: 'overall',
     label: 'Overall',
-    blurb: 'Long-term ratings, weighted by how many people have actually rated.',
+    blurb: 'The best rated people on FayTarra, across everything they have posted.',
   },
   {
     key: 'recent',
@@ -174,6 +174,60 @@ export async function userRanks(userId: ID): Promise<UserRanks> {
     total: ranked.length,
     votesNeeded: me ? Math.max(0, Math.ceil(MIN_VOTES_FOR_RANKING - me.overallVotes)) : MIN_VOTES_FOR_RANKING,
   };
+}
+
+export interface NewPerson {
+  user: PublicUser;
+  followers: number;
+  rating: number | null;
+  votes: number;
+  category: Category | null;
+  posts: number;
+  joined: string;
+}
+
+/**
+ * People who are not on the leaderboard yet.
+ *
+ * A ranking needs enough ratings behind it to mean anything, which on a young
+ * platform means almost nobody qualifies and Discover looks abandoned. Rather
+ * than lower the bar — which would let one rating of 10 sit at number one —
+ * these are shown separately, so somebody who joined this morning is findable
+ * without being declared the best rated person on FayTarra.
+ */
+export async function newPeople({
+  viewerId,
+  limit = 12,
+}: {
+  viewerId: ID | null;
+  limit?: number;
+}): Promise<NewPerson[]> {
+  const store = db();
+  const [list, posts] = await Promise.all([
+    candidates(),
+    store.query('posts', { where: { removed: false } }),
+  ]);
+
+  const postCounts = new Map<ID, number>();
+  for (const post of posts) {
+    postCounts.set(post.author_id, (postCounts.get(post.author_id) ?? 0) + 1);
+  }
+
+  return list
+    .filter((entry) => !entry.rankable && entry.user.id !== viewerId)
+    .map((entry) => ({
+      user: entry.user,
+      followers: entry.followers,
+      rating: entry.overallVotes > 0 ? entry.overall : null,
+      votes: entry.overallVotes,
+      category: entry.category,
+      posts: postCounts.get(entry.user.id) ?? 0,
+      joined: entry.user.created_at,
+    }))
+    // Someone who has posted is worth meeting before someone who has not, then
+    // newest first so the page keeps changing as people arrive.
+    .sort((a, b) => b.posts - a.posts || b.joined.localeCompare(a.joined))
+    .slice(0, limit);
 }
 
 /** Categories that actually have ranked people in them, most populated first. */

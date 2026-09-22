@@ -3,6 +3,7 @@ import type {
   Comment,
   Follow,
   Like,
+  Message,
   Notification,
   Post,
   Rating,
@@ -21,6 +22,7 @@ export interface Schema {
   ratings: Rating;
   notifications: Notification;
   reports: Report;
+  messages: Message;
 }
 
 export type TableName = keyof Schema;

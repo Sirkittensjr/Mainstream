@@ -109,8 +109,14 @@ export function rawAverage(samples: WeightedSample[]): number | null {
 }
 
 /**
- * The displayed rating: a weighted average pulled toward `priorMean` by a
- * prior worth `priorVotes` votes.
+ * A weighted average pulled toward `priorMean` by a prior worth `priorVotes`
+ * votes.
+ *
+ * RANKING ONLY. This is never the number shown to anyone — the displayed
+ * rating is `rawAverage`, the plain average of what people actually gave. A
+ * single 10 must read 10.0 on the profile, and separately must not vault that
+ * person to the top of a leaderboard; those are two different questions and
+ * this answers the second one.
  */
 export function bayesianRating(
   samples: WeightedSample[],
@@ -138,11 +144,12 @@ export function weightedStdDev(samples: WeightedSample[], mean: number): number 
 }
 
 /**
- * The ordering key: the displayed rating minus a confidence penalty.
+ * The ordering key: a shrunk rating minus a confidence penalty.
  *
- * This is what every ranking sorts on. It is deliberately NOT the number shown
- * next to someone's name — that is `bayesianRating` — because a ranking needs
- * to encode certainty and a profile badge needs to be readable.
+ * This is what every ranking sorts on, and it is never displayed. A ranking
+ * has to encode how sure we are; a profile badge has to be the honest average.
+ * Keeping them apart is what lets 10.0-from-one-rating show as 10.0 without
+ * outranking 9.7-from-nine-hundred.
  */
 export function rankingScore(
   samples: WeightedSample[],

@@ -267,7 +267,10 @@ const run = async () => {
   await page.goto('/discover?show=people', { waitUntil: 'domcontentloaded' });
   const rankHtml = await page.content();
   check('the people rankings render', (await page.locator('ol li').count()) > 0);
-  check('rankings say what they are ranked on', /weighted by how many people/.test(rankHtml));
+  check(
+    'the rankings describe themselves without explaining the maths',
+    /best rated people/i.test(rankHtml) && !/weighted by how many|confidence/i.test(rankHtml),
+  );
   await page.goto('/discover?show=people&board=recent', { waitUntil: 'domcontentloaded' });
   check('the Last 30 days ranking renders', (await page.locator('ol li').count()) > 0);
   await page.goto('/discover?show=people&category=Music', { waitUntil: 'domcontentloaded' });

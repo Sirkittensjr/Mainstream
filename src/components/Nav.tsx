@@ -6,6 +6,7 @@ import type { ReactNode } from 'react';
 import { AccountMenu } from './AccountMenu';
 import {
   BellIcon,
+  MailIcon,
   CompassIcon,
   HomeIcon,
   PlusIcon,
@@ -20,6 +21,8 @@ export interface NavUser {
   avatarUrl: string | null;
   isAdmin: boolean;
   unread: number;
+  /** Unread direct messages. */
+  unreadMessages: number;
 }
 
 const PRIMARY = [
@@ -119,6 +122,7 @@ export function Sidebar({ user }: { user: NavUser | null }) {
     { href: '/discover', label: 'Discover', icon: CompassIcon },
     { href: '/create', label: 'Create', icon: PlusIcon },
     { href: '/search', label: 'Search', icon: SearchIcon },
+    { href: '/messages', label: 'Messages', icon: MailIcon },
     { href: '/notifications', label: 'Notifications', icon: BellIcon },
   ];
   if (user?.isAdmin) items.push({ href: '/admin', label: 'Admin', icon: ShieldIcon });
@@ -146,6 +150,11 @@ export function Sidebar({ user }: { user: NavUser | null }) {
                 {item.href === '/notifications' && user && user.unread > 0 && (
                   <span className="ml-auto rounded-full bg-fay px-2 py-0.5 text-[11px] font-bold text-ink-950">
                     {user.unread > 9 ? '9+' : user.unread}
+                  </span>
+                )}
+                {item.href === '/messages' && user && user.unreadMessages > 0 && (
+                  <span className="ml-auto rounded-full bg-fay px-2 py-0.5 text-[11px] font-bold text-ink-950">
+                    {user.unreadMessages > 9 ? '9+' : user.unreadMessages}
                   </span>
                 )}
               </Link>

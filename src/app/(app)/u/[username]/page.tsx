@@ -11,7 +11,7 @@ import { ProfileMenu } from '@/components/ProfileMenu';
 import { RatingPill, ReactionBar } from '@/components/RatingPill';
 import { RateButton } from '@/components/RateSheet';
 import { formatCount } from '@/lib/format';
-import { formatVotes, MIN_VOTES_FOR_RANKING, topReactions } from '@/lib/ratings';
+import { formatVotes, topReactions } from '@/lib/ratings';
 import { hydratePosts, postsByAuthor } from '@/lib/services/posts';
 import { myRating, userRating } from '@/lib/services/ratings';
 import { userRanks } from '@/lib/services/rankings';
@@ -21,6 +21,7 @@ import {
   isBlockedEitherWay,
   isFollowing,
 } from '@/lib/services/users';
+import { canMessage } from '@/lib/services/messages';
 import { getViewer } from '@/lib/session';
 import { formatMonthYear } from '@/lib/time';
 
@@ -59,13 +60,14 @@ export default async function ProfilePage({
   const blocked = viewer && !isSelf ? await isBlockedEitherWay(viewer.id, user.id) : false;
   if (user.status === 'banned' && !isSelf && viewer?.role !== 'admin') notFound();
 
-  const [stats, following, allPosts, rating, ranks, mine] = await Promise.all([
+  const [stats, following, allPosts, rating, ranks, mine, messageable] = await Promise.all([
     getUserStats(user.id),
     viewer && !isSelf ? isFollowing(viewer.id, user.id) : Promise.resolve(false),
     postsByAuthor(user.id),
     userRating(user.id),
     userRanks(user.id),
     myRating(viewer?.id ?? null, 'user', user.id),
+    viewer && !isSelf ? canMessage(viewer.id, user.id) : Promise.resolve(false),
   ]);
 
   const requested = Number.parseInt(show ?? '', 10);
@@ -170,8 +172,9 @@ export default async function ProfilePage({
             </p>
           ) : (
             <p className="mt-3 text-sm text-white/35">
-              Needs {MIN_VOTES_FOR_RANKING} ratings to be ranked
-              {rating.overallVotes > 0 ? ` — ${ranks.votesNeeded} to go` : ''}.
+              {isSelf
+                ? 'Not ranked yet — rankings build as more people rate you.'
+                : 'Not ranked yet.'}
             </p>
           )}
 
@@ -199,6 +202,16 @@ export default async function ProfilePage({
                   size="lg"
                   signedIn={Boolean(viewer)}
                 />
+                {/* Only appears while the follow is mutual. The rule is
+                    enforced on the server and in the database either way. */}
+                {messageable && (
+                  <Link
+                    href={`/messages/${user.username}`}
+                    className="btn-ghost px-6 py-2.5 text-sm"
+                  >
+                    Message
+                  </Link>
+                )}
                 <RateButton
                   targetType="user"
                   targetId={user.id}

@@ -48,6 +48,7 @@ const EMPTY: Store = {
   ratings: [],
   notifications: [],
   reports: [],
+  messages: [],
 };
 
 /**

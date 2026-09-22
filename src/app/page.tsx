@@ -3,7 +3,7 @@ import { Avatar } from '@/components/Avatar';
 import { Logo } from '@/components/Nav';
 import { RatingPill } from '@/components/RatingPill';
 import { ArrowIcon, CompassIcon } from '@/components/Icons';
-import { MIN_VOTES_FOR_RANKING, formatVotes } from '@/lib/ratings';
+import { formatVotes } from '@/lib/ratings';
 import { rankings } from '@/lib/services/rankings';
 import { getViewer } from '@/lib/session';
 
@@ -123,13 +123,12 @@ export default async function LandingPage() {
         </div>
 
         <div className="card mt-4 p-6">
-          <h3 className="font-display text-xl font-bold">Votes count, not just the average</h3>
+          <h3 className="font-display text-xl font-bold">Your rating is your rating</h3>
           <p className="mt-3 max-w-3xl leading-relaxed text-white/55">
-            A 10.0 from three friends is not better than a 9.2 from eight hundred people, and
-            FayTarra does not pretend otherwise. Ratings are weighted by how much agreement stands
-            behind them, and nothing appears in the rankings at all until it has at least{' '}
-            {MIN_VOTES_FOR_RANKING} ratings. One rating per person, and new accounts carry less
-            weight until they are real participants.
+            The number on your profile is the average of what people actually gave you — nothing
+            more complicated than that. Rankings are their own thing: they take both how well
+            something is rated and how many people have rated it, so a long record counts for
+            something. One rating per person, either way.
           </p>
         </div>
       </section>

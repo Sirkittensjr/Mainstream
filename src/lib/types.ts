@@ -68,6 +68,8 @@ export interface User {
    * when it rates other people.
    */
   trusted: boolean;
+  /** When the @username last changed. Null means it never has. */
+  username_changed_at: ISODate | null;
   created_at: ISODate;
   last_active_at: ISODate;
 }
@@ -170,6 +172,22 @@ export interface Notification {
   post_id: ID | null;
   body: string;
   read: boolean;
+  created_at: ISODate;
+}
+
+/**
+ * A private message.
+ *
+ * Only ever exchanged between two people who follow each other. That rule is
+ * enforced by a trigger on this table as well as in the service layer, so no
+ * request can write a row that breaks it.
+ */
+export interface Message {
+  id: ID;
+  sender_id: ID;
+  recipient_id: ID;
+  body: string;
+  read_at: ISODate | null;
   created_at: ISODate;
 }
 

@@ -20,6 +20,7 @@ export const LIMITS = {
   comments: { perHour: 60, perDay: 250 },
   follows: { perHour: 80, perDay: 300 },
   reports: { perHour: 12, perDay: 40 },
+  messages: { perHour: 120, perDay: 600 },
 } as const;
 
 export type LimitKind = keyof typeof LIMITS;
@@ -31,6 +32,7 @@ const MESSAGES: Record<LimitKind, string> = {
   comments: 'You are commenting very quickly. Take a breath and try again shortly.',
   follows: 'That is a lot of follows in a short time. Try again shortly.',
   reports: 'You have sent a lot of reports. We are looking at them — try again later.',
+  messages: 'You are sending messages very quickly. Try again shortly.',
 };
 
 interface Timestamped {
@@ -67,6 +69,9 @@ export async function checkLimit(
       break;
     case 'reports':
       rows = await store.query('reports', { where: { reporter_id: userId } });
+      break;
+    case 'messages':
+      rows = await store.query('messages', { where: { sender_id: userId } });
       break;
   }
 
