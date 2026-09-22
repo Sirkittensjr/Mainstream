@@ -91,7 +91,7 @@ export default async function SettingsPage() {
           </dl>
           <form action={logoutAction} className="mt-5">
             <button type="submit" className="btn-ghost w-full">
-              Sign out
+              Log out
             </button>
           </form>
           <div className="mt-5 border-t border-white/[0.06] pt-5">
