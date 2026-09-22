@@ -248,9 +248,9 @@ build it themselves; set the same variables and ignore the standalone output.
 
 | Variable | Why it matters |
 | --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY`<br>(or `SUPABASE_URL` + `SUPABASE_ANON_KEY`) | Supabase Auth. Without them **nobody can sign up or sign in** — the auth screens say so, and name the missing variable. |
+| `NEXT_PUBLIC_SUPABASE_URL` + `NEXT_PUBLIC_SUPABASE_ANON_KEY`<br>(or `SUPABASE_URL` + `SUPABASE_ANON_KEY`) | Supabase Auth. Without them **nobody can sign up or sign in** — the auth screens say so, and name the missing variable. Either key format works: `sb_publishable_…` on a modern project, or a legacy anon JWT. |
 | `NEXT_PUBLIC_SITE_URL` | The absolute URL Supabase puts in confirmation and reset emails. On Vercel it falls back to the deployment URL, which is fine for previews and wrong for a custom domain. |
-| `SUPABASE_SERVICE_ROLE_KEY` | The database driver, and deleting an account's Supabase Auth user. Without it the app runs on the bundled JSON driver, which writes to `./.data`. On a container or serverless host that is ephemeral or read-only, so **every post and rating disappears on restart**. The server logs a warning if you deploy this way. |
+| `SUPABASE_SERVICE_ROLE_KEY` | The database driver, and deleting an account's Supabase Auth user. Takes the `sb_secret_…` key on a modern project, or a legacy service_role JWT; keep the variable name either way. Without it the app runs on the bundled JSON driver, which writes to `./.data`. On a container or serverless host that is ephemeral or read-only, so **every post and rating disappears on restart**. The server logs a warning if you deploy this way. |
 | `SUPABASE_STORAGE_BUCKET` | Where uploads go. Local disk uploads do not survive a redeploy either. |
 | `ADMIN_EMAILS` | Accounts that get the admin role at signup. |
 
