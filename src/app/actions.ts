@@ -212,8 +212,13 @@ export async function deleteAccountAction(confirmation: string) {
 }
 
 export async function logoutAction() {
-  // Supabase clears its own cookies and revokes the refresh token.
+  // Supabase clears its own cookies and revokes the refresh token server-side.
   await signOut();
+  // Without this the client router can serve a cached layout from before the
+  // sign-out, so the navigation carries on showing the account menu until a
+  // hard reload. Busting the whole tree is the point: every page's nav is
+  // wrong now, not just this one.
+  revalidatePath('/', 'layout');
   redirect('/');
 }
 

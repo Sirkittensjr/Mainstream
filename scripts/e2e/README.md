@@ -82,6 +82,19 @@ the admin dashboard (and a normal account being turned away from it), profile
 edits persisting, phone-width layout on every main screen, every link on the
 feed resolving, and a clean browser console.
 
+### 4. Logging out — `logout-flow.mjs`
+
+Same setup. Runs the whole flow twice, at desktop and phone width: sign in,
+open the account menu from the navigation, log out, land on the homepage, and
+then verify the sign-out actually happened on the server rather than only in
+the browser — the API no longer recognises the session, a refresh does not
+restore it, the gated routes are closed again, and a brand new tab in the same
+browser is signed out too.
+
+```bash
+node scripts/e2e/logout-flow.mjs
+```
+
 ---
 
 `auth-flow.mjs` drives a real browser through: signed-out browsers being kept out of

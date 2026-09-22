@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
+import { AccountMenu } from './AccountMenu';
 import {
   BellIcon,
   CompassIcon,
@@ -161,21 +162,7 @@ export function Sidebar({ user }: { user: NavUser | null }) {
 
       <div className="mt-auto">
         {user ? (
-          <Link
-            href={`/u/${user.username}`}
-            className="flex items-center gap-3 rounded-2xl px-3 py-3 transition hover:bg-white/[0.04]"
-          >
-            <span
-              className="flex h-10 w-10 items-center justify-center rounded-full font-display text-sm font-bold text-ink-950"
-              style={{ backgroundImage: 'linear-gradient(135deg,#FF3D9A,#FFB443)' }}
-            >
-              {user.displayName.slice(0, 2).toUpperCase()}
-            </span>
-            <span className="min-w-0">
-              <span className="block truncate text-sm font-semibold">{user.displayName}</span>
-              <span className="block truncate text-xs text-white/40">@{user.username}</span>
-            </span>
-          </Link>
+          <AccountMenu user={user} placement="sidebar" />
         ) : (
           <div className="space-y-2 px-1">
             <Link href="/signup" className="btn-primary w-full">
@@ -216,7 +203,11 @@ export function TopBar({ user, title }: { user: NavUser | null; title?: string }
             <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-fay ring-2 ring-ink-950" />
           )}
         </Link>
-        {!user && (
+        {user ? (
+          <span className="ml-1">
+            <AccountMenu user={user} placement="topbar" />
+          </span>
+        ) : (
           <Link href="/signup" className="btn-primary ml-1 px-4 py-2 text-sm">
             Join
           </Link>
