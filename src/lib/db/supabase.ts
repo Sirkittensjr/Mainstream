@@ -24,6 +24,45 @@ export function supabaseConfigured(): boolean {
 }
 
 /**
+ * The subset of a PostgREST filter builder this driver needs, so the
+ * translation below can be tested without a database or a network.
+ */
+export interface Filterable {
+  eq(column: string, value: never): Filterable;
+  is(column: string, value: null): Filterable;
+  in(column: string, values: never[]): Filterable;
+}
+
+/**
+ * Applies a query's `where` and `in` clauses to a PostgREST builder.
+ *
+ * One detail here is not obvious and took the signed-in site down once.
+ * PostgREST filters are literals in a URL, so `.eq(column, null)` serialises
+ * to `column=eq.null` and asks Postgres to cast the STRING "null" to that
+ * column's type. Against a timestamp that is
+ * `invalid input syntax for type timestamp with time zone: "null"` — a 400,
+ * and therefore a thrown error on every page that runs the query. NULL is
+ * matched with `is`.
+ *
+ * The local driver has always compared with `=== null`, so both drivers now
+ * agree that `where: { read_at: null }` means "has not been read".
+ */
+export function applyFilters(
+  builder: Filterable,
+  where: Record<string, unknown> | undefined,
+  inFilters: Record<string, unknown[] | undefined> | undefined,
+): Filterable {
+  let next = builder;
+  for (const [key, value] of Object.entries(where ?? {})) {
+    next = value === null ? next.is(key, null) : next.eq(key, value as never);
+  }
+  for (const [key, values] of Object.entries(inFilters ?? {})) {
+    if (values) next = next.in(key, values as never[]);
+  }
+  return next;
+}
+
+/**
  * Supabase driver. Uses the service role key on the server so that the app can
  * enforce its own rules (blocking, moderation, FayTarra points) in one place; the
  * SQL schema still ships row level security for any direct client access.
@@ -50,13 +89,15 @@ class SupabaseDriver implements Driver {
 
     for (let from = 0; out.length < wanted; from += PAGE_SIZE) {
       const size = Math.min(PAGE_SIZE, wanted - out.length);
-      let builder = this.client.from(table).select('*');
-      for (const [key, value] of Object.entries(options.where ?? {})) {
-        builder = builder.eq(key, value as never);
-      }
-      for (const [key, values] of Object.entries(options.in ?? {})) {
-        if (values) builder = builder.in(key, values as never[]);
-      }
+      const base = this.client.from(table).select('*');
+      // `applyFilters` is deliberately typed against the small shape it needs
+      // rather than PostgREST's builder generics, which do not survive being
+      // passed through a function. Same object, same methods, either way.
+      let builder = applyFilters(
+        base as unknown as Filterable,
+        options.where as Record<string, unknown> | undefined,
+        options.in as Record<string, unknown[] | undefined> | undefined,
+      ) as unknown as typeof base;
       if (options.orderBy) {
         builder = builder.order(String(options.orderBy), { ascending: !options.desc });
       }
