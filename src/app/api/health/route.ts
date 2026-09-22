@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { db, storageIsDurable, supabaseConfigured } from '@/lib/db';
+import { db, isMissingRelation, storageIsDurable, supabaseConfigured } from '@/lib/db';
+import type { TableName } from '@/lib/db';
 import { authConfigured, missingAuthVars } from '@/lib/supabase/config';
 
 export const dynamic = 'force-dynamic';
@@ -29,11 +30,67 @@ async function probeDatabase(): Promise<{ reachable: boolean; error?: string }> 
   }
 }
 
+/**
+ * Which tables the code expects but this database does not have.
+ *
+ * A deployment can be perfectly reachable and still be running a schema older
+ * than the code — that is exactly what happens when a migration has not been
+ * applied — and until it is named, the only symptom is a page that fails. Each
+ * table is probed for one row, because that is the one question the driver can
+ * answer without knowing anything about Postgres catalogues.
+ */
+const TABLES: TableName[] = [
+  'users', 'posts', 'likes', 'comments', 'follows',
+  'blocks', 'ratings', 'notifications', 'reports', 'messages',
+];
+
+/** Columns a migration adds to an existing table, and the migration that adds them. */
+const ADDED_COLUMNS: { table: TableName; column: string; migration: string }[] = [
+  { table: 'users', column: 'username_changed_at', migration: '0003' },
+];
+
+const MIGRATION_FOR_TABLE: Partial<Record<TableName, string>> = { messages: '0003' };
+
+async function probeSchema(): Promise<{
+  missingTables: string[];
+  missingColumns: string[];
+  migrations: string[];
+}> {
+  const missingTables: string[] = [];
+  const missingColumns: string[] = [];
+  const migrations = new Set<string>();
+
+  for (const table of TABLES) {
+    try {
+      const rows = await db().query(table, { limit: 1 });
+      for (const { table: owner, column, migration } of ADDED_COLUMNS) {
+        // Only a row can tell us a column is absent; an empty table is not
+        // evidence either way, so it is left unreported rather than guessed at.
+        if (owner !== table || rows.length === 0) continue;
+        if (!(column in (rows[0] as unknown as Record<string, unknown>))) {
+          missingColumns.push(`${table}.${column}`);
+          migrations.add(migration);
+        }
+      }
+    } catch (error) {
+      if (!isMissingRelation(error)) continue;
+      missingTables.push(table);
+      const migration = MIGRATION_FOR_TABLE[table];
+      if (migration) migrations.add(migration);
+    }
+  }
+
+  return { missingTables, missingColumns, migrations: [...migrations].sort() };
+}
+
 export async function GET() {
   const missing = missingAuthVars();
   const durable = storageIsDurable();
   const configured = supabaseConfigured();
   const probe = await probeDatabase();
+  const schema = probe.reachable
+    ? await probeSchema()
+    : { missingTables: [], missingColumns: [], migrations: [] };
 
   const ready = missing.length === 0 && durable && probe.reachable;
 
@@ -62,6 +119,22 @@ export async function GET() {
                 'Supabase is configured but the query failed. Usually the schema has not been ' +
                 'created yet (run supabase/schema.sql) or the service role key is wrong. Pages ' +
                 'that read data will be returning 500 until this is fixed.',
+            }
+          : {}),
+      },
+      schema: {
+        upToDate: schema.migrations.length === 0,
+        missingTables: schema.missingTables,
+        missingColumns: schema.missingColumns,
+        ...(schema.migrations.length > 0
+          ? {
+              note:
+                'The database is behind the code. Run ' +
+                schema.migrations
+                  .map((id) => `supabase/migrations/${id}_*.sql`)
+                  .join(' and ') +
+                ' against it. The features these add are switched off until then; ' +
+                'the rest of FayTarra is unaffected.',
             }
           : {}),
       },

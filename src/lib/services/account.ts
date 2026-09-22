@@ -1,5 +1,5 @@
 import 'server-only';
-import { db, storageIsDurable } from '@/lib/db';
+import { db, isMissingColumn, storageIsDurable } from '@/lib/db';
 import { DAY } from '@/lib/time';
 import { AUTH_NOT_CONFIGURED, authConfigured } from '@/lib/supabase/config';
 import { createAdminAuthClient, createAuthClient } from '@/lib/supabase/server';
@@ -126,6 +126,17 @@ export async function changeUsername(
     const message = error instanceof Error ? error.message.toLowerCase() : '';
     if (message.includes('unique') || message.includes('duplicate')) {
       return { ok: false, error: 'That username is taken.' };
+    }
+    // Without the column there is no cooldown, and the cooldown is what stops
+    // a handle being cycled to dodge a block. Changing the username anyway
+    // would drop that quietly, so say what is actually wrong instead.
+    if (isMissingColumn(error, 'users', 'username_changed_at')) {
+      return {
+        ok: false,
+        error:
+          'Username changes are not available on this deployment yet. ' +
+          'The database is missing migration 0003.',
+      };
     }
     throw error;
   }
@@ -272,25 +283,39 @@ export async function ensureProfile(
   }
 
   const now = new Date().toISOString();
+  const row = {
+    id,
+    email,
+    username: seed.username,
+    display_name: seed.display_name,
+    bio: seed.bio,
+    avatar_url: seed.avatar_url,
+    location: seed.location,
+    interests: seed.interests,
+    role: isAdminEmail(email) ? ('admin' as const) : ('user' as const),
+    status: 'active' as const,
+    status_reason: null,
+    trusted: true,
+    username_changed_at: null,
+    created_at: now,
+    last_active_at: now,
+  };
+
   try {
-    return await store.insert('users', {
-      id,
-      email,
-      username: seed.username,
-      display_name: seed.display_name,
-      bio: seed.bio,
-      avatar_url: seed.avatar_url,
-      location: seed.location,
-      interests: seed.interests,
-      role: isAdminEmail(email) ? 'admin' : 'user',
-      status: 'active',
-      status_reason: null,
-      trusted: true,
-      username_changed_at: null,
-      created_at: now,
-      last_active_at: now,
-    });
-  } catch {
+    return await store.insert('users', row);
+  } catch (error) {
+    // A database that predates migration 0003 has no `username_changed_at`.
+    // Refusing to create the profile over a column that only the username
+    // cooldown needs would lock people out of an account Supabase Auth has
+    // already made, so write the row without it and let the migration add it.
+    if (isMissingColumn(error, 'users', 'username_changed_at')) {
+      const { username_changed_at: _omitted, ...withoutColumn } = row;
+      try {
+        return await store.insert('users', withoutColumn as typeof row);
+      } catch {
+        return store.get('users', id);
+      }
+    }
     // Lost a race with the trigger, which is fine — it got there first.
     return store.get('users', id);
   }

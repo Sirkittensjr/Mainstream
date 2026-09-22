@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { isMissingRelation, throwQueryError } from './errors';
 import type { Driver, QueryOptions, Row, TableName } from './types';
 
 const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'faytarra-media';
@@ -64,7 +65,7 @@ class SupabaseDriver implements Driver {
       builder = builder.range(from, from + size - 1);
 
       const { data, error } = await builder;
-      if (error) throw new Error(`[supabase:${table}] ${error.message}`);
+      if (error) throwQueryError(table, error);
       const page = (data ?? []) as Row<T>[];
       out.push(...page);
       if (page.length < size) break;
@@ -83,7 +84,7 @@ class SupabaseDriver implements Driver {
 
   async get<T extends TableName>(table: T, id: string) {
     const { data, error } = await this.client.from(table).select('*').eq('id', id).maybeSingle();
-    if (error) throw new Error(`[supabase:${table}] ${error.message}`);
+    if (error) throwQueryError(table, error);
     return (data as Row<T> | null) ?? null;
   }
 
@@ -93,14 +94,14 @@ class SupabaseDriver implements Driver {
       .insert(row as never)
       .select()
       .single();
-    if (error) throw new Error(`[supabase:${table}] ${error.message}`);
+    if (error) throwQueryError(table, error);
     return data as Row<T>;
   }
 
   async insertMany<T extends TableName>(table: T, rows: Row<T>[]) {
     if (rows.length === 0) return [];
     const { data, error } = await this.client.from(table).insert(rows as never[]).select();
-    if (error) throw new Error(`[supabase:${table}] ${error.message}`);
+    if (error) throwQueryError(table, error);
     return (data ?? []) as Row<T>[];
   }
 
@@ -111,13 +112,13 @@ class SupabaseDriver implements Driver {
       .eq('id', id)
       .select()
       .maybeSingle();
-    if (error) throw new Error(`[supabase:${table}] ${error.message}`);
+    if (error) throwQueryError(table, error);
     return (data as Row<T> | null) ?? null;
   }
 
   async remove<T extends TableName>(table: T, id: string) {
     const { error } = await this.client.from(table).delete().eq('id', id);
-    if (error) throw new Error(`[supabase:${table}] ${error.message}`);
+    if (error) throwQueryError(table, error);
   }
 
   async clear() {
@@ -138,7 +139,13 @@ class SupabaseDriver implements Driver {
         .from(table)
         .delete()
         .neq('id', '00000000-0000-0000-0000-000000000000');
-      if (error) throw new Error(`[supabase:${table}] ${error.message}`);
+      if (!error) continue;
+      try {
+        throwQueryError(table, error);
+      } catch (thrown) {
+        // A table this database never had is nothing to clear.
+        if (!isMissingRelation(thrown)) throw thrown;
+      }
     }
   }
 

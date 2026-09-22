@@ -41,4 +41,5 @@ export function storageIsDurable(): boolean {
 }
 
 export type { Driver, QueryOptions, Row, Schema, TableName } from './types';
+export { MissingRelationError, isMissingColumn, isMissingRelation } from './errors';
 export { supabaseConfigured };
