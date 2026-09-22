@@ -90,6 +90,12 @@ create table if not exists public.comments (
   created_at timestamptz not null default now()
 );
 
+-- On a database created before replies existed, `create table if not exists`
+-- above is skipped and the column is absent, so indexing it would fail. This
+-- makes the file safe to run over an existing database as well as a new one.
+alter table public.comments
+  add column if not exists parent_id uuid references public.comments (id) on delete cascade;
+
 create index if not exists comments_post_idx on public.comments (post_id);
 create index if not exists comments_user_idx on public.comments (user_id);
 create index if not exists comments_parent_idx on public.comments (parent_id);
