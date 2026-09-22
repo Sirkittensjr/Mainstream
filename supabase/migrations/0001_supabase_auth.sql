@@ -9,9 +9,35 @@
 -- never sees or stores a password.
 -- ---------------------------------------------------------------------------
 
--- 1. Profiles are owned by auth users -------------------------------------
-alter table public.users drop column if exists password_hash;
+-- 0. Refuse to start if this would half-apply -----------------------------
+-- Step 1 links every profile to an auth user. On a database created before
+-- Supabase Auth, profiles exist and `auth.users` is empty, so that link cannot
+-- be made — and if the password column had already been dropped by then, the
+-- migration would stop with the old hashes destroyed and the link still
+-- missing. So this check runs FIRST and changes nothing, and the destructive
+-- step is deliberately LAST: a failure anywhere leaves the database exactly as
+-- it was.
+do $$
+declare
+  orphans bigint;
+begin
+  select count(*) into orphans
+  from public.users u
+  where not exists (select 1 from auth.users a where a.id = u.id);
 
+  if orphans > 0 then
+    raise exception
+      'Refusing to migrate: % profile row(s) in public.users have no matching '
+      'auth.users account, so they cannot be linked to Supabase Auth. Nothing '
+      'has been changed. These are accounts from before Supabase Auth. Decide '
+      'what should happen to them first — see supabase/migrations/README.md, '
+      '"Profiles with no auth user". Run this to see them: select id, email, '
+      'username from public.users u where not exists (select 1 from auth.users '
+      'a where a.id = u.id);', orphans;
+  end if;
+end $$;
+
+-- 1. Profiles are owned by auth users -------------------------------------
 do $$
 begin
   if not exists (
@@ -126,3 +152,12 @@ create policy "people can edit their own profile"
   on public.users for update
   using (auth.uid() = id)
   with check (auth.uid() = id);
+
+-- 5. The only destructive statement in this file, deliberately last --------
+-- FayTarra no longer has any password code, so this column can only hold
+-- hashes it will never read again. Dropping it is irreversible: anyone who
+-- signed up under the old system must create their account again, because a
+-- scrypt hash cannot be handed to Supabase Auth.
+--
+-- Everything above has already succeeded by the time this runs.
+alter table public.users drop column if exists password_hash;
