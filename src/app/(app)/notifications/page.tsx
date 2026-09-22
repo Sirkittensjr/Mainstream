@@ -4,7 +4,7 @@ import { Avatar } from '@/components/Avatar';
 import { EmptyState } from '@/components/EmptyState';
 import { PageTopBar } from '@/components/PageTopBar';
 import { markNotificationsReadAction } from '@/app/actions';
-import { listNotifications } from '@/lib/services/notifications';
+import { listNotifications, type NotificationView } from '@/lib/services/notifications';
 import { requireViewer } from '@/lib/session';
 import { timeAgo } from '@/lib/time';
 import type { NotificationType } from '@/lib/types';
@@ -54,45 +54,92 @@ export default async function NotificationsPage() {
           />
         ) : (
           <ul className="space-y-2 pb-10">
-            {notifications.map((entry) => {
-              const href = entry.post_id
-                ? `/post/${entry.post_id}`
-                : entry.actor
-                  ? `/u/${entry.actor.username}`
-                  : '/home';
-              return (
-                <li key={entry.id}>
-                  <Link
-                    href={href}
-                    className={`card flex items-center gap-3 p-4 transition hover:border-white/20 ${
-                      entry.read ? 'opacity-60' : ''
-                    }`}
-                  >
-                    {entry.actor ? (
-                      <Avatar
-                        username={entry.actor.username}
-                        displayName={entry.actor.display_name}
-                        src={entry.actor.avatar_url}
-                        size="sm"
-                        href={false}
-                      />
-                    ) : (
-                      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-base">
-                        {ICONS[entry.type]}
-                      </span>
-                    )}
-                    <p className="min-w-0 flex-1 text-sm text-white/80">{entry.body}</p>
-                    <span className="shrink-0 text-xs text-white/30">
-                      {timeAgo(entry.created_at)}
-                    </span>
-                    {!entry.read && <span className="h-2 w-2 shrink-0 rounded-full bg-fay" />}
-                  </Link>
-                </li>
-              );
-            })}
+            {notifications.map((entry) => (
+              <li key={entry.id}>
+                <NotificationRow entry={entry} />
+              </li>
+            ))}
           </ul>
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * One notification.
+ *
+ * Two targets, not one. The avatar and the @handle go to the person who did
+ * the thing; everything else goes to the thing they did. The card stays
+ * clickable as a whole through an overlay link sitting underneath the two
+ * identity links — siblings rather than nested, because an anchor inside an
+ * anchor is not valid HTML and browsers resolve it however they like.
+ *
+ * The person is identified by `actor_id`, and the handle in the link comes
+ * off the record that id resolved to, so a renamed account still lands in the
+ * right place.
+ */
+function NotificationRow({ entry }: { entry: NotificationView }) {
+  const actor = entry.actor;
+  const actorHref = actor ? `/u/${actor.username}` : null;
+  // What the notification is ABOUT: the post where there is one, the person
+  // otherwise. A follow has no post, so it goes to their profile.
+  const contentHref = entry.post_id ? `/post/${entry.post_id}` : (actorHref ?? '/home');
+
+  // Bodies are written as "@handle did something". The handle becomes the
+  // link and the rest stays as the sentence, so it is not read twice.
+  const prefix = actor ? `@${actor.username} ` : null;
+  const rest = prefix && entry.body.startsWith(prefix) ? entry.body.slice(prefix.length) : null;
+
+  return (
+    <div
+      className={`card relative flex items-center gap-3 p-4 transition hover:border-white/20 ${
+        entry.read ? 'opacity-60' : ''
+      }`}
+    >
+      {/* Underneath everything: the whole-card target. */}
+      <Link
+        href={contentHref}
+        aria-label={entry.post_id ? 'Open the post' : (entry.body ?? 'Open')}
+        className="absolute inset-0 z-0 rounded-2xl"
+      />
+
+      {actor && actorHref ? (
+        <Link href={actorHref} className="relative z-10 shrink-0 rounded-full">
+          <Avatar
+            username={actor.username}
+            displayName={actor.display_name}
+            src={actor.avatar_url}
+            size="sm"
+            href={false}
+          />
+        </Link>
+      ) : (
+        <span className="relative z-10 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-base">
+          {ICONS[entry.type]}
+        </span>
+      )}
+
+      <p className="min-w-0 flex-1 text-sm text-white/80">
+        {actor && actorHref && rest !== null ? (
+          <>
+            <Link
+              href={actorHref}
+              className="relative z-10 font-semibold text-white hover:underline"
+            >
+              @{actor.username}
+            </Link>{' '}
+            {rest}
+          </>
+        ) : (
+          entry.body
+        )}
+      </p>
+
+      <span className="relative z-10 shrink-0 text-xs text-white/30">
+        {timeAgo(entry.created_at)}
+      </span>
+      {!entry.read && <span className="relative z-10 h-2 w-2 shrink-0 rounded-full bg-fay" />}
+    </div>
   );
 }

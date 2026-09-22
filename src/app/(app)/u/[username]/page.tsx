@@ -124,11 +124,19 @@ export default async function ProfilePage({
           )}
           {user.location && <p className="mt-3 text-sm text-white/35">📍 {user.location}</p>}
 
-          <dl className="mt-5 flex flex-wrap gap-x-6 gap-y-2 text-sm">
-            <Stat label="Followers" value={formatCount(stats.followers)} />
-            <Stat label="Following" value={formatCount(stats.following)} />
+          <div className="mt-5 flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm">
+            <Stat
+              label="Followers"
+              value={formatCount(stats.followers)}
+              href={`/u/${user.username}/followers`}
+            />
+            <Stat
+              label="Following"
+              value={formatCount(stats.following)}
+              href={`/u/${user.username}/following`}
+            />
             <Stat label="Posts" value={formatCount(stats.posts)} />
-          </dl>
+          </div>
 
           <div className="mt-5 grid grid-cols-2 gap-3">
             <div className="rounded-2xl border border-white/[0.07] bg-black/20 p-4">
@@ -289,12 +297,35 @@ export default async function ProfilePage({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+/**
+ * One number on a profile.
+ *
+ * Followers and Following take an `href` and become links to the list behind
+ * them; Posts has no list of its own and stays plain text. The tap target is
+ * the whole number-and-label pair, sized for a thumb.
+ *
+ * Spans rather than a description list, because two of the three are now
+ * navigation and `<dt>`/`<dd>` are not allowed inside a link.
+ */
+function Stat({ label, value, href }: { label: string; value: string; href?: string }) {
+  const inner = (
+    <>
+      <span className="font-display text-base font-bold">{value}</span>
+      <span className="text-white/40">{label}</span>
+    </>
+  );
+
+  if (!href) {
+    return <span className="flex items-baseline gap-1.5">{inner}</span>;
+  }
+
   return (
-    <div className="flex items-baseline gap-1.5">
-      <dt className="order-2 text-white/40">{label}</dt>
-      <dd className="order-1 font-display text-base font-bold">{value}</dd>
-    </div>
+    <Link
+      href={href}
+      className="-mx-2 flex min-h-[44px] items-baseline gap-1.5 rounded-xl px-2 py-2.5 transition hover:bg-white/[0.06]"
+    >
+      {inner}
+    </Link>
   );
 }
 

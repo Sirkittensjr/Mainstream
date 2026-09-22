@@ -225,10 +225,33 @@ It also checks what nobody should be able to reach: a third account guessing
 either side of somebody else's conversation URL, and a signed-out visitor
 landing on the login page rather than in the thread.
 
+### 10. Getting to a profile — `social-navigation.mjs`
+
+Followers, following and notifications, as navigation. Four accounts with real
+follows, likes, comments and ratings between them; every check ends by
+clicking a person and confirming the profile that opens is theirs.
+
+```bash
+node scripts/e2e/social-navigation.mjs
+```
+
+Two traps it is written around, both of which produced false passes before
+they were fixed:
+
+  - A followers list lives at `/u/<handle>/followers`, so waiting for the path
+    to "start with /u/" returns before the click has gone anywhere. The wait is
+    for the path to CHANGE to a bare `/u/<handle>`.
+  - The first `@handle` in a page's text is the VIEWER's own, in the
+    navigation, on every page. Whose profile opened is read from the URL, and
+    the page text is then checked for that same handle.
+
+It also covers the block rule — a blocked account leaves both the notification
+list and the follower list — and the phone layout.
+
 ### Which store each suite wants
 
-`auth-flow`, `video-flow` and `messaging-flow` create their own accounts and
-want an EMPTY store
+`auth-flow`, `video-flow`, `messaging-flow` and `social-navigation` create
+their own accounts and want an EMPTY store
 (`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and
 `social-flow` sign in as the seeded demo accounts and check against them —
 `signup-form-state` takes `tommy` as its already-taken username — so those need
