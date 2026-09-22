@@ -3,19 +3,34 @@
 Read this before running anything against a database with data in it.
 
 **Start here:** run [`../inspect.sql`](../inspect.sql) in the Supabase SQL
-editor. It is read only — every statement is a `SELECT`, it creates nothing and
-changes nothing — and its verdicts tell you which of these you actually need.
+editor, then [`../inspect-rows.sql`](../inspect-rows.sql) if the first says the
+tables exist. Both are read only — catalogue queries and counts, nothing
+created, changed or locked — and the `verdict` column tells you which of these
+files you actually need. `inspect.sql` works even on a project where FayTarra
+has never been installed.
 
 ## Which files to run
 
-| Your database | Run |
-| --- | --- |
-| No FayTarra tables (inspect section 1 errors or shows nothing) | `../schema.sql` only. It creates everything, already including both migrations. |
-| Has FayTarra tables (inspect section 1 shows row counts) | `0001` then `0002`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 300 lines over a live database to get two changes. |
+`inspect.sql` row 1 tells you which:
 
-If inspect section 9 shows no `faytarra-media` bucket, create it in the
-dashboard (**Storage → New bucket**, name `faytarra-media`, **Public**) rather
-than with SQL. Uploads need it; nothing else does.
+| Row 1 says | Run |
+| --- | --- |
+| `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including both migrations. |
+| `9 of 9` — ALL PRESENT | `0001` then `0002`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 300 lines over a live database to get two changes. |
+| anything between | Stop and ask. A half-installed schema needs looking at, not a migration. |
+
+If the storage bucket row shows `none`, create it in the dashboard
+(**Storage → New bucket**, name `faytarra-media`, **Public**) rather than with
+SQL. Uploads need it; nothing else does.
+
+### Order matters: schema before keys
+
+Setting `SUPABASE_SERVICE_ROLE_KEY` switches the app off its local fallback and
+onto Supabase. If the tables are not there yet, every page that reads data
+returns 500 — measured: `/`, `/home` and `/discover` all fail while `/signup`
+still answers, because signup reads nothing. So create the schema first, then
+set the key. `/api/health` reports `reachable: false` with the driver's own
+error if you get this the wrong way round.
 
 ---
 
