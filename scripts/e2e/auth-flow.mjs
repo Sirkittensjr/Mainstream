@@ -96,7 +96,20 @@ const run = async () => {
   ]);
   check('the post was published', page.url().includes('/post/') || page.url().includes('/home'), page.url());
 
-  // --- 6. the session survives a fresh visit (stay logged in) -------------
+  // --- 6. the session survives a reload and a fresh visit -----------------
+  // A hard reload is the thing people actually do, and it is what catches a
+  // session held only in memory rather than in the cookies.
+  await page.goto('/home', { waitUntil: 'domcontentloaded' });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  const afterReload = await page.evaluate(async () => (await fetch('/api/v1/me')).json());
+  check('still signed in after a hard refresh', afterReload?.user?.username === ACCOUNT.username);
+  await page.goto('/settings', { waitUntil: 'domcontentloaded' });
+  check(
+    'a signed-in-only page still opens after a refresh',
+    new URL(page.url()).pathname === '/settings',
+    page.url(),
+  );
+
   const revisit = await context.newPage();
   await revisit.goto('/home', { waitUntil: 'domcontentloaded' });
   const still = await revisit.evaluate(async () => (await fetch('/api/v1/me')).json());
