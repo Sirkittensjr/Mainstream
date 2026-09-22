@@ -2,6 +2,7 @@
 
 import { useActionState, useState } from 'react';
 import { updateProfileAction } from '@/app/actions';
+import { contentTypeFor, uploadMedia } from '@/lib/video/upload-client';
 import { CATEGORIES, type Category } from '@/lib/types';
 
 export function SettingsForm({
@@ -29,14 +30,14 @@ export function SettingsForm({
     setUploading(true);
     setAvatarError(null);
     try {
-      const body = new FormData();
-      body.append('file', file);
-      const response = await fetch('/api/upload', { method: 'POST', body });
-      const result = (await response.json()) as { url?: string; error?: string };
-      if (result.url) setAvatar(result.url);
-      else setAvatarError(result.error ?? 'Could not upload that picture.');
-    } catch {
-      setAvatarError('Could not upload that picture.');
+      // Straight to storage where that exists — a serverless request body is
+      // too small for a picture off a modern phone.
+      const uploaded = await uploadMedia(file, contentTypeFor(file));
+      setAvatar(uploaded.url);
+    } catch (failure) {
+      setAvatarError(
+        failure instanceof Error ? failure.message : 'Could not upload that picture.',
+      );
     } finally {
       setUploading(false);
     }

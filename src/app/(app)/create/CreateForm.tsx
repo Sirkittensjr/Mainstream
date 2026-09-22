@@ -4,6 +4,7 @@ import { useActionState, useRef, useState } from 'react';
 import { createPostAction } from '@/app/actions';
 import { CloseIcon, ImageIcon } from '@/components/Icons';
 import { CATEGORIES, type Media } from '@/lib/types';
+import { contentTypeFor, uploadMedia } from '@/lib/video/upload-client';
 
 export function CreateForm() {
   const [state, formAction, pending] = useActionState<{ error?: string } | null, FormData>(
@@ -13,6 +14,7 @@ export function CreateForm() {
   const [media, setMedia] = useState<Media[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   async function upload(files: FileList | null) {
@@ -21,21 +23,22 @@ export function CreateForm() {
     setUploadError(null);
     try {
       for (const file of Array.from(files).slice(0, 6 - media.length)) {
-        const body = new FormData();
-        body.append('file', file);
-        const response = await fetch('/api/upload', { method: 'POST', body });
-        const result = (await response.json()) as { url?: string; kind?: string; error?: string };
-        if (!response.ok || !result.url) {
-          setUploadError(result.error ?? 'Upload failed.');
-          continue;
+        try {
+          // The same route the video editor uses: straight to storage where
+          // that is available, because a serverless request body cannot carry
+          // a file of any size worth posting.
+          const uploaded = await uploadMedia(file, contentTypeFor(file), {
+            onProgress: ({ ratio, phase }) =>
+              setProgress(phase === 'checking' ? 'Checking…' : `Uploading… ${Math.round(ratio * 100)}%`),
+          });
+          setMedia((current) => [...current, uploaded]);
+        } catch (failure) {
+          setUploadError(failure instanceof Error ? failure.message : 'Upload failed.');
         }
-        setMedia((current) => [
-          ...current,
-          { kind: result.kind === 'video' ? 'video' : 'image', url: result.url as string },
-        ]);
       }
     } finally {
       setUploading(false);
+      setProgress(null);
       if (fileInput.current) fileInput.current.value = '';
     }
   }
@@ -82,7 +85,7 @@ export function CreateForm() {
               className="flex h-24 w-24 flex-col items-center justify-center gap-1 rounded-2xl border border-dashed border-white/15 bg-white/[0.03] text-xs text-white/45 transition hover:bg-white/[0.06]"
             >
               <ImageIcon />
-              {uploading ? 'Uploading…' : 'Add media'}
+              {uploading ? (progress ?? 'Uploading…') : 'Add media'}
             </button>
           )}
         </div>

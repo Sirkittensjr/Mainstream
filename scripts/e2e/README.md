@@ -146,3 +146,77 @@ browser; `/api/v1/me` refusing an unauthenticated caller; signing out; signing
 back in by username; the earlier post still being there; a wrong password being
 refused; a username not being claimable twice; the password reset round trip;
 and the old password no longer working.
+
+### 7. Video — `make-video-fixtures.mjs` + `video-flow.mjs`
+
+The whole video creator, in a real browser: uploading a file, recording clips
+from the camera with a microphone, reordering, deleting, trimming, cropping,
+rotating, muting, combining, choosing a thumbnail, captioning, posting, and
+watching the result from a second account on desktop and at phone width. It
+finishes by proving that text posts, photo posts, likes, comments, ratings and
+Discover still work exactly as before.
+
+There is no ffmpeg in this container and none is needed. The fixtures are made
+the same way the feature makes video — canvas plus `MediaRecorder` — so they
+are exactly the kind of file the code will meet, including the awkward one: a
+live recording whose container never states its own duration. Chromium's fake
+camera and microphone mean `getUserMedia`, the permission prompt and the audio
+track are all real code paths.
+
+```bash
+node scripts/e2e/make-video-fixtures.mjs /tmp/fay-video-fixtures   # ~3.5 min, cached
+
+STUB_PORT=54321 node scripts/e2e/gotrue-stub.mjs &
+npm run build && npm start &
+FIXTURES=/tmp/fay-video-fixtures node scripts/e2e/video-flow.mjs
+```
+
+Its last section is the one to re-run after touching uploads: it makes the
+requests somebody would make if they skipped the editor entirely — a video
+past three minutes, a file that only claims to be video, a 400MB upload,
+another person's pending object, a path climbing out of its own folder, and
+the same calls with no account at all.
+
+### 8. The production upload path — `storage-stub.mjs` + `storage-roundtrip.mts`
+
+A deployment with Supabase does not send uploads through the app: a 250MB
+request body is refused by every serverless host long before it arrives
+(Vercel stops at 4.5MB). The server signs a URL, the browser PUTs the file
+straight to Storage, and the server reads it back to check it. None of that
+runs on the local driver, so without this the one path production actually
+uses would be the one path never exercised.
+
+`storage-stub.mjs` speaks Storage's HTTP protocol — signed upload URLs, ranged
+reads, list, move, delete — and the app's own module drives it through the real
+`@supabase/storage-js` client.
+
+```bash
+STORAGE_PORT=54500 node scripts/e2e/storage-stub.mjs &
+STORAGE_PORT=54500 FIXTURES=/tmp/fay-video-fixtures \
+  npx tsx --conditions=react-server scripts/e2e/storage-roundtrip.mts
+```
+
+`--conditions=react-server` is what satisfies the `server-only` import; without
+it the module refuses to load outside a server component, which is the point
+of that import.
+
+It proves the round trip end to end and, just as importantly, that a video
+past the limit is caught **after** it has landed: read from both ends of a 6MB
+object, refused, and deleted rather than left in the bucket.
+
+### Which store each suite wants
+
+`auth-flow` and `video-flow` create their own accounts and want an EMPTY store
+(`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and
+`social-flow` sign in as the seeded demo accounts and check against them —
+`signup-form-state` takes `tommy` as its already-taken username — so those need
+`npm run seed` first. Running them against the wrong one reports failures that
+are not failures.
+
+### A note on running these back to back
+
+`social-flow` and `features-flow` change the data they run against — follows,
+ratings, usernames — so a second run on the same store starts from a different
+place and will report failures that are not failures. Re-seed between runs, and
+stop the previous server first: a server still holding the old store in memory
+will flush it back over the file you just seeded.

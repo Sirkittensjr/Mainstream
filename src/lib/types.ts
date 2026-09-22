@@ -84,6 +84,18 @@ export interface Media {
   url: string;
   /** Optional poster/thumbnail for video. */
   poster?: string;
+  /**
+   * The picture's size, when it is known.
+   *
+   * Stored so a post can reserve the right shape of space before the file has
+   * loaded. Without it every video is a guess, and the feed either jumps as
+   * each one arrives or crops them all to one house aspect ratio — which is
+   * not what a general social network should do to somebody's landscape video.
+   */
+  width?: number;
+  height?: number;
+  /** Seconds, for video. */
+  duration?: number;
 }
 
 export interface Post {

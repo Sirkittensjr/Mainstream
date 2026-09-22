@@ -201,3 +201,115 @@ export function FireIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function VideoIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="2.5" y="6" width="13" height="12" rx="3" />
+      <path d="m15.5 10.5 5-2.5v8l-5-2.5z" />
+    </svg>
+  );
+}
+
+export function RecordIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <circle cx="12" cy="12" r="8.5" />
+      <circle cx="12" cy="12" r="4.5" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function StopIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="6.5" y="6.5" width="11" height="11" rx="2.5" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function PlayIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M8.5 5.8v12.4l10-6.2z" fill="currentColor" />
+    </svg>
+  );
+}
+
+export function PauseIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="7.5" y="6" width="3.5" height="12" rx="1.2" fill="currentColor" stroke="none" />
+      <rect x="13" y="6" width="3.5" height="12" rx="1.2" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function TrimIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <circle cx="6.5" cy="17.5" r="2.5" />
+      <circle cx="17.5" cy="17.5" r="2.5" />
+      <path d="M8.3 15.7 18 4M15.7 15.7 6 4" />
+    </svg>
+  );
+}
+
+export function CropIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M6.5 2.5v15h15" />
+      <path d="M2.5 6.5h15v15" />
+    </svg>
+  );
+}
+
+export function RotateIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M20 11.5a8 8 0 1 0-2.4 5.7" />
+      <path d="M20 5.5v6h-6" />
+    </svg>
+  );
+}
+
+export function VolumeIcon({ muted, ...props }: IconProps & { muted?: boolean }) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4.5 9.5h3l4-3.5v12l-4-3.5h-3z" />
+      {muted ? (
+        <path d="m15.5 9.5 4 5m0-5-4 5" />
+      ) : (
+        <path d="M15 9.2a4 4 0 0 1 0 5.6M17.6 7a7.5 7.5 0 0 1 0 10" />
+      )}
+    </svg>
+  );
+}
+
+export function TrashIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4.5 6.5h15" />
+      <path d="M9 6.5V4.8c0-.7.6-1.3 1.3-1.3h3.4c.7 0 1.3.6 1.3 1.3v1.7" />
+      <path d="M6.5 6.5 7.4 19a1.5 1.5 0 0 0 1.5 1.4h6.2a1.5 1.5 0 0 0 1.5-1.4l.9-12.5" />
+    </svg>
+  );
+}
+
+export function ChevronIcon({ direction = 'right', ...props }: IconProps & { direction?: 'left' | 'right' }) {
+  return (
+    <svg {...base(props)}>
+      <path d={direction === 'left' ? 'M14.5 5.5 8 12l6.5 6.5' : 'M9.5 5.5 16 12l-6.5 6.5'} />
+    </svg>
+  );
+}
+
+export function SwitchCameraIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="2.5" y="6" width="19" height="13" rx="3" />
+      <path d="M8.5 12.5a3.5 3.5 0 0 1 6-2.4M15.5 11.5a3.5 3.5 0 0 1-6 2.4" />
+      <path d="M14.8 8.6h2v2M9.2 16.4h-2v-2" />
+    </svg>
+  );
+}
