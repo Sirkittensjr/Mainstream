@@ -1,5 +1,6 @@
 import 'server-only';
-import { db } from '@/lib/db';
+import { db, isMissingRelation } from '@/lib/db';
+import type { QueryOptions } from '@/lib/db';
 import { newId } from '@/lib/ids';
 import type { ID, Message, PublicUser, User } from '@/lib/types';
 import { checkLimit } from './rate-limit';
@@ -17,18 +18,72 @@ import { isBlockedEitherWay, toPublicUser } from './users';
 
 export const MESSAGE_MAX = 2000;
 
+export const MESSAGING_UNAVAILABLE =
+  'Messaging is not available on this deployment yet.';
+
+/**
+ * Whether this database has the messaging table at all.
+ *
+ * Null until a query has told us. A deployment whose SQL was installed before
+ * migration 0003 has no `messages` table, and that has to be survivable: the
+ * unread badge is part of the navigation, so every signed-in page would return
+ * a server error over a feature none of them are about. Messaging switches
+ * itself off until the migration runs; nothing else changes.
+ */
+let installed: boolean | null = null;
+let warned = false;
+
+function noteMissing(error: unknown): void {
+  installed = false;
+  if (warned) return;
+  warned = true;
+  console.error(
+    '[faytarra] Direct messages are switched off: this database has no `messages` table. ' +
+      'Run supabase/migrations/0003_messages_and_username_changes.sql against it to turn ' +
+      `messaging on. (${error instanceof Error ? error.message : String(error)})`,
+  );
+}
+
+/**
+ * A read of the messages table that answers "nothing" rather than throwing
+ * when the table is not there. Any OTHER failure still throws: a broken query
+ * against a table that exists is a real bug and must not be swallowed.
+ */
+async function read(options: QueryOptions<Message> = {}): Promise<Message[]> {
+  if (installed === false) return [];
+  try {
+    const rows = await db().query('messages', options);
+    installed = true;
+    return rows;
+  } catch (error) {
+    if (!isMissingRelation(error)) throw error;
+    noteMissing(error);
+    return [];
+  }
+}
+
+/** Is messaging usable on this deployment? Cached after the first answer. */
+export async function messagingAvailable(): Promise<boolean> {
+  if (installed !== null) return installed;
+  await read({ limit: 1 });
+  return installed ?? false;
+}
+
 export type SendResult = { ok: true; message: Message } | { ok: false; error: string };
 
 /** Do these two currently follow each other, with no block either way? */
 export async function canMessage(a: ID, b: ID): Promise<boolean> {
   if (a === b) return false;
   const store = db();
-  const [aFollowsB, bFollowsA, blocked] = await Promise.all([
+  const [aFollowsB, bFollowsA, blocked, available] = await Promise.all([
     store.query('follows', { where: { follower_id: a, following_id: b } }),
     store.query('follows', { where: { follower_id: b, following_id: a } }),
     isBlockedEitherWay(a, b),
+    // No table, no messaging — and therefore no Message button pointing at a
+    // page that cannot work.
+    messagingAvailable(),
   ]);
-  return aFollowsB.length > 0 && bFollowsA.length > 0 && !blocked;
+  return available && aFollowsB.length > 0 && bFollowsA.length > 0 && !blocked;
 }
 
 /** Everyone the viewer can currently message: their mutual follows. */
@@ -58,8 +113,8 @@ export interface ConversationSummary {
 export async function conversations(viewer: User): Promise<ConversationSummary[]> {
   const store = db();
   const [sent, received, mutual, hidden] = await Promise.all([
-    store.query('messages', { where: { sender_id: viewer.id } }),
-    store.query('messages', { where: { recipient_id: viewer.id } }),
+    read({ where: { sender_id: viewer.id } }),
+    read({ where: { recipient_id: viewer.id } }),
     mutualFollowIds(viewer.id),
     // A blocked account's thread disappears from the list entirely.
     (await import('./users')).hiddenUserIds(viewer.id),
@@ -115,10 +170,9 @@ export async function thread(viewer: User, other: User): Promise<Thread | null> 
   if (viewer.id === other.id) return null;
   if (await isBlockedEitherWay(viewer.id, other.id)) return null;
 
-  const store = db();
   const [outgoing, incoming, open] = await Promise.all([
-    store.query('messages', { where: { sender_id: viewer.id, recipient_id: other.id } }),
-    store.query('messages', { where: { sender_id: other.id, recipient_id: viewer.id } }),
+    read({ where: { sender_id: viewer.id, recipient_id: other.id } }),
+    read({ where: { sender_id: other.id, recipient_id: viewer.id } }),
     canMessage(viewer.id, other.id),
   ]);
 
@@ -137,6 +191,8 @@ export async function send(senderId: ID, recipientId: ID, body: string): Promise
   if (trimmed.length > MESSAGE_MAX) {
     return { ok: false, error: `Messages are up to ${MESSAGE_MAX} characters.` };
   }
+
+  if (!(await messagingAvailable())) return { ok: false, error: MESSAGING_UNAVAILABLE };
 
   const store = db();
   const sender = await store.get('users', senderId);
@@ -180,6 +236,10 @@ export async function send(senderId: ID, recipientId: ID, body: string): Promise
     if (text.includes('blocked')) {
       return { ok: false, error: 'That account is not available.' };
     }
+    if (isMissingRelation(error)) {
+      noteMissing(error);
+      return { ok: false, error: MESSAGING_UNAVAILABLE };
+    }
     throw error;
   }
 }
@@ -187,9 +247,7 @@ export async function send(senderId: ID, recipientId: ID, body: string): Promise
 /** Marks the other person's messages in this thread as read. */
 export async function markThreadRead(viewerId: ID, otherId: ID): Promise<void> {
   const store = db();
-  const incoming = await store.query('messages', {
-    where: { sender_id: otherId, recipient_id: viewerId },
-  });
+  const incoming = await read({ where: { sender_id: otherId, recipient_id: viewerId } });
   const now = new Date().toISOString();
   await Promise.all(
     incoming
@@ -200,9 +258,6 @@ export async function markThreadRead(viewerId: ID, otherId: ID): Promise<void> {
 
 /** Unread message count for the navigation badge. */
 export async function unreadMessageCount(userId: ID): Promise<number> {
-  const rows = await db().query('messages', {
-    where: { recipient_id: userId, read_at: null },
-    limit: 50,
-  });
+  const rows = await read({ where: { recipient_id: userId, read_at: null }, limit: 50 });
   return rows.length;
 }

@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { Avatar } from '@/components/Avatar';
 import { EmptyState } from '@/components/EmptyState';
 import { PageTopBar } from '@/components/PageTopBar';
-import { conversations } from '@/lib/services/messages';
+import { conversations, messagingAvailable } from '@/lib/services/messages';
 import { requireViewer } from '@/lib/session';
 import { timeAgo } from '@/lib/time';
 
@@ -12,7 +12,10 @@ export const dynamic = 'force-dynamic';
 
 export default async function MessagesPage() {
   const viewer = await requireViewer('/messages');
-  const threads = await conversations(viewer);
+  const [threads, available] = await Promise.all([
+    conversations(viewer),
+    messagingAvailable(),
+  ]);
 
   return (
     <>
@@ -25,7 +28,16 @@ export default async function MessagesPage() {
           </p>
         </div>
 
-        {threads.length === 0 ? (
+        {!available ? (
+          // Better than an inbox that looks normal and silently drops
+          // everything: this deployment's database has not had the messaging
+          // migration run against it yet.
+          <EmptyState
+            title="Messages are not switched on yet"
+            body="Direct messages are not available on this deployment. Everything else works as normal."
+            cta={{ href: '/home', label: 'Back to your feed' }}
+          />
+        ) : threads.length === 0 ? (
           <EmptyState
             title="No messages yet"
             body="You can message anyone who follows you back. Follow a few people and see who follows you in return."
