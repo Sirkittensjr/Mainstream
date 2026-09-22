@@ -95,6 +95,20 @@ browser is signed out too.
 node scripts/e2e/logout-flow.mjs
 ```
 
+### 5. Signup keeps what you typed — `signup-form-state.mjs`
+
+React resets a `<form action={…}>` once the action settles, so uncontrolled
+inputs are wiped by any server-side validation failure — one missed interest
+used to cost the person their email, username, display name, bio and location.
+This is the regression guard, run at desktop and phone width: submit with a
+field missing, confirm the error appears beside the control it belongs to, and
+confirm everything else is still filled in. The password is expected to be
+cleared.
+
+```bash
+node scripts/e2e/signup-form-state.mjs
+```
+
 ---
 
 `auth-flow.mjs` drives a real browser through: signed-out browsers being kept out of
