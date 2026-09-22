@@ -216,10 +216,13 @@ const run = async () => {
   const firstPage = await otherPage.locator('article').count();
   const moreLink = otherPage.locator('a:has-text("Show more")');
   if ((await moreLink.count()) > 0) {
-    await Promise.all([
-      otherPage.waitForURL(/show=/, { timeout: 30000 }),
-      moreLink.first().click(),
-    ]);
+    // Waiting on the URL rather than on a load event: "Show more" is a
+    // client-side <Link>, so once the bundle has hydrated the click never
+    // fires one and the wait times out on a page that worked perfectly.
+    await moreLink.first().click();
+    await otherPage.waitForFunction(() => location.search.includes('show='), undefined, {
+      timeout: 30000,
+    });
     // Rendering the bigger page takes a moment; wait for the count to grow
     // rather than guessing at a sleep.
     await otherPage

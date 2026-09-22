@@ -5,7 +5,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { PageTopBar } from '@/components/PageTopBar';
 import { conversations, messagingAvailable } from '@/lib/services/messages';
 import { requireViewer } from '@/lib/session';
-import { timeAgo } from '@/lib/time';
+import { timeAgo, timestamp } from '@/lib/time';
 
 export const metadata: Metadata = { title: 'Messages' };
 export const dynamic = 'force-dynamic';
@@ -40,7 +40,7 @@ export default async function MessagesPage() {
         ) : threads.length === 0 ? (
           <EmptyState
             title="No messages yet"
-            body="You can message anyone who follows you back. Follow a few people and see who follows you in return."
+            body="Follow someone and have them follow you back to start a conversation."
             cta={{ href: '/discover?show=people', label: 'Find people' }}
           />
         ) : (
@@ -61,13 +61,20 @@ export default async function MessagesPage() {
                   <div className="min-w-0 flex-1">
                     <p className="flex items-baseline gap-2">
                       <span className="truncate font-semibold">{entry.person.display_name}</span>
-                      <span className="shrink-0 text-xs text-white/30">
-                        {timeAgo(entry.lastMessage.created_at)}
+                      <span className="hidden shrink-0 truncate text-xs text-white/35 sm:inline">
+                        @{entry.person.username}
                       </span>
+                      <time
+                        dateTime={entry.lastMessage.created_at}
+                        title={timestamp(entry.lastMessage.created_at)}
+                        className="ml-auto shrink-0 text-xs text-white/30"
+                      >
+                        {timeAgo(entry.lastMessage.created_at)}
+                      </time>
                     </p>
                     <p
                       className={`truncate text-sm ${
-                        entry.unread > 0 ? 'text-white' : 'text-white/45'
+                        entry.unread > 0 ? 'font-medium text-white' : 'text-white/45'
                       }`}
                     >
                       {entry.lastMessage.sender_id === viewer.id ? 'You: ' : ''}
@@ -75,7 +82,7 @@ export default async function MessagesPage() {
                     </p>
                     {!entry.open && (
                       <p className="mt-0.5 text-xs text-white/30">
-                        You no longer follow each other
+                        You no longer follow each other — you can still read this
                       </p>
                     )}
                   </div>

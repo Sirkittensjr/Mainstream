@@ -35,7 +35,9 @@ export default async function ConversationPage({
   const conversation = await thread(viewer, other);
   if (!conversation) notFound();
 
-  await markThreadRead(viewer.id, other.id);
+  // Marked here rather than in the browser so it works with JavaScript off.
+  // Only messages the viewer received are touched; see markThreadRead.
+  const marked = await markThreadRead(viewer.id, other.id);
 
   return (
     <>
@@ -67,6 +69,7 @@ export default async function ConversationPage({
           displayName={other.display_name}
           viewerId={viewer.id}
           open={conversation.open}
+          hadUnread={marked > 0}
           messages={conversation.messages.map((message) => ({
             id: message.id,
             body: message.body,

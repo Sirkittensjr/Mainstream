@@ -204,9 +204,31 @@ It proves the round trip end to end and, just as importantly, that a video
 past the limit is caught **after** it has landed: read from both ends of a 6MB
 object, refused, and deleted rather than left in the bucket.
 
+### 9. Direct messages — `messaging-flow.mjs`
+
+The seven scenarios that define messaging, with three real accounts in three
+browser contexts: a one-way follow both ways round, a mutual follow, unfollow,
+block, unblock, ordering, timestamps, and read/unread.
+
+```bash
+node scripts/e2e/messaging-flow.mjs
+```
+
+The checks worth keeping are the ones where the BROWSER still believes it may
+send. The follow is broken — or the block is made — from a second tab of the
+same account while a composer is already on screen, and the send is then made
+anyway. If the mutual-follow rule lived in the UI those would go through; they
+are refused by the action, by the service layer and by the trigger on the
+table, and `dm-checks.sql` proves the last of those against direct SQL.
+
+It also checks what nobody should be able to reach: a third account guessing
+either side of somebody else's conversation URL, and a signed-out visitor
+landing on the login page rather than in the thread.
+
 ### Which store each suite wants
 
-`auth-flow` and `video-flow` create their own accounts and want an EMPTY store
+`auth-flow`, `video-flow` and `messaging-flow` create their own accounts and
+want an EMPTY store
 (`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and
 `social-flow` sign in as the seeded demo accounts and check against them —
 `signup-form-state` takes `tommy` as its already-taken username — so those need
