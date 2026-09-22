@@ -68,6 +68,79 @@ export async function followingIds(userId: ID): Promise<Set<ID>> {
   return new Set(rows.map((row) => row.following_id));
 }
 
+export interface PersonSummary {
+  user: PublicUser;
+  /** Whether the signed-in viewer already follows this person. */
+  viewerFollows: boolean;
+  /** True for the viewer's own row, which gets no follow button. */
+  isViewer: boolean;
+}
+
+/**
+ * The people behind a set of follow rows.
+ *
+ * A follow row holds two account ids and nothing else, which is the point:
+ * the list is built by looking those ids up, so it stays correct when
+ * somebody changes their @handle or their display name. The handle in the
+ * link comes off the record the id resolved to rather than from anything
+ * stored alongside the follow.
+ *
+ * Who is left out: banned accounts, and anyone the viewer has blocked or who
+ * has blocked the viewer. A block already hides that person everywhere else,
+ * and a follower list is not the place it stops applying.
+ */
+async function peopleFrom(
+  ids: ID[],
+  viewerId: ID | null,
+  limit: number,
+): Promise<PersonSummary[]> {
+  if (ids.length === 0) return [];
+  const [records, hidden, viewerFollowing] = await Promise.all([
+    getUsers(ids),
+    hiddenUserIds(viewerId),
+    viewerId ? followingIds(viewerId) : Promise.resolve(new Set<ID>()),
+  ]);
+
+  const out: PersonSummary[] = [];
+  for (const id of ids) {
+    if (out.length >= limit) break;
+    const user = records.get(id);
+    if (!user || user.status === 'banned' || hidden.has(id)) continue;
+    out.push({
+      user: toPublicUser(user),
+      viewerFollows: viewerFollowing.has(id),
+      isViewer: id === viewerId,
+    });
+  }
+  return out;
+}
+
+/** Everyone who follows this person, most recent first. */
+export async function followersOf(
+  userId: ID,
+  viewerId: ID | null,
+  limit = 200,
+): Promise<PersonSummary[]> {
+  const rows = await db().query('follows', { where: { following_id: userId } });
+  const ids = [...rows]
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .map((row) => row.follower_id);
+  return peopleFrom(ids, viewerId, limit);
+}
+
+/** Everyone this person follows, most recently followed first. */
+export async function followingOf(
+  userId: ID,
+  viewerId: ID | null,
+  limit = 200,
+): Promise<PersonSummary[]> {
+  const rows = await db().query('follows', { where: { follower_id: userId } });
+  const ids = [...rows]
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .map((row) => row.following_id);
+  return peopleFrom(ids, viewerId, limit);
+}
+
 export async function isFollowing(followerId: ID, followingId: ID): Promise<boolean> {
   const rows = await db().query('follows', {
     where: { follower_id: followerId, following_id: followingId },
