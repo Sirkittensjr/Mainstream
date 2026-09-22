@@ -14,6 +14,21 @@ export function timeAgo(iso: string, now: number = Date.now()): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
+/**
+ * The exact date and time, for a tooltip beside a relative one.
+ *
+ * "2m" is what you want to read in a conversation; "was that 2 minutes or 2
+ * months" is what you want when you hover it.
+ */
+export function timestamp(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 export function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, {
     month: 'long',

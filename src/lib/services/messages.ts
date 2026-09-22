@@ -244,20 +244,31 @@ export async function send(senderId: ID, recipientId: ID, body: string): Promise
   }
 }
 
-/** Marks the other person's messages in this thread as read. */
-export async function markThreadRead(viewerId: ID, otherId: ID): Promise<void> {
+/**
+ * Marks the other person's messages in this thread as read, and says how many.
+ *
+ * Only messages the viewer RECEIVED are touched — `sender_id` is the other
+ * person and `recipient_id` is the viewer, so there is no way to mark somebody
+ * else's inbox, and your own messages are never counted as unread to begin
+ * with. The count is what lets the page know whether the navigation badge it
+ * was rendered beside is now out of date.
+ */
+export async function markThreadRead(viewerId: ID, otherId: ID): Promise<number> {
   const store = db();
   const incoming = await read({ where: { sender_id: otherId, recipient_id: viewerId } });
+  const unread = incoming.filter((message) => !message.read_at);
+  if (unread.length === 0) return 0;
   const now = new Date().toISOString();
   await Promise.all(
-    incoming
-      .filter((message) => !message.read_at)
-      .map((message) => store.update('messages', message.id, { read_at: now })),
+    unread.map((message) => store.update('messages', message.id, { read_at: now })),
   );
+  return unread.length;
 }
 
 /** Unread message count for the navigation badge. */
 export async function unreadMessageCount(userId: ID): Promise<number> {
+  // Only what this person RECEIVED and has not opened. Their own messages are
+  // never in this set, because they are never the recipient of their own row.
   const rows = await read({ where: { recipient_id: userId, read_at: null }, limit: 50 });
   return rows.length;
 }

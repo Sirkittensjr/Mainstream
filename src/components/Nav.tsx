@@ -153,7 +153,10 @@ export function Sidebar({ user }: { user: NavUser | null }) {
                   </span>
                 )}
                 {item.href === '/messages' && user && user.unreadMessages > 0 && (
-                  <span className="ml-auto rounded-full bg-fay px-2 py-0.5 text-[11px] font-bold text-ink-950">
+                  <span
+                    aria-label={`${user.unreadMessages} unread`}
+                    className="ml-auto rounded-full bg-fay px-2 py-0.5 text-[11px] font-bold text-ink-950"
+                  >
                     {user.unreadMessages > 9 ? '9+' : user.unreadMessages}
                   </span>
                 )}
@@ -202,9 +205,25 @@ export function TopBar({ user, title }: { user: NavUser | null; title?: string }
         <Link href="/search" aria-label="Search" className="p-2 text-white/60 hover:text-white">
           <SearchIcon />
         </Link>
+        {/* Messages is a sidebar item on desktop; on a phone the bottom bar is
+            full, so it lives here rather than only inside the account menu. */}
+        <Link
+          href={user ? '/messages' : '/login?next=/messages'}
+          aria-label={
+            user && user.unreadMessages > 0
+              ? `Messages, ${user.unreadMessages} unread`
+              : 'Messages'
+          }
+          className="relative p-2 text-white/60 hover:text-white"
+        >
+          <MailIcon />
+          {user && user.unreadMessages > 0 && (
+            <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-fay ring-2 ring-ink-950" />
+          )}
+        </Link>
         <Link
           href={user ? '/notifications' : '/login?next=/notifications'}
-          aria-label="Notifications"
+          aria-label={user && user.unread > 0 ? `Notifications, ${user.unread} unread` : 'Notifications'}
           className="relative p-2 text-white/60 hover:text-white"
         >
           <BellIcon />

@@ -241,17 +241,26 @@ export async function sendMessageAction(username: string, body: string) {
   if (!result.ok) return { ok: false as const, error: result.error };
 
   revalidatePath(`/messages/${recipient.username}`);
-  revalidatePath('/messages');
+  // The layout, because the recipient's unread badge lives in the navigation.
+  revalidatePath('/', 'layout');
   return { ok: true as const };
 }
 
+/**
+ * Marks a conversation read.
+ *
+ * Only ever marks messages the signed-in person received — see
+ * markThreadRead. The username is resolved server-side, so passing somebody
+ * else's handle marks nothing of theirs.
+ */
 export async function markThreadReadAction(username: string) {
   const viewer = await getViewer();
-  if (!viewer) return;
+  if (!viewer) return { ok: false as const, marked: 0 };
   const other = await getUserByUsername(username);
-  if (!other) return;
-  await markThreadRead(viewer.id, other.id);
-  revalidatePath('/messages');
+  if (!other) return { ok: false as const, marked: 0 };
+  const marked = await markThreadRead(viewer.id, other.id);
+  if (marked > 0) revalidatePath('/', 'layout');
+  return { ok: true as const, marked };
 }
 
 /**
