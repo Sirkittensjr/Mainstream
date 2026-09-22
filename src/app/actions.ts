@@ -28,6 +28,7 @@ import { changeUsername, deleteAccount, signOut } from '@/lib/services/account';
 import { send as sendMessage, markThreadRead } from '@/lib/services/messages';
 import { getUserByUsername } from '@/lib/services/users';
 import { submitRating } from '@/lib/services/ratings';
+import { MAX_VIDEO_SECONDS, MAX_VIDEO_SECONDS_ENFORCED } from '@/lib/video/limits';
 import { setRaterTrust } from '@/lib/services/rating-integrity';
 import type { Reaction, RatingTarget } from '@/lib/types';
 
@@ -128,6 +129,59 @@ export async function blockAction(userId: string, shouldBlock: boolean) {
   else await unblockUser(viewer.id, userId);
   revalidatePath('/home');
   revalidatePath('/settings');
+}
+
+export interface CreateVideoPostInput {
+  media: unknown;
+  caption?: string;
+  category?: string;
+  tags?: string;
+}
+
+/**
+ * Posting a finished video.
+ *
+ * The same post as any other — same table, same feeds, same ratings, likes and
+ * comments — reached by a different door because the video editor has a media
+ * object rather than a form to submit. Everything the browser sends is treated
+ * exactly as the text-and-photo form's input is: the URL has to be one this
+ * deployment issued and published (see src/lib/media.ts), and the length has
+ * to be one the upload checks already allowed.
+ */
+export async function createVideoPostAction(input: CreateVideoPostInput) {
+  const viewer = await requireViewer('/create');
+  if (viewer.status !== 'active') {
+    return { error: 'Your account is suspended, so you cannot post right now.' };
+  }
+  const limit = await checkLimit('posts', viewer.id);
+  if (!limit.ok) return { error: limit.error };
+
+  const [media] = sanitiseMedia([input.media], 1);
+  if (!media || media.kind !== 'video') {
+    return { error: 'That video is no longer available. Try putting it together again.' };
+  }
+  // The file itself was measured when it was uploaded; this only catches a
+  // caller inventing a length in the metadata it sends along with the post.
+  if (media.duration != null && media.duration > MAX_VIDEO_SECONDS_ENFORCED) {
+    return { error: `FayTarra videos can be up to ${MAX_VIDEO_SECONDS / 60} minutes.` };
+  }
+
+  const categoryInput = String(input.category || 'Life') as Category;
+  const post = await createPost({
+    authorId: viewer.id,
+    caption: String(input.caption || '').trim().slice(0, 1200),
+    media: [media],
+    category: CATEGORIES.includes(categoryInput) ? categoryInput : 'Life',
+    tags: String(input.tags || '')
+      .split(/[\s,]+/)
+      .map((tag) => tag.slice(0, 30))
+      .filter(Boolean),
+  });
+
+  revalidatePath('/home');
+  revalidatePath('/discover');
+  revalidatePath(`/u/${viewer.username}`);
+  return { postId: post.id };
 }
 
 export async function createPostAction(_prev: unknown, formData: FormData) {

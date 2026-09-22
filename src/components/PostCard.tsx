@@ -7,6 +7,7 @@ import { likeAction } from '@/app/actions';
 import { formatCount } from '@/lib/format';
 import { formatVotes } from '@/lib/ratings';
 import { timeAgo } from '@/lib/time';
+import { VideoPlayer } from './VideoPlayer';
 import type { Media, Reaction } from '@/lib/types';
 import { Avatar } from './Avatar';
 import { FollowButton } from './FollowButton';
@@ -268,13 +269,7 @@ function MediaStrip({ media, postId }: { media: Media[]; postId: string }) {
         {media.map((item, i) => (
           <div key={`${postId}-${i}`} className="w-full shrink-0 snap-center px-2">
             {item.kind === 'video' ? (
-              <video
-                src={item.url}
-                poster={item.poster}
-                controls
-                playsInline
-                className="aspect-[4/5] max-h-[68vh] w-full rounded-2xl bg-ink-850 object-cover"
-              />
+              <VideoPlayer media={item} />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
               <img

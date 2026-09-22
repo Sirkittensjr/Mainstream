@@ -168,3 +168,28 @@ error; that is the check passing.
 
 **If you add a column to `public.users` later, add it to that grant list**, or
 it will be invisible to the API roles.
+
+---
+
+## 0004_video_uploads.sql
+
+Makes room for video in the storage bucket.
+
+**Touches:** one row in `storage.buckets` — `file_size_limit` and
+`allowed_mime_types`. No table is created, altered or dropped, and no stored
+object is created, moved or deleted. Safe to run twice.
+
+**Why:** FayTarra videos are up to 250MB. A bucket with no `file_size_limit`
+inherits the project's global upload limit, which is 50MB on a new project, so
+a video upload would be refused by Storage before the app saw it.
+
+**Before it will work:** the bucket cannot exceed the project's global limit,
+and that one is not settable from SQL. Raise it in the dashboard first —
+**Settings → Storage → "Upload file size limit"** → 250MB — then run this file.
+
+It prints the bucket's current limits before and after, so you can see exactly
+what changed. Nothing in the app depends on it apart from uploads bigger than
+the global limit; posts, ratings, feeds and everything else are unaffected.
+
+If `verdict` comes back `NOT APPLIED`, the bucket is not called
+`faytarra-media` — check `SUPABASE_STORAGE_BUCKET` and use that name instead.

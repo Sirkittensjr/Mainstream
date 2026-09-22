@@ -280,9 +280,29 @@ alter table public.messages      enable row level security;
 
 -- Storage -------------------------------------------------------------------
 -- Uploaded images and video go to this bucket. Public read so posts render.
-insert into storage.buckets (id, name, public)
-values ('faytarra-media', 'faytarra-media', true)
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+  'faytarra-media',
+  'faytarra-media',
+  true,
+  262144000, -- 250MB, matching MAX_VIDEO_BYTES in src/lib/video/limits.ts
+  array[
+    'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+    'video/mp4', 'video/quicktime', 'video/webm'
+  ]
+)
 on conflict (id) do nothing;
+
+-- Present for buckets created before video existed. A bucket still cannot
+-- exceed the project's global upload limit, which is a dashboard setting:
+-- Settings -> Storage -> "Upload file size limit".
+update storage.buckets
+set file_size_limit = greatest(coalesce(file_size_limit, 0), 262144000),
+    allowed_mime_types = array[
+      'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+      'video/mp4', 'video/quicktime', 'video/webm'
+    ]
+where id = 'faytarra-media';
 
 
 -- Supabase Auth ------------------------------------------------------------

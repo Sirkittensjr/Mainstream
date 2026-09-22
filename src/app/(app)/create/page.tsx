@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { PageTopBar } from '@/components/PageTopBar';
 import { requireViewer } from '@/lib/session';
-import { CreateForm } from './CreateForm';
+import { CreateTabs } from './CreateTabs';
 
 export const metadata: Metadata = { title: 'Create' };
 export const dynamic = 'force-dynamic';
@@ -34,7 +34,7 @@ export default async function CreatePage() {
             </p>
           </div>
         ) : (
-          <CreateForm />
+          <CreateTabs />
         )}
       </div>
     </>
