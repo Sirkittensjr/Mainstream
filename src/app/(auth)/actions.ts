@@ -10,12 +10,15 @@ import {
   signIn,
   signUp,
   updatePassword,
+  type SignUpField,
 } from '@/lib/services/account';
 import { getUserByUsername, updateProfile } from '@/lib/services/users';
 import { CATEGORIES, type Category } from '@/lib/types';
 
 export interface AuthState {
   error?: string;
+  /** Which control the error belongs to, so the form can show it in place. */
+  field?: SignUpField;
   notice?: string;
 }
 
@@ -51,7 +54,7 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
     avatar_url: null,
     interests,
   });
-  if (!result.ok) return { error: result.error };
+  if (!result.ok) return { error: result.error, field: result.field };
 
   if (avatarBytes) {
     try {

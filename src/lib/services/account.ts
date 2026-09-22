@@ -14,7 +14,20 @@ const RESERVED = new Set([
   'forgot-password', 'reset-password',
 ]);
 
-export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
+/**
+ * Which control a validation message belongs to, so a form can show it beside
+ * the thing that is wrong instead of in one banner at the bottom.
+ */
+export type SignUpField =
+  | 'email'
+  | 'username'
+  | 'password'
+  | 'display_name'
+  | 'interests';
+
+export type Result<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: string; field?: SignUpField };
 
 export interface SignUpInput {
   email: string;
@@ -36,8 +49,12 @@ export interface SignUpOutcome {
 /** Username rules, checked before we ask Supabase to create anything. */
 export function validateUsername(raw: string): Result<string> {
   const username = raw.trim().toLowerCase();
-  if (!USERNAME_RE.test(username)) return { ok: false, error: `Usernames use ${USERNAME_RULES}.` };
-  if (RESERVED.has(username)) return { ok: false, error: 'That username is reserved.' };
+  if (!USERNAME_RE.test(username)) {
+    return { ok: false, error: `Usernames use ${USERNAME_RULES}.`, field: 'username' };
+  }
+  if (RESERVED.has(username)) {
+    return { ok: false, error: 'That username is reserved.', field: 'username' };
+  }
   return { ok: true, value: username };
 }
 
@@ -69,22 +86,26 @@ export async function signUp(input: SignUpInput): Promise<Result<SignUpOutcome>>
   }
 
   const email = input.email.trim().toLowerCase();
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { ok: false, error: 'Enter a valid email.' };
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return { ok: false, error: 'Enter a valid email.', field: 'email' };
+  }
 
   const username = validateUsername(input.username);
   if (!username.ok) return username;
 
   if (input.password.length < 8) {
-    return { ok: false, error: 'Password must be at least 8 characters.' };
+    return { ok: false, error: 'Password must be at least 8 characters.', field: 'password' };
   }
-  if (!input.display_name.trim()) return { ok: false, error: 'Add a display name.' };
+  if (!input.display_name.trim()) {
+    return { ok: false, error: 'Add a display name.', field: 'display_name' };
+  }
   if (input.interests.length === 0) {
-    return { ok: false, error: 'Pick at least one thing you are into.' };
+    return { ok: false, error: 'Pick at least one thing you are into.', field: 'interests' };
   }
 
   // Friendly check first; the unique index is what actually guarantees it.
   if (!(await isUsernameAvailable(username.value))) {
-    return { ok: false, error: 'That username is taken.' };
+    return { ok: false, error: 'That username is taken.', field: 'username' };
   }
 
   const supabase = await createAuthClient();
@@ -109,10 +130,14 @@ export async function signUp(input: SignUpInput): Promise<Result<SignUpOutcome>>
   if (error) {
     const message = error.message.toLowerCase();
     if (message.includes('username_taken') || message.includes('unique')) {
-      return { ok: false, error: 'That username is taken.' };
+      return { ok: false, error: 'That username is taken.', field: 'username' };
     }
     if (message.includes('already registered') || message.includes('already been registered')) {
-      return { ok: false, error: 'That email already has an account. Try signing in.' };
+      return {
+        ok: false,
+        error: 'That email already has an account. Try signing in.',
+        field: 'email',
+      };
     }
     return { ok: false, error: error.message };
   }
