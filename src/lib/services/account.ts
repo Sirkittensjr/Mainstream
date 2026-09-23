@@ -1,5 +1,6 @@
 import 'server-only';
 import { db, isMissingColumn, storageIsDurable } from '@/lib/db';
+import { refreshCommunity } from './community-cache';
 import { DAY } from '@/lib/time';
 import { AUTH_NOT_CONFIGURED, authConfigured } from '@/lib/supabase/config';
 import { createAdminAuthClient, createAuthClient } from '@/lib/supabase/server';
@@ -122,6 +123,7 @@ export async function changeUsername(
       username,
       username_changed_at: new Date(now).toISOString(),
     });
+    refreshCommunity();
   } catch (error) {
     const message = error instanceof Error ? error.message.toLowerCase() : '';
     if (message.includes('unique') || message.includes('duplicate')) {
@@ -302,7 +304,10 @@ export async function ensureProfile(
   };
 
   try {
-    return await store.insert('users', row);
+    const created = await store.insert('users', row);
+    // A new account changes who is in the rankings and the suggestions.
+    refreshCommunity();
+    return created;
   } catch (error) {
     // A database that predates migration 0003 has no `username_changed_at`.
     // Refusing to create the profile over a column that only the username
@@ -452,6 +457,7 @@ export async function deleteAccount(userId: string): Promise<void> {
   const admin = createAdminAuthClient();
   if (admin) await admin.auth.admin.deleteUser(userId);
   await signOut();
+  refreshCommunity();
 }
 
 /**

@@ -29,6 +29,16 @@ const TABLES = [
 ];
 const data = Object.fromEntries(TABLES.map((name) => [name, []]));
 
+/**
+ * What the app asked for, so a page's cost can be counted rather than guessed.
+ *
+ * Every REST request is recorded with the table, the filters and how many rows
+ * came back. `GET /__stats` returns the tally; `POST /__stats/reset` clears it.
+ * This is how the performance work found its targets.
+ */
+let log = [];
+let recording = false;
+
 const json = (res, status, body) =>
   res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 
@@ -100,9 +110,31 @@ function rest(req, res, url) {
   if (req.method === 'GET') {
     const rows = filtered(table, url.searchParams, res);
     if (rows === null) return undefined;
+    // Paging arrives either as a Range header or as offset/limit parameters,
+    // depending on how the client was built. Honour both, or a page that asks
+    // for 1000 rows appears to receive the whole table.
     const range = /bytes=(\d+)-(\d+)/.exec(req.headers.range ?? '')
       ?? /^(\d+)-(\d+)$/.exec(req.headers.range ?? '');
-    const paged = range ? rows.slice(Number(range[1]), Number(range[2]) + 1) : rows;
+    const offset = Number(url.searchParams.get('offset') ?? '0');
+    const limit = url.searchParams.has('limit')
+      ? Number(url.searchParams.get('limit'))
+      : null;
+    const paged = range
+      ? rows.slice(Number(range[1]), Number(range[2]) + 1)
+      : limit !== null
+        ? rows.slice(offset, offset + limit)
+        : rows.slice(offset);
+    if (recording) {
+      log.push({
+        table,
+        filters: [...url.searchParams]
+          .filter(([k]) => !['select', 'order'].includes(k))
+          .map(([k, v]) => `${k}=${v}`)
+          .join('&'),
+        rows: paged.length,
+        scanned: rows.length,
+      });
+    }
     return respond(req, res, paged);
   }
 
@@ -133,6 +165,28 @@ function rest(req, res, url) {
 
 createServer((req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
+
+  if (url.pathname === '/__stats/reset' && req.method === 'POST') {
+    log = [];
+    recording = true;
+    return json(res, 200, { recording: true });
+  }
+  if (url.pathname === '/__stats') {
+    const byTable = {};
+    for (const entry of log) {
+      const t = (byTable[entry.table] ??= { queries: 0, rows: 0, scanned: 0, filters: {} });
+      t.queries += 1;
+      t.rows += entry.rows;
+      t.scanned += entry.scanned;
+      t.filters[entry.filters || '(whole table)'] =
+        (t.filters[entry.filters || '(whole table)'] ?? 0) + 1;
+    }
+    return json(res, 200, {
+      totalQueries: log.length,
+      totalRows: log.reduce((sum, e) => sum + e.rows, 0),
+      byTable,
+    });
+  }
 
   // A back door for the test harness to seed rows the app has no UI for.
   if (url.pathname === '/__seed' && req.method === 'POST') {

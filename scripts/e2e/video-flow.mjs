@@ -272,7 +272,23 @@ const run = async () => {
   const fit = await player.evaluate((el) => getComputedStyle(el).objectFit);
   check('18. the video is contained, never stretched or cropped', fit === 'contain', `object-fit: ${fit}`);
 
-  const shape = await player.evaluate((el) => {
+  // A video with a poster does not fetch its own metadata until somebody
+  // presses play, which is the point — so ask for it before comparing.
+  check(
+    'a video in a feed does not download itself before it is played',
+    (await player.getAttribute('preload')) === 'none',
+    `preload=${await player.getAttribute('preload')}`,
+  );
+  const shape = await player.evaluate(async (el) => {
+    if (!el.videoWidth) {
+      el.preload = 'metadata';
+      el.load();
+      await new Promise((resolve) => {
+        if (el.readyState >= 1) return resolve();
+        el.addEventListener('loadedmetadata', resolve, { once: true });
+        setTimeout(resolve, 6000);
+      });
+    }
     const box = el.getBoundingClientRect();
     return { boxRatio: box.width / box.height, videoRatio: el.videoWidth / el.videoHeight };
   });
@@ -487,7 +503,14 @@ const run = async () => {
     A.page.waitForURL(/\/post\//, { timeout: 30000 }),
     A.page.locator('form button[type=submit]').last().click(),
   ]);
-  check('22. a photo post still works', (await A.page.locator('article img[src*="/api/media/"], article img[src*="/storage/"]').count()) > 0);
+  // Photos are served through Next's optimiser now, so the src is a
+  // /_next/image URL pointing at the stored file rather than the file itself.
+  check(
+    '22. a photo post still works',
+    (await A.page
+      .locator('article img[src*="/api/media/"], article img[src*="/storage/"], article img[src*="_next/image"]')
+      .count()) > 0,
+  );
 
   await browser.close();
   console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);

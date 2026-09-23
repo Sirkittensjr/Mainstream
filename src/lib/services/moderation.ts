@@ -1,5 +1,6 @@
 import 'server-only';
 import { db } from '@/lib/db';
+import { refreshCommunity } from './community-cache';
 import { newId } from '@/lib/ids';
 import type { ID, PublicUser, Report, ReportTarget, UserStatus } from '@/lib/types';
 import { toPublicUser } from './users';
@@ -101,10 +102,12 @@ export async function resolveReport(
 
 export async function removePost(postId: ID, reason: string): Promise<void> {
   await db().update('posts', postId, { removed: true, removed_reason: reason });
+  refreshCommunity();
 }
 
 export async function restorePost(postId: ID): Promise<void> {
   await db().update('posts', postId, { removed: false, removed_reason: null });
+  refreshCommunity();
 }
 
 export async function removeComment(commentId: ID): Promise<void> {
@@ -117,4 +120,5 @@ export async function setUserStatus(
   reason: string,
 ): Promise<void> {
   await db().update('users', userId, { status, status_reason: reason || null });
+  refreshCommunity();
 }

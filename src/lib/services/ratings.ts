@@ -1,6 +1,7 @@
 import 'server-only';
 import { cache } from 'react';
 import { db } from '@/lib/db';
+import { communityCache, refreshCommunity } from './community-cache';
 import { newId } from '@/lib/ids';
 import {
   MIN_VOTES_FOR_RANKING,
@@ -81,10 +82,28 @@ const toSamples = (ratings: Rating[]): WeightedSample[] =>
   ratings.map((rating) => ({ score: rating.score, weight: rating.weight }));
 
 /**
- * Every rating on the platform, aggregated in one pass and cached per request
- * so a page that shows a feed, a sidebar and a ranking computes it once.
+ * The same aggregate, in a shape a cache can hold.
+ *
+ * Maps do not survive being serialised, so the cached layer speaks entries and
+ * the Maps are rebuilt per request — which costs a few thousand array writes
+ * rather than a few thousand database rows.
  */
-export const ratingsIndex = cache(async (): Promise<RatingsIndex> => {
+interface StoredIndex {
+  posts: [ID, PostRatingSummary][];
+  users: [ID, UserRatingSummary][];
+  platformMean: number;
+}
+
+/**
+ * Every rating on the platform, aggregated in one pass.
+ *
+ * Held across requests rather than recomputed for each one: it reads the whole
+ * ratings table, and the answer is identical for every visitor, so computing
+ * it per request was the single largest source of database traffic on the
+ * site. Any rating, post or account change refreshes it immediately — see
+ * community-cache.ts.
+ */
+const storedIndex = communityCache('ratings-index', async (): Promise<StoredIndex> => {
   const store = db();
   const [posts, ratings, users] = await Promise.all([
     store.query('posts'),
@@ -179,7 +198,21 @@ export const ratingsIndex = cache(async (): Promise<RatingsIndex> => {
     });
   }
 
-  return { posts: postSummaries, users: userSummaries, platformMean };
+  return {
+    posts: [...postSummaries.entries()],
+    users: [...userSummaries.entries()],
+    platformMean,
+  };
+});
+
+/** Per request, so one page rebuilds the Maps once however often it asks. */
+export const ratingsIndex = cache(async (): Promise<RatingsIndex> => {
+  const stored = await storedIndex();
+  return {
+    posts: new Map(stored.posts),
+    users: new Map(stored.users),
+    platformMean: stored.platformMean,
+  };
 });
 
 function emptyUser(): UserRatingSummary {
@@ -343,5 +376,6 @@ export async function submitRating(input: SubmitRatingInput): Promise<SubmitResu
         : `@${rater.username} rated your profile ${score}/10`,
   });
 
+  refreshCommunity();
   return { ok: true, score, updated: false };
 }

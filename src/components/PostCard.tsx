@@ -1,10 +1,12 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { likeAction } from '@/app/actions';
 import { formatCount } from '@/lib/format';
+import { isVectorImage } from '@/lib/image';
 import { formatVotes } from '@/lib/ratings';
 import { timeAgo } from '@/lib/time';
 import { VideoPlayer } from './VideoPlayer';
@@ -271,13 +273,24 @@ function MediaStrip({ media, postId }: { media: Media[]; postId: string }) {
             {item.kind === 'video' ? (
               <VideoPlayer media={item} />
             ) : (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={item.url}
-                alt=""
-                loading="lazy"
-                className="aspect-[4/5] max-h-[68vh] w-full rounded-2xl bg-ink-850 object-cover"
-              />
+              // Sized to the column it lands in rather than to whatever came
+              // off the camera: a feed of full-resolution phone photos is the
+              // single heaviest thing a phone has to download here.
+              <div className="relative aspect-[4/5] max-h-[68vh] w-full overflow-hidden rounded-2xl bg-ink-850">
+                <Image
+                  src={item.url}
+                  alt=""
+                  fill
+                  sizes="(max-width: 640px) 100vw, (max-width: 1024px) 640px, 600px"
+                  // The first card is usually on screen before anything is
+                  // scrolled, so it is worth fetching straight away; the rest
+                  // wait until they are approached.
+                  priority={i === 0 && index === 0}
+                  loading={i === 0 && index === 0 ? undefined : 'lazy'}
+                  unoptimized={isVectorImage(item.url)}
+                  className="h-full w-full object-cover"
+                />
+              </div>
             )}
           </div>
         ))}

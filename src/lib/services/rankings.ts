@@ -1,10 +1,11 @@
 import 'server-only';
 import { cache } from 'react';
 import { db } from '@/lib/db';
+import { communityCache } from './community-cache';
 import { MIN_VOTES_FOR_RANKING, type Trend } from '@/lib/ratings';
 import type { Category, ID, PublicUser } from '@/lib/types';
 import { ratingsIndex } from './ratings';
-import { toPublicUser } from './users';
+import { postCountsByAuthor, toPublicUser } from './users';
 
 export type RankBoard = 'overall' | 'recent';
 
@@ -56,7 +57,7 @@ interface Candidate {
  * Ordering is by the confidence-adjusted score from src/lib/ratings.ts, never
  * by follower count and never by a raw average — see that file for why.
  */
-const candidates = cache(async (): Promise<Candidate[]> => {
+const loadCandidates = communityCache('ranking-candidates', async (): Promise<Candidate[]> => {
   const store = db();
   const [users, posts, follows, index] = await Promise.all([
     store.query('users', { where: { status: 'active' } }),
@@ -101,6 +102,16 @@ const candidates = cache(async (): Promise<Candidate[]> => {
     };
   });
 });
+
+/**
+ * Everyone eligible for a ranking.
+ *
+ * Shared across requests as well as within one: it reads every active account,
+ * every visible post and the whole follow graph to rank the platform, and that
+ * leaderboard is the same for everybody. A follow, a post or a rating
+ * refreshes it; see community-cache.ts.
+ */
+const candidates = cache(loadCandidates);
 
 export interface RankingOptions {
   board: RankBoard;
@@ -202,16 +213,8 @@ export async function newPeople({
   viewerId: ID | null;
   limit?: number;
 }): Promise<NewPerson[]> {
-  const store = db();
-  const [list, posts] = await Promise.all([
-    candidates(),
-    store.query('posts', { where: { removed: false } }),
-  ]);
-
-  const postCounts = new Map<ID, number>();
-  for (const post of posts) {
-    postCounts.set(post.author_id, (postCounts.get(post.author_id) ?? 0) + 1);
-  }
+  const [list, counts] = await Promise.all([candidates(), postCountsByAuthor()]);
+  const postCounts = new Map<ID, number>(counts);
 
   return list
     .filter((entry) => !entry.rankable && entry.user.id !== viewerId)
