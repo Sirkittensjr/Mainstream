@@ -211,6 +211,16 @@ export function VideoIcon(props: IconProps) {
   );
 }
 
+/** The Videos tab: a frame with a play in it. */
+export function ReelIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="3" y="3.5" width="18" height="17" rx="4.5" />
+      <path d="M10 9.2v6l5-3z" fill="currentColor" />
+    </svg>
+  );
+}
+
 export function RecordIcon(props: IconProps) {
   return (
     <svg {...base(props)}>

@@ -120,3 +120,13 @@ export function sanitiseMedia(input: unknown, max = 6): Media[] {
 export function sanitiseAvatarUrl(input: unknown): string | null {
   return typeof input === 'string' && isOwnMediaUrl(input) ? input : null;
 }
+
+/**
+ * The video a post leads with, if it has one.
+ *
+ * A post can carry a mix of pictures and clips; the Videos feed plays the
+ * first clip and leaves the rest of the post to the post page.
+ */
+export function firstVideo(media: Media[]): Media | null {
+  return media.find((item) => item.kind === 'video') ?? null;
+}

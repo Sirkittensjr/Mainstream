@@ -10,6 +10,7 @@ import {
   CompassIcon,
   HomeIcon,
   PlusIcon,
+  ReelIcon,
   SearchIcon,
   ShieldIcon,
   UserIcon,
@@ -27,8 +28,9 @@ export interface NavUser {
 
 const PRIMARY = [
   { href: '/home', label: 'Home', icon: HomeIcon },
-  { href: '/discover', label: 'Discover', icon: CompassIcon },
+  { href: '/videos', label: 'Videos', icon: ReelIcon },
   { href: '/create', label: 'Create', icon: PlusIcon },
+  { href: '/discover', label: 'Discover', icon: CompassIcon },
   { href: '/notifications', label: 'Alerts', icon: BellIcon },
 ] as const;
 
@@ -104,7 +106,7 @@ function NavTab({
     <Link
       href={href}
       aria-current={active ? 'page' : undefined}
-      className={`flex w-16 flex-col items-center gap-1 py-2 text-[10px] font-semibold tracking-wide transition ${
+      className={`flex w-[3.25rem] flex-col items-center gap-1 py-2 text-[10px] font-semibold tracking-wide transition ${
         active ? 'text-white' : 'text-white/40'
       }`}
     >
@@ -119,6 +121,7 @@ export function Sidebar({ user }: { user: NavUser | null }) {
   const pathname = usePathname();
   const items = [
     { href: '/home', label: 'Home', icon: HomeIcon as typeof HomeIcon },
+    { href: '/videos', label: 'Videos', icon: ReelIcon },
     { href: '/discover', label: 'Discover', icon: CompassIcon },
     { href: '/create', label: 'Create', icon: PlusIcon },
     { href: '/search', label: 'Search', icon: SearchIcon },

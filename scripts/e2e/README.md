@@ -248,7 +248,31 @@ they were fixed:
 It also covers the block rule — a blocked account leaves both the notification
 list and the follower list — and the phone layout.
 
-### 11. Running against PostgREST — `postgrest-stub.mjs`
+### 11. The Videos feed — `videos-flow.mjs`
+
+The full-screen video experience, with four real video posts made through the
+real editor by two accounts and watched by a third. It needs the same fixtures
+as `video-flow` and an EMPTY store.
+
+```bash
+node scripts/e2e/make-video-fixtures.mjs /tmp/fay-video-fixtures   # cached
+
+STUB_PORT=54321 node scripts/e2e/gotrue-stub.mjs &
+npm run build && npm start &
+FIXTURES=/tmp/fay-video-fixtures node scripts/e2e/videos-flow.mjs
+```
+
+The checks worth keeping are the ones a screenshot cannot make, all read off
+the DOM rather than inferred: how many `<video>` elements exist at all (two,
+for four slides — the rest are posters), which one is playing (exactly one,
+the one on screen), what the other one is allowed to preload, that scrolling
+pauses and rewinds what you left, and that each clip's `videoWidth /
+videoHeight` still matches the file that was uploaded — 9:16, 16:9 and 1:1 all
+survive. Then the ordering: a liked video leads a newer one, a brand-new
+account's first clip with no likes, no ratings and no followers still lands on
+the first screenful, and a blocked account's videos disappear.
+
+### 12. Running against PostgREST — `postgrest-stub.mjs`
 
 Every browser suite here runs on the local JSON driver. Production does not,
 and the last two production failures were both Supabase-only — a `where`
@@ -278,7 +302,7 @@ production. `POST /__seed` takes `{table: [rows]}` for state the app has no UI
 for — a profile with sixty followers, say — and `GET /__dump` returns
 everything it holds.
 
-### 12. What each page costs — `perf-report.mjs` + `seed-perf.py`
+### 13. What each page costs — `perf-report.mjs` + `seed-perf.py`
 
 The instrumented stand-in counts every query and every row a page asks for, so
 performance work can be aimed rather than guessed at. `seed-perf.py` fills it
@@ -312,8 +336,8 @@ it:
 
 ### Which store each suite wants
 
-`auth-flow`, `video-flow`, `messaging-flow` and `social-navigation` create
-their own accounts and want an EMPTY store
+`auth-flow`, `video-flow`, `videos-flow`, `messaging-flow` and
+`social-navigation` create their own accounts and want an EMPTY store
 (`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and
 `social-flow` sign in as the seeded demo accounts and check against them —
 `signup-form-state` takes `tommy` as its already-taken username — so those need
