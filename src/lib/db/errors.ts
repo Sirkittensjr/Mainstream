@@ -25,8 +25,26 @@ export class MissingRelationError extends Error {
   }
 }
 
+/**
+ * Deliberately not `instanceof` alone.
+ *
+ * The bundler is free to put this module in more than one server chunk, and
+ * when it does, the class the driver throws is a different class object from
+ * the one the service that catches it imported — `instanceof` is then false
+ * and a missing column becomes an unhandled 500 instead of a feature switching
+ * itself off. That is exactly what happened to the Top 3 save the first time
+ * it met a database without its column, while the same guard one chunk over
+ * worked fine. The name is set from a string literal in the constructor and
+ * survives minification, so it identifies the error whichever copy built it.
+ */
 export function isMissingRelation(error: unknown): error is MissingRelationError {
-  return error instanceof MissingRelationError;
+  if (error instanceof MissingRelationError) return true;
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { name?: unknown }).name === 'MissingRelationError' &&
+    typeof (error as { table?: unknown }).table === 'string'
+  );
 }
 
 /** True when this is a missing COLUMN on the given table, rather than a missing table. */
