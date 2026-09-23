@@ -59,7 +59,7 @@ async function createAccount(browser, handle, interest, options = {}) {
 }
 
 /** Posts one fixture as a video post and returns its post id. */
-async function postVideo(page, file, caption, category) {
+async function postVideo(page, file, title, category, { description = '', tags = '' } = {}) {
   await page.goto('/create', { waitUntil: 'domcontentloaded' });
   await page.locator('button[role=tab]', { hasText: 'Video' }).click();
   await page.waitForSelector('text=Start your video', { timeout: 15000 });
@@ -67,7 +67,9 @@ async function postVideo(page, file, caption, category) {
   await page.waitForSelector('li:has(video)', { timeout: 20000 });
   await page.locator('button', { hasText: 'Preview' }).last().click();
   await page.waitForSelector('text=Ready to post', { timeout: 180000 });
-  await page.fill('#video-caption', caption);
+  await page.fill('#video-title', title);
+  if (description) await page.fill('#video-caption', description);
+  if (tags) await page.fill('#video-tags', tags);
   await page.selectOption('#video-category', category);
   await page.locator('button', { hasText: 'Post video' }).click();
   await page.waitForURL(/\/post\//, { timeout: 90000 });
@@ -117,11 +119,46 @@ const run = async () => {
   /* ============================== the posts ============================== */
   section('SETUP — four video posts and one that is not a video');
 
-  const portrait = await postVideo(A.page, 'portrait.webm', `tall clip ${stamp}`, 'Music');
+  const portrait = await postVideo(A.page, 'portrait.webm', `tall clip ${stamp}`, 'Music', {
+    description: `a description for the tall one ${stamp}`,
+    tags: `vertical${stamp}`,
+  });
   const square = await postVideo(A.page, 'square.webm', `square clip ${stamp}`, 'Music');
   const landscape = await postVideo(B.page, 'landscape.webm', `wide clip ${stamp}`, 'Art');
   const tiny = await postVideo(B.page, 'tiny.webm', `little clip ${stamp}`, 'Art');
   check('four video posts exist', [portrait, square, landscape, tiny].every(Boolean));
+
+  /* ======================== title, tags and limits ======================= */
+  section('CREATE — the title, the tags and the two-minute rule');
+
+  await A.page.goto(`/post/${portrait}`, { waitUntil: 'domcontentloaded' });
+  const posted = await A.page.locator('article').first().innerText();
+  check('T. the title is what the post leads with', posted.includes(`tall clip ${stamp}`));
+  check('T. the description is kept as well', posted.includes(`a description for the tall one ${stamp}`));
+  // Tags are not decoration: they are what search matches on, so that is
+  // where "the tags work" is actually answered.
+  await A.page.goto(`/search?q=vertical${stamp}`, { waitUntil: 'domcontentloaded' });
+  check(
+    'T. the tag is stored and searchable',
+    (await A.page.locator('body').innerText()).includes(`tall clip ${stamp}`),
+  );
+
+  await A.page.goto('/create', { waitUntil: 'domcontentloaded' });
+  await A.page.locator('button[role=tab]', { hasText: 'Video' }).click();
+  await A.page.waitForSelector('text=Start your video', { timeout: 15000 });
+  check(
+    'T. the editor says two minutes, not three',
+    /2 minutes/.test(await A.page.locator('body').innerText()),
+  );
+  await A.page.locator('input[type=file]').setInputFiles(fixture('toolong.webm'));
+  await A.page.waitForTimeout(2500);
+  const refusal = await A.page.locator('p.text-fay-soft').innerText().catch(() => '');
+  check('T. a video over two minutes is refused', (await A.page.locator('li:has(video)').count()) === 0);
+  check(
+    'T. and the person is told why, not silently cut off',
+    /room is left|Trim/.test(refusal),
+    refusal.slice(0, 90),
+  );
 
   await A.page.goto('/create', { waitUntil: 'domcontentloaded' });
   const textCaption = `not a video at all ${stamp}`;
@@ -350,7 +387,10 @@ const run = async () => {
 
   await C.page.goto('/home?tab=recommended', { waitUntil: 'domcontentloaded' });
   const home = await C.page.locator('body').innerText();
-  check('19. video posts are still normal posts in the feed', home.includes(`tall clip ${stamp}`) || home.includes(`wide clip ${stamp}`));
+  check(
+    '19. one video post is in the normal feed and the Videos feed both',
+    home.includes(`tall clip ${stamp}`) || home.includes(`wide clip ${stamp}`),
+  );
   check('19. Videos is in the navigation', (await C.page.locator('a[href="/videos"]').count()) >= 1);
   await C.page.goto('/discover', { waitUntil: 'domcontentloaded' });
   check('19. Discover still works', (await C.page.locator('a[href^="/post/"]').count()) > 0);

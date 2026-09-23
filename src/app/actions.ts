@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { CATEGORIES, type Category } from '@/lib/types';
 import { sanitiseAvatarUrl, sanitiseMedia } from '@/lib/media';
+import { PROFILE_DEFAULT, isProfileColorKey } from '@/lib/profile-theme';
 import { checkLimit } from '@/lib/services/rate-limit';
 import { getViewer, requireAdmin, requireViewer } from '@/lib/session';
 import {
@@ -23,7 +24,14 @@ import {
   setUserStatus,
   submitReport,
 } from '@/lib/services/moderation';
-import { blockUser, follow, unblockUser, unfollow, updateProfile } from '@/lib/services/users';
+import {
+  blockUser,
+  follow,
+  unblockUser,
+  unfollow,
+  updateProfile,
+  updateProfileColours,
+} from '@/lib/services/users';
 import { changeUsername, deleteAccount, signOut } from '@/lib/services/account';
 import { send as sendMessage, markThreadRead } from '@/lib/services/messages';
 import { getUserByUsername } from '@/lib/services/users';
@@ -179,6 +187,7 @@ export async function createVideoPostAction(input: CreateVideoPostInput) {
   });
 
   revalidatePath('/home');
+  revalidatePath('/videos');
   revalidatePath('/discover');
   revalidatePath(`/u/${viewer.username}`);
   return { postId: post.id };
@@ -312,6 +321,36 @@ export async function updateProfileAction(_prev: unknown, formData: FormData) {
   revalidatePath('/settings');
   revalidatePath(`/u/${viewer.username}`);
   return { ok: true as const, message: 'Profile updated.' };
+}
+
+/**
+ * The two colours somebody painted their profile in.
+ *
+ * Only keys from the palette are stored, so nothing a caller sends can reach a
+ * stylesheet — an unknown key is refused here and would resolve to the default
+ * on the way out anyway.
+ */
+export async function updateProfileColoursAction(background: string, box: string) {
+  const viewer = await requireViewer('/settings');
+  if (!isProfileColorKey(background) || !isProfileColorKey(box)) {
+    return { ok: false as const, error: 'That is not one of the colours.' };
+  }
+
+  const saved = await updateProfileColours(
+    viewer.id,
+    background === PROFILE_DEFAULT ? null : background,
+    box === PROFILE_DEFAULT ? null : box,
+  );
+  if (!saved) {
+    return {
+      ok: false as const,
+      error: 'Profile colours are not switched on for this deployment yet.',
+    };
+  }
+
+  revalidatePath('/settings');
+  revalidatePath(`/u/${viewer.username}`);
+  return { ok: true as const };
 }
 
 export async function deleteAccountAction(confirmation: string) {

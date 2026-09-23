@@ -75,6 +75,7 @@ export function VideoStudio() {
   const [finished, setFinished] = useState<Finished | null>(null);
   const [thumbnailAt, setThumbnailAt] = useState(0);
   const [thumbnail, setThumbnail] = useState<string | null>(null);
+  const [title, setTitle] = useState('');
   const [caption, setCaption] = useState('');
   const [category, setCategory] = useState<Category>('Life');
   const [tags, setTags] = useState('');
@@ -294,7 +295,11 @@ export function VideoStudio() {
 
       const result = await createVideoPostAction({
         media: { ...finished.media, ...(poster ? { poster } : {}) },
-        caption,
+        // A video post is an ordinary FayTarra post, so the title is the first
+        // line of its caption rather than a second field in the database that
+        // only videos would ever use. It is what the feed, the Videos feed,
+        // search and the post page all already show.
+        caption: [title.trim(), caption.trim()].filter(Boolean).join('\n\n'),
         category,
         tags,
       });
@@ -415,8 +420,25 @@ export function VideoStudio() {
         </div>
 
         <div>
+          <label className="label" htmlFor="video-title">
+            Title
+          </label>
+          <input
+            id="video-title"
+            maxLength={120}
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="What is this video?"
+            className="mt-2 w-full text-base"
+          />
+          <p className="mt-1 text-xs text-white/40">
+            The first thing people read, in the feed and in Videos.
+          </p>
+        </div>
+
+        <div>
           <label className="label" htmlFor="video-caption">
-            Caption
+            Description (optional)
           </label>
           <textarea
             id="video-caption"
@@ -424,7 +446,7 @@ export function VideoStudio() {
             maxLength={1200}
             value={caption}
             onChange={(event) => setCaption(event.target.value)}
-            placeholder="Say something about it. @mention anyone you want to bring in."
+            placeholder="Say more about it. @mention anyone you want to bring in."
             className="mt-2 w-full text-base"
           />
         </div>

@@ -1,5 +1,5 @@
 import 'server-only';
-import { db } from '@/lib/db';
+import { db, isMissingRelation } from '@/lib/db';
 import { communityCache, refreshCommunity } from './community-cache';
 import { newId } from '@/lib/ids';
 import type { Category, ID, PublicUser, User } from '@/lib/types';
@@ -268,6 +268,9 @@ export interface UpdateProfileInput {
   avatar_url?: string | null;
   location?: string | null;
   interests?: Category[];
+  /** Profile colours. Only present once migration 0005 has run. */
+  profile_bg?: string | null;
+  profile_box?: string | null;
 }
 
 export async function updateProfile(userId: ID, input: UpdateProfileInput): Promise<void> {
@@ -275,6 +278,52 @@ export async function updateProfile(userId: ID, input: UpdateProfileInput): Prom
   // A changed name or picture shows up in the rankings, which are cached.
   refreshCommunity();
 }
+
+/**
+ * Saves the two colours somebody picked for their profile.
+ *
+ * Kept apart from updateProfile on purpose. These are the only two columns
+ * added by migration 0005, so a deployment that has not run it yet has to be
+ * able to save a display name, a bio and an avatar as it always could —
+ * putting the colours in the same UPDATE would mean one missing column costs
+ * somebody the rest of their profile edit.
+ *
+ * Returns false when the columns are not there. The caller says so; nothing
+ * else changes, and nothing is silently swallowed: any other failure throws.
+ */
+export async function updateProfileColours(
+  userId: ID,
+  background: string | null,
+  box: string | null,
+): Promise<boolean> {
+  try {
+    await db().update('users', userId, {
+      profile_bg: background,
+      profile_box: box,
+    } as UpdateProfileInput);
+    refreshCommunity();
+    return true;
+  } catch (error) {
+    // `users` is there but one of these two columns is not: migration 0005
+    // has not been run. A missing TABLE is a different and much larger
+    // problem, and still throws.
+    if (isMissingRelation(error) && error.table === 'users' && error.column !== null) {
+      if (!warnedAboutColours) {
+        warnedAboutColours = true;
+        console.error(
+          '[faytarra] Profile colours are switched off: this database has no `profile_bg` / ' +
+            '`profile_box` columns on `users`. Run ' +
+            'supabase/migrations/0005_profile_colours.sql against it to turn them on. ' +
+            `(${error instanceof Error ? error.message : String(error)})`,
+        );
+      }
+      return false;
+    }
+    throw error;
+  }
+}
+
+let warnedAboutColours = false;
 
 export interface SuggestedPerson {
   user: PublicUser;

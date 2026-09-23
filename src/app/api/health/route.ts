@@ -47,6 +47,8 @@ const TABLES: TableName[] = [
 /** Columns a migration adds to an existing table, and the migration that adds them. */
 const ADDED_COLUMNS: { table: TableName; column: string; migration: string }[] = [
   { table: 'users', column: 'username_changed_at', migration: '0003' },
+  { table: 'users', column: 'profile_bg', migration: '0005' },
+  { table: 'users', column: 'profile_box', migration: '0005' },
 ];
 
 const MIGRATION_FOR_TABLE: Partial<Record<TableName, string>> = { messages: '0003' };
@@ -59,11 +61,15 @@ async function probeSchema(): Promise<{
   const missingTables: string[] = [];
   const missingColumns: string[] = [];
   const migrations = new Set<string>();
+  // Only Supabase has a schema to be behind. The local JSON driver stores
+  // whatever it is handed, so a row without a column is a row that was written
+  // before the feature existed, not a migration nobody ran.
+  const columnsMatter = supabaseConfigured();
 
   for (const table of TABLES) {
     try {
       const rows = await db().query(table, { limit: 1 });
-      for (const { table: owner, column, migration } of ADDED_COLUMNS) {
+      for (const { table: owner, column, migration } of columnsMatter ? ADDED_COLUMNS : []) {
         // Only a row can tell us a column is absent; an empty table is not
         // evidence either way, so it is left unreported rather than guessed at.
         if (owner !== table || rows.length === 0) continue;

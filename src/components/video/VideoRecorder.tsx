@@ -90,7 +90,7 @@ export function VideoRecorder({
     return stopStream;
   }, [open, stopStream]);
 
-  // The clock, and the hard stop when the three minutes run out.
+  // The clock, and the hard stop when the time runs out.
   useEffect(() => {
     if (status !== 'recording') return;
     const timer = window.setInterval(() => {

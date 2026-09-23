@@ -13,7 +13,7 @@ export const MAX_VIDEO_BYTES = 250 * 1024 * 1024;
 export const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 
 /** The longest finished post. Clips can be combined up to this, never past it. */
-export const MAX_VIDEO_SECONDS = 180;
+export const MAX_VIDEO_SECONDS = 120;
 
 /**
  * Slack on the server's duration check.
@@ -21,11 +21,11 @@ export const MAX_VIDEO_SECONDS = 180;
  * A WebM written by MediaRecorder carries no duration, so the server reads the
  * last cluster's timestamp instead. That is accurate to about one cluster, and
  * the error runs both ways: a file usually measures slightly SHORT, and an MP4
- * rounding through a timescale can measure slightly long. Refusing a 180.4s
- * file the editor believes is 180s would be a bug rather than a rule, so a
+ * rounding through a timescale can measure slightly long. Refusing a 120.4s
+ * file the editor believes is 120s would be a bug rather than a rule, so a
  * couple of seconds of container imprecision is allowed.
  *
- * The effective ceiling is therefore a few seconds past three minutes. That is
+ * The effective ceiling is therefore a few seconds past two minutes. That is
  * a deliberate trade: it is nowhere near enough to fit anything a person would
  * notice, and it is the difference between a limit and a trap.
  */

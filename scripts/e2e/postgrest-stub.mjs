@@ -98,6 +98,11 @@ function filtered(table, params, res) {
   return rows;
 }
 
+/** Columns to pretend this database does not have. See the PATCH branch. */
+const MISSING_COLUMNS = new Set(
+  (process.env.MISSING_COLUMNS ?? '').split(',').map((entry) => entry.trim()).filter(Boolean),
+);
+
 function rest(req, res, url) {
   const table = url.pathname.replace('/rest/v1/', '').split('?')[0];
   if (!TABLES.includes(table)) {
@@ -148,6 +153,20 @@ function rest(req, res, url) {
       return respond(req, res, rows);
     }
     if (req.method === 'PATCH') {
+      // A column this database does not have. PostgREST answers PGRST204 and
+      // names it, and the app is expected to tell that apart from a broken
+      // query — which is how a deployment running behind a migration keeps
+      // working instead of returning 500. Set MISSING_COLUMNS to rehearse it,
+      // e.g. MISSING_COLUMNS=users.profile_bg,users.profile_box
+      const absent = Object.keys(payload ?? {}).find((column) =>
+        MISSING_COLUMNS.has(`${table}.${column}`),
+      );
+      if (absent) {
+        return json(res, 400, {
+          code: 'PGRST204',
+          message: `Could not find the '${absent}' column of '${table}' in the schema cache`,
+        });
+      }
       const matching = filtered(table, url.searchParams, res);
       if (matching === null) return undefined;
       for (const row of matching) Object.assign(row, payload);

@@ -58,7 +58,7 @@ export const isOverLength = (clips: Clip[]): boolean => totalDuration(clips) > M
  * Whether another clip of this length fits.
  *
  * The answer is never "yes, and we will cut it for you". Somebody who films
- * three minutes of something should be told it does not fit and left in
+ * five minutes of something should be told it does not fit and left in
  * control of which part goes — silently truncating their video is the one
  * outcome nobody wants.
  */

@@ -1,6 +1,7 @@
 import 'server-only';
 import { db, isMissingRelation } from '@/lib/db';
 import type { QueryOptions } from '@/lib/db';
+import { UNREAD_CAP } from '@/lib/format';
 import { newId } from '@/lib/ids';
 import type { ID, Message, PublicUser, User } from '@/lib/types';
 import { checkLimit } from './rate-limit';
@@ -265,10 +266,18 @@ export async function markThreadRead(viewerId: ID, otherId: ID): Promise<number>
   return unread.length;
 }
 
-/** Unread message count for the navigation badge. */
+/**
+ * Unread message count for the navigation badge.
+ *
+ * Read one past the cap the badge can show, so "99+" is the only thing an
+ * unbounded inbox costs and the number below it is always the real one.
+ */
 export async function unreadMessageCount(userId: ID): Promise<number> {
   // Only what this person RECEIVED and has not opened. Their own messages are
   // never in this set, because they are never the recipient of their own row.
-  const rows = await read({ where: { recipient_id: userId, read_at: null }, limit: 50 });
+  const rows = await read({
+    where: { recipient_id: userId, read_at: null },
+    limit: UNREAD_CAP + 1,
+  });
   return rows.length;
 }

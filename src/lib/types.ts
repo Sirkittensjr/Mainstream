@@ -70,6 +70,14 @@ export interface User {
   trusted: boolean;
   /** When the @username last changed. Null means it never has. */
   username_changed_at: ISODate | null;
+  /**
+   * What this person painted their profile in: a key from
+   * src/lib/profile-theme.ts, or null for the way FayTarra looks everywhere
+   * else. Optional because a database that has not had migration 0005 run
+   * against it simply does not return these columns.
+   */
+  profile_bg?: string | null;
+  profile_box?: string | null;
   created_at: ISODate;
   last_active_at: ISODate;
 }
