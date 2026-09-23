@@ -122,8 +122,9 @@ const run = async () => {
 
   const A = await createAccount(browser, me, 'Music');
   const J = await createAccount(browser, john, 'Art');
-  const S = await createAccount(browser, sarah, 'Comedy');
-  const M = await createAccount(browser, mike, 'Gaming');
+  // Created so there is somebody to follow; their own browsers are not driven.
+  await createAccount(browser, sarah, 'Comedy');
+  await createAccount(browser, mike, 'Gaming');
   const Z = await createAccount(browser, jess, 'Food');
 
   await A.page.goto(`/u/${me}`, { waitUntil: 'domcontentloaded' });
