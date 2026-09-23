@@ -137,11 +137,18 @@ const run = async () => {
   check('T. the description is kept as well', posted.includes(`a description for the tall one ${stamp}`));
   // Tags are not decoration: they are what search matches on, so that is
   // where "the tags work" is actually answered.
-  await A.page.goto(`/search?q=vertical${stamp}`, { waitUntil: 'domcontentloaded' });
-  check(
-    'T. the tag is stored and searchable',
-    (await A.page.locator('body').innerText()).includes(`tall clip ${stamp}`),
-  );
+  //
+  // Polled rather than read once: the post list behind search is shared
+  // between visitors and held for up to a minute, so a brand new post can
+  // take a beat to appear. That is the caching this site deliberately has,
+  // not a tag that was not stored.
+  let found = false;
+  for (let attempt = 0; attempt < 12 && !found; attempt += 1) {
+    await A.page.goto(`/search?q=vertical${stamp}`, { waitUntil: 'domcontentloaded' });
+    found = (await A.page.locator('body').innerText()).includes(`tall clip ${stamp}`);
+    if (!found) await A.page.waitForTimeout(5000);
+  }
+  check('T. the tag is stored and searchable', found);
 
   await A.page.goto('/create', { waitUntil: 'domcontentloaded' });
   await A.page.locator('button[role=tab]', { hasText: 'Video' }).click();
@@ -174,6 +181,11 @@ const run = async () => {
   const errors = [];
   C.page.on('console', (message) => {
     if (message.type() === 'error') errors.push(message.text());
+  });
+  // A bare "failed to load resource" says nothing about what failed, so the
+  // URL is recorded alongside it.
+  C.page.on('response', (response) => {
+    if (response.status() >= 400) errors.push(`${response.status()} ${response.url()}`);
   });
 
   await C.page.goto('/videos', { waitUntil: 'domcontentloaded' });

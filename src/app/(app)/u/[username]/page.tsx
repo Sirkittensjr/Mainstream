@@ -9,6 +9,7 @@ import { PostList } from '@/components/PostList';
 import { LoadMore } from '@/components/LoadMore';
 import { ProfileMenu } from '@/components/ProfileMenu';
 import { RatingPill, ReactionBar } from '@/components/RatingPill';
+import { TopCreators } from '@/components/TopCreators';
 import { RateButton } from '@/components/RateSheet';
 import { formatCount } from '@/lib/format';
 import { profileSkin } from '@/lib/profile-theme';
@@ -23,6 +24,7 @@ import {
   isFollowing,
 } from '@/lib/services/users';
 import { canMessage } from '@/lib/services/messages';
+import { eligibleCreators, topCreators } from '@/lib/services/top-creators';
 import { getViewer } from '@/lib/session';
 import { formatMonthYear } from '@/lib/time';
 
@@ -61,15 +63,19 @@ export default async function ProfilePage({
   const blocked = viewer && !isSelf ? await isBlockedEitherWay(viewer.id, user.id) : false;
   if (user.status === 'banned' && !isSelf && viewer?.role !== 'admin') notFound();
 
-  const [stats, following, allPosts, rating, ranks, mine, messageable] = await Promise.all([
-    getUserStats(user.id),
-    viewer && !isSelf ? isFollowing(viewer.id, user.id) : Promise.resolve(false),
-    postsByAuthor(user.id),
-    userRating(user.id),
-    userRanks(user.id),
-    myRating(viewer?.id ?? null, 'user', user.id),
-    viewer && !isSelf ? canMessage(viewer.id, user.id) : Promise.resolve(false),
-  ]);
+  const [stats, following, allPosts, rating, ranks, mine, messageable, top, pickable] =
+    await Promise.all([
+      getUserStats(user.id),
+      viewer && !isSelf ? isFollowing(viewer.id, user.id) : Promise.resolve(false),
+      postsByAuthor(user.id),
+      userRating(user.id),
+      userRanks(user.id),
+      myRating(viewer?.id ?? null, 'user', user.id),
+      viewer && !isSelf ? canMessage(viewer.id, user.id) : Promise.resolve(false),
+      topCreators(user.id, viewer?.id ?? null),
+      // Only the owner gets the list to choose from, and only they can change it.
+      isSelf ? eligibleCreators(user.id) : Promise.resolve([]),
+    ]);
 
   const requested = Number.parseInt(show ?? '', 10);
   const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 20), 200) : 20;
@@ -200,6 +206,22 @@ export default async function ProfilePage({
               <div className="mt-4">
                 <ReactionBar reactions={topReactions(rating.reactions, 4)} />
               </div>
+            )}
+
+            {/* Directly under the rating, and deliberately small: three names
+                the owner picked, not a leaderboard. */}
+            {!blocked && (
+              <TopCreators
+                slots={top.slots}
+                owner={`@${user.username}`}
+                canEdit={isSelf}
+                options={pickable.map((person) => ({
+                  id: person.id,
+                  username: person.username,
+                  displayName: person.display_name,
+                  avatarUrl: person.avatar_url,
+                }))}
+              />
             )}
 
             <div className="mt-5 flex flex-wrap items-center gap-2">

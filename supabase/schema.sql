@@ -41,6 +41,9 @@ create table if not exists public.users (
   -- value — an unrecognised key renders as the default.
   profile_bg    text,
   profile_box   text,
+  -- The three accounts this person picked as their favourites, in order.
+  -- Null or empty means the default: the first three accounts they followed.
+  top_creators  text[],
   created_at    timestamptz not null default now(),
   last_active_at timestamptz not null default now()
 );
@@ -50,6 +53,8 @@ alter table public.users add column if not exists username_changed_at timestampt
 -- Present for databases created before profile colours existed.
 alter table public.users add column if not exists profile_bg text;
 alter table public.users add column if not exists profile_box text;
+-- Present for databases created before the Top 3 existed.
+alter table public.users add column if not exists top_creators text[];
 
 create index if not exists users_username_idx on public.users (username);
 -- Usernames are unique case-insensitively: "Tommy" must not be a second "tommy".
@@ -444,15 +449,17 @@ begin
     execute format(
       'grant select (id, username, display_name, bio, avatar_url, location, '
       'interests, role, status, status_reason, trusted, profile_bg, profile_box, '
-      'created_at, last_active_at) '
+      'top_creators, created_at, last_active_at) '
       'on public.users to %I', api_role);
   end loop;
 
   -- Only a signed-in person can change anything, and only their own profile
   -- fields. The RLS policy below is what restricts it to their own row.
   if exists (select 1 from pg_roles where rolname = 'authenticated') then
-    grant update (display_name, bio, avatar_url, location, interests, profile_bg, profile_box)
-      on public.users to authenticated;
+    grant update (
+      display_name, bio, avatar_url, location, interests,
+      profile_bg, profile_box, top_creators
+    ) on public.users to authenticated;
   end if;
 end $$;
 

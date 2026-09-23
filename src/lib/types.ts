@@ -78,6 +78,13 @@ export interface User {
    */
   profile_bg?: string | null;
   profile_box?: string | null;
+  /**
+   * The three accounts this person picked as their favourites, in their order.
+   * Empty or absent means the default: the first three accounts they followed.
+   * Optional for the same reason as the colours — migration 0006 may not have
+   * been run yet.
+   */
+  top_creators?: string[] | null;
   created_at: ISODate;
   last_active_at: ISODate;
 }

@@ -49,6 +49,7 @@ const ADDED_COLUMNS: { table: TableName; column: string; migration: string }[] =
   { table: 'users', column: 'username_changed_at', migration: '0003' },
   { table: 'users', column: 'profile_bg', migration: '0005' },
   { table: 'users', column: 'profile_box', migration: '0005' },
+  { table: 'users', column: 'top_creators', migration: '0006' },
 ];
 
 const MIGRATION_FOR_TABLE: Partial<Record<TableName, string>> = { messages: '0003' };

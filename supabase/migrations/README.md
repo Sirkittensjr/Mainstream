@@ -16,7 +16,7 @@ has never been installed.
 | Row 1 says | Run |
 | --- | --- |
 | `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including both migrations. |
-| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
+| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005` and `0006`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
 | anything between | Stop and ask. A half-installed schema needs looking at, not a migration. |
 
 If the storage bucket row shows `none`, create it in the dashboard
@@ -218,3 +218,33 @@ is not switched on. Display name, bio, avatar, location and interests keep
 saving exactly as before, because the colours are written by their own UPDATE
 rather than sharing one with the rest of the profile. `/api/health` names `0005`
 under `schema.migrations` until it has been run.
+
+---
+
+## 0006_top_creators.sql
+
+Adds the Top 3 favourite creators. Safe to run twice. **Nothing in this file is
+destructive** — no drops, no deletes, no existing row rewritten.
+
+| Step | Statement | What it touches | Risk |
+| --- | --- | --- | --- |
+| 1 | `add column if not exists top_creators text[]` on `users` | Adds one nullable column | None. Existing rows get `null`, which means the default |
+| 2 | `grant select (top_creators)` to both API roles and `grant update` to `authenticated` | Permissions only | None. Required because 0002 replaced the table grant with a column list |
+
+**The default needs no storage.** Until somebody picks for themselves, their
+Top 3 is the first three accounts they followed, read from `follows` when the
+profile renders. That is why a fourth follow never displaces anybody, and why
+the list cannot drift out of step with who they actually follow.
+
+**What it holds is account ids.** Names and pictures are looked up in `users`
+at render time, so a Top 3 survives somebody changing their @handle, and there
+is no second copy of anybody anywhere.
+
+**The follow rule is enforced on the way in and again on the way out.** Saving
+checks every id is somebody that person currently follows; rendering filters
+the stored list to who they still follow. A row written straight through the
+REST API naming a stranger therefore shows as an empty slot rather than a name.
+
+**Not running it is survivable.** Every profile still shows its default Top 3 —
+only changing it is unavailable, and the app says so rather than failing.
+`/api/health` names `0006` under `schema.migrations` until it has been run.

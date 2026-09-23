@@ -305,7 +305,31 @@ EXPECT_NO_COLOURS=1 BASE_URL=http://localhost:3100 \
   node scripts/e2e/profile-colours-flow.mjs
 ```
 
-### 13. Running against PostgREST — `postgrest-stub.mjs`
+### 13. The Top 3 creators — `top-creators-flow.mjs`
+
+Five accounts, follows made in a known order, and every answer read off the
+rendered profile. Needs an EMPTY store.
+
+```bash
+node scripts/e2e/top-creators-flow.mjs
+```
+
+The check that earns its keep is the fourth follow. The default Top 3 is
+*derived* from the follow order rather than written down when somebody follows
+their third person, so a later follow cannot displace anybody — an
+implementation that stored the three at follow time would pass every other
+check here and fail that one. It also covers picking and reordering, the order
+surviving a refresh, the same three appearing for another account, each name
+and each photo opening the right profile, unfollowing dropping somebody out of
+the Top 3 and out of the menu, filling the empty slot again, somebody staying
+in the Top 3 without following back, and the phone layout.
+
+Run it again with `EXPECT_NO_TOP_CREATORS=1` against a database that has not
+had migration 0006 applied — the stub rehearses that with
+`MISSING_COLUMNS=users.top_creators`. Profiles must still show their default
+Top 3; only changing it is unavailable, and it has to say so rather than fail.
+
+### 14. Running against PostgREST — `postgrest-stub.mjs`
 
 Every browser suite here runs on the local JSON driver. Production does not,
 and the last two production failures were both Supabase-only — a `where`
@@ -315,9 +339,11 @@ Neither could have been caught by a test that never spoke the protocol.
 This stands in for PostgREST over an in-memory dataset: `eq.`, `is.null`,
 `in.()`, Range paging, the object Accept header, and the same 400 Postgres
 returns when asked to compare a timestamp with the string "null". Set
-`MISSING_COLUMNS=users.profile_bg,users.profile_box` to make it answer PGRST204
-for a write touching those columns, which is what a database running behind a
-migration does. It proxies
+`MISSING_COLUMNS=users.profile_bg,users.profile_box` (or `users.top_creators`)
+to make it answer PGRST204 for a write touching those columns, which is what a
+database running behind a migration does. That rehearsal is what caught the
+`instanceof` in `isMissingRelation` failing across a bundler chunk boundary —
+the guard was there, and it was not being reached. It proxies
 `/auth/v1` to the GoTrue stub, so one origin serves both exactly as a real
 project does, and `/api/health` reports `driver: supabase` against it.
 
@@ -338,7 +364,7 @@ production. `POST /__seed` takes `{table: [rows]}` for state the app has no UI
 for — a profile with sixty followers, say — and `GET /__dump` returns
 everything it holds.
 
-### 14. What each page costs — `perf-report.mjs` + `seed-perf.py`
+### 15. What each page costs — `perf-report.mjs` + `seed-perf.py`
 
 The instrumented stand-in counts every query and every row a page asks for, so
 performance work can be aimed rather than guessed at. `seed-perf.py` fills it
@@ -373,8 +399,8 @@ it:
 ### Which store each suite wants
 
 `auth-flow`, `video-flow`, `videos-flow`, `messaging-flow`,
-`profile-colours-flow` and `social-navigation` create their own accounts and
-want an EMPTY store
+`profile-colours-flow`, `top-creators-flow` and `social-navigation` create
+their own accounts and want an EMPTY store
 (`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and
 `social-flow` sign in as the seeded demo accounts and check against them —
 `signup-form-state` takes `tommy` as its already-taken username — so those need

@@ -36,6 +36,7 @@ import { changeUsername, deleteAccount, signOut } from '@/lib/services/account';
 import { send as sendMessage, markThreadRead } from '@/lib/services/messages';
 import { getUserByUsername } from '@/lib/services/users';
 import { submitRating } from '@/lib/services/ratings';
+import { saveTopCreators } from '@/lib/services/top-creators';
 import { MAX_VIDEO_SECONDS, MAX_VIDEO_SECONDS_ENFORCED } from '@/lib/video/limits';
 import { setRaterTrust } from '@/lib/services/rating-integrity';
 import type { Reaction, RatingTarget } from '@/lib/types';
@@ -351,6 +352,24 @@ export async function updateProfileColoursAction(background: string, box: string
   revalidatePath('/settings');
   revalidatePath(`/u/${viewer.username}`);
   return { ok: true as const };
+}
+
+/**
+ * Somebody's Top 3, in the order they put them in.
+ *
+ * The only rule is that every id is an account they currently follow — checked
+ * in the service, not here, and not trusted from the form. There is no
+ * mutual-follow requirement and nothing about ratings or popularity: this is a
+ * personal pick.
+ */
+export async function saveTopCreatorsAction(ids: string[]) {
+  const viewer = await requireViewer('/settings');
+  const result = await saveTopCreators(
+    viewer.id,
+    ids.filter((id) => typeof id === 'string').slice(0, 3),
+  );
+  if (result.ok) revalidatePath(`/u/${viewer.username}`);
+  return result;
 }
 
 export async function deleteAccountAction(confirmation: string) {
