@@ -1,5 +1,6 @@
 import 'server-only';
 import { db } from '@/lib/db';
+import { communityCache, refreshCommunity } from './community-cache';
 import { newId } from '@/lib/ids';
 import type { Category, ID, PublicUser, User } from '@/lib/types';
 import { notify } from './notifications';
@@ -29,6 +30,36 @@ export async function getUsers(ids: ID[]): Promise<Map<ID, User>> {
   return new Map(rows.map((row) => [row.id, row]));
 }
 
+/**
+ * How many followers everybody has.
+ *
+ * One number per account, the same for every viewer, so it is counted once and
+ * shared rather than re-counted per request. It used to be asked for with the
+ * id of every post author on the page, and since a feed touches most of the
+ * platform that meant reading the entire follow graph to render one screen —
+ * measured at 2,879 rows on a 200-account database, on every page.
+ */
+const allFollowerCounts = communityCache('follower-counts', async () => {
+  const rows = await db().query('follows');
+  const counts = new Map<ID, number>();
+  for (const row of rows) counts.set(row.following_id, (counts.get(row.following_id) ?? 0) + 1);
+  return [...counts.entries()];
+});
+
+/**
+ * How many visible posts each account has.
+ *
+ * Another number that is the same for everybody. It was being arrived at by
+ * reading every post on the platform — 600 rows to put a "3 posts" label on a
+ * dozen suggestion cards.
+ */
+export const postCountsByAuthor = communityCache('post-counts', async () => {
+  const posts = await db().query('posts', { where: { removed: false } });
+  const counts = new Map<ID, number>();
+  for (const post of posts) counts.set(post.author_id, (counts.get(post.author_id) ?? 0) + 1);
+  return [...counts.entries()];
+});
+
 export interface UserStats {
   followers: number;
   following: number;
@@ -40,14 +71,16 @@ export interface UserStats {
 export async function getUserStats(userId: ID): Promise<UserStats> {
   const store = db();
   const [followers, following, posts] = await Promise.all([
-    store.query('follows', { where: { following_id: userId } }),
+    // The follower number is one entry in a count the platform already keeps,
+    // so it does not need this person's follow rows read to arrive at it.
+    allFollowerCounts().then((entries) => new Map(entries).get(userId) ?? 0),
     store.query('follows', { where: { follower_id: userId } }),
     store.query('posts', { where: { author_id: userId, removed: false } }),
   ]);
   const postIds = posts.map((p) => p.id);
   const likes = postIds.length ? await store.query('likes', { in: { post_id: postIds } }) : [];
   return {
-    followers: followers.length,
+    followers,
     following: following.length,
     posts: posts.length,
     likesReceived: likes.length,
@@ -57,10 +90,8 @@ export async function getUserStats(userId: ID): Promise<UserStats> {
 
 export async function followerCounts(userIds: ID[]): Promise<Map<ID, number>> {
   if (userIds.length === 0) return new Map();
-  const rows = await db().query('follows', { in: { following_id: [...new Set(userIds)] } });
-  const counts = new Map<ID, number>(userIds.map((id) => [id, 0]));
-  for (const row of rows) counts.set(row.following_id, (counts.get(row.following_id) ?? 0) + 1);
-  return counts;
+  const all = new Map(await allFollowerCounts());
+  return new Map(userIds.map((id) => [id, all.get(id) ?? 0]));
 }
 
 export async function followingIds(userId: ID): Promise<Set<ID>> {
@@ -156,6 +187,7 @@ export async function follow(followerId: ID, followingId: ID): Promise<boolean> 
     created_at: new Date().toISOString(),
   });
   const actor = await store.get('users', followerId);
+  refreshCommunity();
   await notify({
     userId: followingId,
     type: 'follow',
@@ -171,6 +203,7 @@ export async function unfollow(followerId: ID, followingId: ID): Promise<void> {
     where: { follower_id: followerId, following_id: followingId },
   });
   for (const row of rows) await store.remove('follows', row.id);
+  refreshCommunity();
 }
 
 export async function isBlockedEitherWay(a: ID, b: ID): Promise<boolean> {
@@ -218,6 +251,7 @@ export async function unblockUser(blockerId: ID, blockedId: ID): Promise<void> {
     where: { blocker_id: blockerId, blocked_id: blockedId },
   });
   for (const row of rows) await store.remove('blocks', row.id);
+  refreshCommunity();
 }
 
 export async function blockedList(userId: ID): Promise<PublicUser[]> {
@@ -238,6 +272,8 @@ export interface UpdateProfileInput {
 
 export async function updateProfile(userId: ID, input: UpdateProfileInput): Promise<void> {
   await db().update('users', userId, input);
+  // A changed name or picture shows up in the rankings, which are cached.
+  refreshCommunity();
 }
 
 export interface SuggestedPerson {
@@ -255,40 +291,64 @@ export interface SuggestedPerson {
  * follow, with a nudge toward shared interests. Deliberately not "biggest
  * accounts first".
  */
-export async function suggestedPeople(
-  viewer: User | null,
-  limit = 5,
-): Promise<SuggestedPerson[]> {
+/**
+ * The accounts worth suggesting, and what is known about them.
+ *
+ * Global: every active account, what each one mostly posts about, and how much
+ * they post. Who to actually suggest depends on the viewer, and that part
+ * stays per request.
+ */
+const suggestionPool = communityCache('suggestion-pool', async () => {
   const store = db();
-  const { ratingsIndex } = await import('./ratings');
-  const [users, posts, index, following, hidden] = await Promise.all([
+  const [users, posts] = await Promise.all([
     store.query('users', { where: { status: 'active' } }),
     store.query('posts', { where: { removed: false } }),
-    ratingsIndex(),
-    viewer ? followingIds(viewer.id) : new Set<ID>(),
-    hiddenUserIds(viewer?.id ?? null),
   ]);
 
-  const categoryOf = new Map<ID, Category>();
   const counts = new Map<ID, Map<Category, number>>();
+  const postCounts = new Map<ID, number>();
   for (const post of posts) {
     const map = counts.get(post.author_id) ?? new Map<Category, number>();
     map.set(post.category, (map.get(post.category) ?? 0) + 1);
     counts.set(post.author_id, map);
+    postCounts.set(post.author_id, (postCounts.get(post.author_id) ?? 0) + 1);
   }
+
+  const categoryOf: [ID, Category][] = [];
   for (const [id, map] of counts) {
     const top = [...map.entries()].sort((a, b) => b[1] - a[1])[0];
-    if (top) categoryOf.set(id, top[0]);
+    if (top) categoryOf.push([id, top[0]]);
   }
 
-  const candidates = users.filter(
+  return {
+    users: users.map(toPublicUser),
+    categoryOf,
+    postCounts: [...postCounts.entries()],
+  };
+});
+
+export async function suggestedPeople(
+  viewer: User | null,
+  limit = 5,
+): Promise<SuggestedPerson[]> {
+  const { ratingsIndex } = await import('./ratings');
+  const [pool, index, following, hidden, followers] = await Promise.all([
+    suggestionPool(),
+    ratingsIndex(),
+    viewer ? followingIds(viewer.id) : new Set<ID>(),
+    hiddenUserIds(viewer?.id ?? null),
+    allFollowerCounts().then((entries) => new Map(entries)),
+  ]);
+
+  const categoryOf = new Map<ID, Category>(pool.categoryOf);
+  const postCounts = new Map<ID, number>(pool.postCounts);
+
+  // Everything above is the same for everybody and comes from cache. Only
+  // this filtering is personal: who you already follow, and who you cannot see.
+  const candidates = pool.users.filter(
     (user) => user.id !== viewer?.id && !following.has(user.id) && !hidden.has(user.id),
   );
-  const followers = await followerCounts(candidates.map((u) => u.id));
   const interests = new Set(viewer?.interests ?? []);
-
-  const postCounts = new Map<ID, number>();
-  for (const post of posts) postCounts.set(post.author_id, (postCounts.get(post.author_id) ?? 0) + 1);
 
   const scored = candidates.map((user) => {
     const summary = index.users.get(user.id);
@@ -299,7 +359,7 @@ export async function suggestedPeople(
       posts: postCounts.get(user.id) ?? 0,
       joined: user.created_at,
       card: {
-        user: toPublicUser(user),
+        user,
         followers: followers.get(user.id) ?? 0,
         rating: summary && summary.overallVotes > 0 ? summary.overall : null,
         votes: summary?.overallVotes ?? 0,

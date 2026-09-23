@@ -278,6 +278,38 @@ production. `POST /__seed` takes `{table: [rows]}` for state the app has no UI
 for — a profile with sixty followers, say — and `GET /__dump` returns
 everything it holds.
 
+### 12. What each page costs — `perf-report.mjs` + `seed-perf.py`
+
+The instrumented stand-in counts every query and every row a page asks for, so
+performance work can be aimed rather than guessed at. `seed-perf.py` fills it
+with a small-but-real dataset (200 accounts, 600 posts, 2,500 ratings, 4,000
+likes, 2,900 follows); `perf-report.mjs` signs an account up, follows a few
+people, and measures every major route twice — once cold, once warm.
+
+```bash
+PORT=55400 GOTRUE_PORT=54321 node scripts/e2e/postgrest-stub.mjs &
+python3 scripts/e2e/seed-perf.py 55400
+SUPABASE_URL=http://127.0.0.1:55400 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:55400 \
+  SUPABASE_ANON_KEY=stub SUPABASE_SERVICE_ROLE_KEY=stub-secret npm start &
+STUB=http://127.0.0.1:55400 node scripts/e2e/perf-report.mjs
+```
+
+It is worth re-running after any change to a service. The number to watch is
+rows: a page that starts reading thousands of them has almost always picked up
+a whole-table read, which is the shape of every performance problem this
+codebase has had.
+
+For reference, the run that prompted the optimisation pass and the one after
+it:
+
+| route | rows before | rows after |
+| --- | --- | --- |
+| `/home` | 20,340 | 103 |
+| `/discover` | 11,145 | 292 |
+| `/u/<handle>` | 9,963 | 133 |
+| `/notifications` | 9,801 | 4 |
+| all ten routes | 108,783 | 867 |
+
 ### Which store each suite wants
 
 `auth-flow`, `video-flow`, `messaging-flow` and `social-navigation` create

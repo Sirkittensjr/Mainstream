@@ -77,7 +77,11 @@ const run = async () => {
   check('the caption is on the post page', (await page.content()).includes(caption));
   check(
     'the uploaded image is rendered on the post',
-    (await page.locator('article img[src^="/api/media/"]').count()) > 0,
+    // Photos go through Next's optimiser now, so the src points at that
+    // rather than straight at the stored file.
+    (await page
+      .locator('article img[src^="/api/media/"], article img[src*="_next/image"]')
+      .count()) > 0,
   );
 
   // --- an upload that is not really an image is refused --------------------

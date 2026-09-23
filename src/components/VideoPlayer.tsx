@@ -50,7 +50,11 @@ export function VideoPlayer({
         poster={media.poster}
         controls
         playsInline
-        preload="metadata"
+        // With a poster there is nothing to fetch until somebody presses play,
+        // so a feed of videos costs a few thumbnails rather than a metadata
+        // request per clip. Without one, metadata is what draws the first
+        // frame, so it is still worth asking for.
+        preload={media.poster ? 'none' : 'metadata'}
         muted={autoPlayMuted}
         autoPlay={autoPlayMuted}
         loop={autoPlayMuted}

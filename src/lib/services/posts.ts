@@ -1,11 +1,12 @@
 import 'server-only';
 import { cookies } from 'next/headers';
 import { db } from '@/lib/db';
+import { communityCache, refreshCommunity } from './community-cache';
 import { newId } from '@/lib/ids';
 import type { Category, ID, Media, Post, PublicUser, User } from '@/lib/types';
 import { notify, notifyMentions } from './notifications';
 import { myRatingsForPosts, ratingsIndex, type PostRatingSummary } from './ratings';
-import { followingIds, hiddenUserIds, toPublicUser } from './users';
+import { followerCounts, followingIds, hiddenUserIds, toPublicUser } from './users';
 
 /** Recently viewed posts, so a reload does not count twice. */
 const VIEW_COOKIE = 'fay_seen';
@@ -38,21 +39,20 @@ export async function hydratePosts(posts: Post[], viewerId: ID | null): Promise<
   const postIds = posts.map((p) => p.id);
   const authorIds = [...new Set(posts.map((p) => p.author_id))];
 
-  const [authors, likes, comments, follows, viewerFollowing, index, mine] = await Promise.all([
-    store.query('users', { in: { id: authorIds } }),
-    store.query('likes', { in: { post_id: postIds } }),
-    store.query('comments', { in: { post_id: postIds } }),
-    store.query('follows', { in: { following_id: authorIds } }),
-    viewerId ? followingIds(viewerId) : new Set<ID>(),
-    ratingsIndex(),
-    myRatingsForPosts(viewerId, postIds),
-  ]);
+  const [authors, likes, comments, followerCount, viewerFollowing, index, mine] =
+    await Promise.all([
+      store.query('users', { in: { id: authorIds } }),
+      store.query('likes', { in: { post_id: postIds } }),
+      store.query('comments', { in: { post_id: postIds } }),
+      // Counted once for the whole platform and shared, rather than reading a
+      // slice of the follow graph for the authors on every page of every feed.
+      followerCounts(authorIds),
+      viewerId ? followingIds(viewerId) : new Set<ID>(),
+      ratingsIndex(),
+      myRatingsForPosts(viewerId, postIds),
+    ]);
 
   const authorById = new Map(authors.map((a) => [a.id, a]));
-  const followerCount = new Map<ID, number>(authorIds.map((id) => [id, 0]));
-  for (const f of follows) {
-    followerCount.set(f.following_id, (followerCount.get(f.following_id) ?? 0) + 1);
-  }
 
   const likeCount = new Map<ID, number>(postIds.map((id) => [id, 0]));
   const likedByViewer = new Set<ID>();
@@ -92,16 +92,35 @@ export async function hydratePosts(posts: Post[], viewerId: ID | null): Promise<
     .filter((view): view is PostView => view !== null);
 }
 
-/** All visible posts, with blocked and suspended accounts filtered out. */
-export async function visiblePosts(viewerId: ID | null): Promise<Post[]> {
+/**
+ * Every post that is public at all, newest first, and the accounts that are
+ * not in a state to be shown.
+ *
+ * Neither half depends on who is asking, so both are shared across requests
+ * rather than re-read for every visitor. The viewer's own blocks are applied
+ * on top, per request, because those ARE personal — see community-cache.ts
+ * for the line this draws.
+ */
+const publicPosts = communityCache('public-posts', async () => {
   const store = db();
-  const [posts, hidden, users] = await Promise.all([
+  const [posts, users] = await Promise.all([
     store.query('posts', { where: { removed: false }, orderBy: 'created_at', desc: true }),
-    hiddenUserIds(viewerId),
     store.query('users'),
   ]);
-  const inactive = new Set(users.filter((u) => u.status !== 'active').map((u) => u.id));
-  return posts.filter((post) => !hidden.has(post.author_id) && !inactive.has(post.author_id));
+  return {
+    posts,
+    inactive: users.filter((user) => user.status !== 'active').map((user) => user.id),
+  };
+});
+
+/** All visible posts, with blocked and suspended accounts filtered out. */
+export async function visiblePosts(viewerId: ID | null): Promise<Post[]> {
+  const [{ posts, inactive }, hidden] = await Promise.all([
+    publicPosts(),
+    hiddenUserIds(viewerId),
+  ]);
+  const notShown = new Set(inactive);
+  return posts.filter((post) => !hidden.has(post.author_id) && !notShown.has(post.author_id));
 }
 
 export interface CreatePostInput {
@@ -135,6 +154,7 @@ export async function createPost(input: CreatePostInput): Promise<Post> {
     `@${author?.username ?? 'someone'} mentioned you in a post`,
     post.id,
   );
+  refreshCommunity();
   return post;
 }
 
@@ -157,6 +177,7 @@ export async function deletePost(postId: ID, userId: ID): Promise<boolean> {
     ...comments.map((row) => store.remove('comments', row.id)),
     ...ratings.map((row) => store.remove('ratings', row.id)),
   ]);
+  refreshCommunity();
   return true;
 }
 
