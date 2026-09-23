@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
+import { formatUnread } from '@/lib/format';
 import { AccountMenu } from './AccountMenu';
 import {
   BellIcon,
@@ -152,7 +153,7 @@ export function Sidebar({ user }: { user: NavUser | null }) {
                 {item.label}
                 {item.href === '/notifications' && user && user.unread > 0 && (
                   <span className="ml-auto rounded-full bg-fay px-2 py-0.5 text-[11px] font-bold text-ink-950">
-                    {user.unread > 9 ? '9+' : user.unread}
+                    {formatUnread(user.unread)}
                   </span>
                 )}
                 {item.href === '/messages' && user && user.unreadMessages > 0 && (
@@ -160,7 +161,7 @@ export function Sidebar({ user }: { user: NavUser | null }) {
                     aria-label={`${user.unreadMessages} unread`}
                     className="ml-auto rounded-full bg-fay px-2 py-0.5 text-[11px] font-bold text-ink-950"
                   >
-                    {user.unreadMessages > 9 ? '9+' : user.unreadMessages}
+                    {formatUnread(user.unreadMessages)}
                   </span>
                 )}
               </Link>
@@ -221,7 +222,9 @@ export function TopBar({ user, title }: { user: NavUser | null; title?: string }
         >
           <MailIcon />
           {user && user.unreadMessages > 0 && (
-            <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-fay ring-2 ring-ink-950" />
+            <span className="absolute -right-0.5 top-0.5 min-w-[18px] rounded-full bg-fay px-1 text-center text-[10px] font-bold leading-[18px] text-ink-950 ring-2 ring-ink-950">
+              {formatUnread(user.unreadMessages)}
+            </span>
           )}
         </Link>
         <Link
@@ -231,7 +234,9 @@ export function TopBar({ user, title }: { user: NavUser | null; title?: string }
         >
           <BellIcon />
           {user && user.unread > 0 && (
-            <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-fay ring-2 ring-ink-950" />
+            <span className="absolute -right-0.5 top-0.5 min-w-[18px] rounded-full bg-fay px-1 text-center text-[10px] font-bold leading-[18px] text-ink-950 ring-2 ring-ink-950">
+              {formatUnread(user.unread)}
+            </span>
           )}
         </Link>
         {user ? (

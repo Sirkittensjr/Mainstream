@@ -206,7 +206,7 @@ const run = async () => {
   check('the strip shows the edits that were made', summary.includes('90°') && summary.includes('cropped'), summary.replace(/\n/g, ' '));
 
   /* ============================== the limits ============================== */
-  section('LIMITS — three minutes, 250MB, and files that are not video');
+  section('LIMITS — two minutes, 250MB, and files that are not video');
 
   // 21. Invalid/unsupported files.
   await A.page.locator('input[type=file]').setInputFiles({
@@ -220,12 +220,12 @@ const run = async () => {
     (await A.page.locator('text=could not be opened').count()) > 0,
   );
 
-  // 19. The three-minute limit, from the editor.
+  // 19. The length limit, from the editor.
   const countBefore = await clipCount(A.page);
   await addClip(A.page, 'toolong.webm');
   await A.page.waitForTimeout(1500);
   const refusal = await A.page.locator('p.text-fay-soft').innerText().catch(() => '');
-  check('19. a clip past the three-minute limit is refused', (await clipCount(A.page)) === countBefore, `${countBefore} clips before and after`);
+  check('19. a clip past the length limit is refused', (await clipCount(A.page)) === countBefore, `${countBefore} clips before and after`);
   check('19. and the person is told why, not silently cut off', /room is left|Trim/.test(refusal), refusal.slice(0, 90));
 
   /* =========================== preview and post =========================== */
@@ -413,8 +413,8 @@ const run = async () => {
     return { status: response.status, body: await response.json().catch(() => ({})) };
   }, Array.from(overLength));
   check(
-    'a video past three minutes is refused by the server, not just the editor',
-    refusedLength.status === 422 && /up to 3 minutes/.test(refusedLength.body.error ?? ''),
+    'a video past two minutes is refused by the server, not just the editor',
+    refusedLength.status === 422 && /up to 2 minutes/.test(refusedLength.body.error ?? ''),
     `${refusedLength.status} ${refusedLength.body.error ?? ''}`.slice(0, 90),
   );
 

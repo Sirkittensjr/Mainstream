@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { logoutAction } from '@/app/actions';
+import { formatUnread } from '@/lib/format';
 import type { NavUser } from './Nav';
 
 /**
@@ -119,7 +120,7 @@ export function AccountMenu({
             Messages
             {user.unreadMessages > 0 && (
               <span className="rounded-full bg-fay px-2 py-0.5 text-[11px] font-bold text-ink-950">
-                {user.unreadMessages > 9 ? '9+' : user.unreadMessages}
+                {formatUnread(user.unreadMessages)}
               </span>
             )}
           </Link>

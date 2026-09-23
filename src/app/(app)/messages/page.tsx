@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Avatar } from '@/components/Avatar';
 import { EmptyState } from '@/components/EmptyState';
+import { formatUnread } from '@/lib/format';
 import { PageTopBar } from '@/components/PageTopBar';
 import { conversations, messagingAvailable } from '@/lib/services/messages';
 import { requireViewer } from '@/lib/session';
@@ -88,7 +89,7 @@ export default async function MessagesPage() {
                   </div>
                   {entry.unread > 0 && (
                     <span className="shrink-0 rounded-full bg-fay px-2 py-0.5 text-[11px] font-bold text-ink-950">
-                      {entry.unread > 9 ? '9+' : entry.unread}
+                      {formatUnread(entry.unread)}
                     </span>
                   )}
                 </Link>

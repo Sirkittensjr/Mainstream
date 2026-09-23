@@ -36,12 +36,20 @@ create table if not exists public.users (
   trusted       boolean not null default true,
   -- When the @username last changed, for the change cooldown. Null = never.
   username_changed_at timestamptz,
+  -- What this person painted their profile in: a key from
+  -- src/lib/profile-theme.ts, or null for the default look. Never a colour
+  -- value — an unrecognised key renders as the default.
+  profile_bg    text,
+  profile_box   text,
   created_at    timestamptz not null default now(),
   last_active_at timestamptz not null default now()
 );
 
 -- Present for databases created before username changes existed.
 alter table public.users add column if not exists username_changed_at timestamptz;
+-- Present for databases created before profile colours existed.
+alter table public.users add column if not exists profile_bg text;
+alter table public.users add column if not exists profile_box text;
 
 create index if not exists users_username_idx on public.users (username);
 -- Usernames are unique case-insensitively: "Tommy" must not be a second "tommy".
@@ -435,14 +443,15 @@ begin
 
     execute format(
       'grant select (id, username, display_name, bio, avatar_url, location, '
-      'interests, role, status, status_reason, trusted, created_at, last_active_at) '
+      'interests, role, status, status_reason, trusted, profile_bg, profile_box, '
+      'created_at, last_active_at) '
       'on public.users to %I', api_role);
   end loop;
 
   -- Only a signed-in person can change anything, and only their own profile
   -- fields. The RLS policy below is what restricts it to their own row.
   if exists (select 1 from pg_roles where rolname = 'authenticated') then
-    grant update (display_name, bio, avatar_url, location, interests)
+    grant update (display_name, bio, avatar_url, location, interests, profile_bg, profile_box)
       on public.users to authenticated;
   end if;
 end $$;

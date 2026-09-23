@@ -16,7 +16,7 @@ has never been installed.
 | Row 1 says | Run |
 | --- | --- |
 | `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including both migrations. |
-| `9 of 9` — ALL PRESENT | `0001`, `0002`, then `0003`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
+| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
 | anything between | Stop and ask. A half-installed schema needs looking at, not a migration. |
 
 If the storage bucket row shows `none`, create it in the dashboard
@@ -193,3 +193,28 @@ the global limit; posts, ratings, feeds and everything else are unaffected.
 
 If `verdict` comes back `NOT APPLIED`, the bucket is not called
 `faytarra-media` — check `SUPABASE_STORAGE_BUCKET` and use that name instead.
+
+---
+
+## 0005_profile_colours.sql
+
+Lets people paint their own profile. Safe to run twice. **Nothing in this file
+is destructive** — no drops, no deletes, no existing row rewritten.
+
+| Step | Statement | What it touches | Risk |
+| --- | --- | --- | --- |
+| 1 | `add column if not exists profile_bg` and `profile_box` on `users` | Adds two nullable columns | None. Existing rows get `null`, which means the default look |
+| 2 | `grant select (profile_bg, profile_box)` to both API roles and `grant update` to `authenticated` | Permissions only | None. Required because 0002 replaced the table grant with a column list |
+
+**What is stored is a key, not a colour** — `'purple'`, `'yellow-bright'` and
+so on, from the list in `src/lib/profile-theme.ts`. A key the app does not
+recognise renders as the default, so the worst a value written straight through
+the REST API can do is change how that person's own profile looks. Nothing from
+this column reaches a stylesheet.
+
+**Not running it is survivable.** The app catches the missing column, says so
+once in the server log, and tells anybody who picks a colour that the feature
+is not switched on. Display name, bio, avatar, location and interests keep
+saving exactly as before, because the colours are written by their own UPDATE
+rather than sharing one with the rest of the profile. `/api/health` names `0005`
+under `schema.migrations` until it has been run.

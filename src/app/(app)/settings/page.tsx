@@ -6,6 +6,7 @@ import { logoutAction } from '@/app/actions';
 import { UsernameForm } from './UsernameForm';
 import { UnblockButton } from './UnblockButton';
 import { SettingsForm } from './SettingsForm';
+import { ProfileColours } from './ProfileColours';
 import { DangerZone } from './DangerZone';
 import { blockedList } from '@/lib/services/users';
 import { requireViewer } from '@/lib/session';
@@ -40,6 +41,20 @@ export default async function SettingsPage() {
               interests: viewer.interests,
             }}
           />
+        </section>
+
+        <section className="card p-6">
+          <h2 className="font-display text-xl font-bold">Profile colours</h2>
+          <p className="mt-1 text-sm text-white/50">
+            The background behind your profile and the boxes on it. Everyone who visits your
+            profile sees them.
+          </p>
+          <div className="mt-5">
+            <ProfileColours
+              background={viewer.profile_bg ?? null}
+              box={viewer.profile_box ?? null}
+            />
+          </div>
         </section>
 
         <section className="card p-6">

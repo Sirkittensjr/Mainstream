@@ -89,6 +89,87 @@
     color: transparent;
   }
 
+  /*
+   * A profile painted in its owner's colours.
+   *
+   * Surfaces only. Nothing here changes a size, a position or a control — the
+   * profile is the same profile, with `background-color`, `border-color` and
+   * `color` coming from custom properties instead of from the palette. The
+   * variables are set on the wrapper by src/lib/profile-theme.ts, which only
+   * ever emits colours from its own list.
+   *
+   * The attribute selectors exist because the profile's text colours are
+   * Tailwind utilities on the elements themselves (`text-white/45` and the
+   * like). They are what keeps text readable when somebody picks a bright box:
+   * the tone of the swatch decides whether the ink is white or near-black, and
+   * every utility that asked for white follows it.
+   */
+  .profile-skin {
+    background-color: var(--profile-bg);
+    color: var(--profile-page-ink);
+  }
+
+  .profile-skin .card {
+    background-color: var(--profile-box);
+    border-color: var(--profile-line);
+    color: var(--profile-ink);
+  }
+
+  .profile-skin [class*='text-white/'] {
+    color: var(--profile-muted);
+  }
+
+  .profile-skin [class~='text-white'] {
+    color: var(--profile-ink);
+  }
+
+  .profile-skin [class*='border-white/'] {
+    border-color: var(--profile-line);
+  }
+
+  .profile-skin [class*='bg-black/'],
+  .profile-skin [class*='bg-white/'] {
+    background-color: var(--profile-inset);
+  }
+
+  .profile-skin .label {
+    color: var(--profile-muted);
+  }
+
+  .profile-skin .chip {
+    border-color: var(--profile-line);
+    background-color: var(--profile-inset);
+    color: var(--profile-ink);
+  }
+
+  .profile-skin .chip-active {
+    background-color: var(--profile-ink);
+    color: var(--profile-box);
+  }
+
+  .profile-skin .btn-ghost {
+    border-color: var(--profile-line);
+    background-color: var(--profile-inset);
+    color: var(--profile-ink);
+  }
+
+  .profile-skin .btn-quiet {
+    color: var(--profile-muted);
+  }
+
+  /* The tabs sit on the background rather than in a box, so they follow the
+     background's tone instead of the boxes'. */
+  .profile-skin .profile-tabs .chip {
+    border-color: var(--profile-page-line);
+    background-color: var(--profile-page-inset);
+    color: var(--profile-page-ink);
+  }
+
+  .profile-skin .profile-tabs .chip-active {
+    background-color: var(--profile-page-ink);
+    color: var(--profile-bg);
+  }
+
   .hide-scrollbar::-webkit-scrollbar {
     display: none;
   }

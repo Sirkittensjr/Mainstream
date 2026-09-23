@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { BottomNav, Sidebar, type NavUser } from '@/components/Nav';
 import { RightRail } from '@/components/RightRail';
+import { UnreadWatch } from '@/components/UnreadWatch';
 import { unreadCount } from '@/lib/services/notifications';
 import { unreadMessageCount } from '@/lib/services/messages';
 import { getViewer, markActive } from '@/lib/session';
@@ -41,6 +42,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       </div>
       <RightRail viewer={viewer} />
       <BottomNav user={navUser} />
+      {/* Nothing rendered: it refreshes the route when the badges above go
+          stale, so a message that arrives mid-read still announces itself. */}
+      {viewer && <UnreadWatch messages={unreadMessages} notifications={unread} />}
     </div>
   );
 }

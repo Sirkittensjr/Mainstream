@@ -44,13 +44,13 @@ describe('clip lengths', () => {
   });
 });
 
-describe('the three-minute rule', () => {
+describe('the length limit', () => {
   it('lets a clip in while there is room', () => {
     assert.deepEqual(canAdd([clip({ trimEnd: 60 })], 60), { ok: true });
   });
 
   it('refuses a clip that would push the video over, and says how much room is left', () => {
-    const result = canAdd([clip({ trimEnd: 170 })], 30);
+    const result = canAdd([clip({ trimEnd: MAX_VIDEO_SECONDS - 10 })], 30);
     assert.equal(result.ok, false);
     assert.match(result.ok === false ? result.error : '', /10\.0s of room is left/);
   });
@@ -62,8 +62,11 @@ describe('the three-minute rule', () => {
   });
 
   it('accepts a clip that lands exactly on the limit', () => {
-    assert.deepEqual(canAdd([clip({ trimEnd: 120 })], 60), { ok: true });
-    assert.equal(isOverLength([clip({ trimEnd: 120 }), clip({ id: 'b', trimEnd: 60 })]), false);
+    assert.deepEqual(canAdd([clip({ trimEnd: MAX_VIDEO_SECONDS - 60 })], 60), { ok: true });
+    assert.equal(
+      isOverLength([clip({ trimEnd: MAX_VIDEO_SECONDS - 60 }), clip({ id: 'b', trimEnd: 60 })]),
+      false,
+    );
   });
 
   it('caps the number of clips', () => {

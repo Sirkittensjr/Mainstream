@@ -1,6 +1,6 @@
 -- 0004 — room for video in the media bucket
 --
--- FayTarra videos are up to 250MB and up to three minutes. Nothing in the
+-- FayTarra videos are up to 250MB and up to two minutes. Nothing in the
 -- database itself changes for that: a post's media has always been jsonb, so
 -- the poster frame, pixel size and duration a video carries need no new
 -- columns and no table is touched by this file.

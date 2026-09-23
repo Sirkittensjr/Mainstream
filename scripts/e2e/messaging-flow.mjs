@@ -163,7 +163,7 @@ const run = async () => {
   check('1. A can send a message', (await bodyText(A.page)).includes('first message from A'));
 
   await B.page.goto('/home', { waitUntil: 'domcontentloaded' });
-  const badge = B.page.locator('a[href="/messages"] span').filter({ hasText: /^\d\+?$/ });
+  const badge = B.page.locator('a[href="/messages"] span').filter({ hasText: /^\d+\+?$/ });
   check('1. B sees an unread badge in the navigation', (await badge.count()) > 0, await badge.first().innerText().catch(() => ''));
 
   await B.page.goto('/messages', { waitUntil: 'domcontentloaded' });
@@ -177,7 +177,7 @@ const run = async () => {
   await B.page.goto('/home', { waitUntil: 'domcontentloaded' });
   check(
     '7. opening the conversation cleared the unread badge',
-    (await B.page.locator('a[href="/messages"] span').filter({ hasText: /^\d\+?$/ }).count()) === 0,
+    (await B.page.locator('a[href="/messages"] span').filter({ hasText: /^\d+\+?$/ }).count()) === 0,
   );
 
   await openThread(B, aH);
@@ -234,13 +234,90 @@ const run = async () => {
   );
 
   await B.page.goto('/home', { waitUntil: 'domcontentloaded' });
-  const badge3 = B.page.locator('a[href="/messages"] span').filter({ hasText: /^\d\+?$/ });
+  const badge3 = B.page.locator('a[href="/messages"] span').filter({ hasText: /^\d+\+?$/ });
   check('7. three new messages show as unread for B', (await badge3.first().innerText().catch(() => '')) === '3', await badge3.first().innerText().catch(() => 'none'));
 
   await A.page.goto('/home', { waitUntil: 'domcontentloaded' });
   check(
     '7. and A is not told their own messages are unread',
-    (await A.page.locator('a[href="/messages"] span').filter({ hasText: /^\d\+?$/ }).count()) === 0,
+    (await A.page.locator('a[href="/messages"] span').filter({ hasText: /^\d+\+?$/ }).count()) === 0,
+  );
+
+  /* ===================================================================== */
+  section('UNREAD — the real number, on a phone, and without navigating');
+
+  // B is left sitting on a page rendered when there were three unread. The
+  // badge has to catch up on its own: a message that arrives while somebody is
+  // reading something else should not wait for their next click.
+  await B.page.goto('/home', { waitUntil: 'domcontentloaded' });
+  const navBadge = (page) =>
+    page.locator('a[href="/messages"] span').filter({ hasText: /^\d+\+?$/ });
+  check('U. B starts on three', (await navBadge(B.page).first().innerText()) === '3');
+
+  await openThread(A, bH);
+  for (let i = 1; i <= 9; i += 1) {
+    await A.page.fill('#message-body', `bulk ${i}`);
+    await A.page.keyboard.press('Enter');
+    await A.page
+      .waitForFunction(
+        (sent) => document.body.innerText.includes(sent) && !document.body.innerText.includes('Sending…'),
+        `bulk ${i}`,
+        { timeout: 15000 },
+      )
+      .catch(() => undefined);
+  }
+
+  const caughtUp = await B.page
+    .waitForFunction(
+      () =>
+        [...document.querySelectorAll('a[href="/messages"] span')].some(
+          (span) => (span.textContent ?? '').trim() === '12',
+        ),
+      undefined,
+      { timeout: 60000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  check(
+    'U. the badge counts up to twelve without B navigating',
+    caughtUp,
+    await navBadge(B.page).first().innerText().catch(() => 'none'),
+  );
+  check(
+    'U. the number is the real one, not capped at nine',
+    (await navBadge(B.page).first().innerText()) === '12',
+  );
+
+  // The phone has no Messages slot in the bottom bar, so the count lives on
+  // the top bar there — as a number, not a dot.
+  const unreadPhone = await browser.newContext({
+    baseURL: BASE,
+    storageState: await B.context.storageState(),
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  const small = await unreadPhone.newPage();
+  await small.goto('/home', { waitUntil: 'domcontentloaded' });
+  const phoneBadge = small.locator('header a[href="/messages"] span').filter({ hasText: /^\d+\+?$/ });
+  check(
+    'U. a phone shows the number too',
+    (await phoneBadge.count()) > 0 && (await phoneBadge.first().innerText()) === '12',
+    await phoneBadge.first().innerText().catch(() => 'none'),
+  );
+  check(
+    'U. and the link says how many for a screen reader',
+    /12 unread/.test(await small.locator('header a[href="/messages"]').first().getAttribute('aria-label')),
+  );
+  await unreadPhone.close();
+
+  await openThread(B, aH);
+  await B.page.goto('/home', { waitUntil: 'domcontentloaded' });
+  check('U. reading the conversation clears it again', (await navBadge(B.page).count()) === 0);
+  await A.page.goto('/home', { waitUntil: 'domcontentloaded' });
+  check(
+    'U. and the sender never had one',
+    (await navBadge(A.page).count()) === 0,
   );
 
   /* ===================================================================== */
@@ -281,7 +358,12 @@ const run = async () => {
   check('4. the history is still readable', closed.includes('first message from A') && closed.includes('and a reply from B'));
 
   await B.page.goto('/messages', { waitUntil: 'domcontentloaded' });
-  check('4. and still reachable from the inbox', (await bodyText(B.page)).includes('counted three'));
+  // The thread is still listed; which message is on top depends on what was
+  // said last, which is not what this check is about.
+  check(
+    '4. and still reachable from the inbox',
+    (await B.page.locator(`a[href="/messages/${aH}"]`).count()) > 0,
+  );
 
   await setFollow(A, bH, true);
   await openThread(A, bH);

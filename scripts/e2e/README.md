@@ -173,7 +173,7 @@ FIXTURES=/tmp/fay-video-fixtures node scripts/e2e/video-flow.mjs
 
 Its last section is the one to re-run after touching uploads: it makes the
 requests somebody would make if they skipped the editor entirely — a video
-past three minutes, a file that only claims to be video, a 400MB upload,
+past two minutes, a file that only claims to be video, a 400MB upload,
 another person's pending object, a path climbing out of its own folder, and
 the same calls with no account at all.
 
@@ -272,7 +272,40 @@ survive. Then the ordering: a liked video leads a newer one, a brand-new
 account's first clip with no likes, no ratings and no followers still lands on
 the first screenful, and a blocked account's videos disappear.
 
-### 12. Running against PostgREST — `postgrest-stub.mjs`
+### 12. Profile colours — `profile-colours-flow.mjs`
+
+Two accounts: one paints their profile, the other looks at it. Needs an EMPTY
+store.
+
+```bash
+node scripts/e2e/profile-colours-flow.mjs
+```
+
+Nothing here is eyeballed. The colours are read back off the rendered page with
+`getComputedStyle`, and "the text is still readable" is a computed WCAG
+contrast ratio against the box the text is actually sitting on — a bright
+yellow box has to clear 4.5:1 for its heading and its quieter text alike, or
+the check fails. It also covers a reset going back to nothing, the same colours
+appearing for a different account and for a signed-out visitor in a clean
+browser (so it is the database answering, not a browser remembering), the phone
+layout, and the profile's followers, following, rating, tabs and buttons all
+still being there afterwards.
+
+Run it a second time with `EXPECT_NO_COLOURS=1` against a database that has
+**not** had migration 0005 applied. It then checks the other half of the
+contract: picking a colour says the feature is not switched on, and — the part
+that matters — the rest of a profile edit still saves. The PostgREST stub
+rehearses that state:
+
+```bash
+PORT=55300 GOTRUE_PORT=54321 \
+  MISSING_COLUMNS=users.profile_bg,users.profile_box \
+  node scripts/e2e/postgrest-stub.mjs &
+EXPECT_NO_COLOURS=1 BASE_URL=http://localhost:3100 \
+  node scripts/e2e/profile-colours-flow.mjs
+```
+
+### 13. Running against PostgREST — `postgrest-stub.mjs`
 
 Every browser suite here runs on the local JSON driver. Production does not,
 and the last two production failures were both Supabase-only — a `where`
@@ -281,7 +314,10 @@ Neither could have been caught by a test that never spoke the protocol.
 
 This stands in for PostgREST over an in-memory dataset: `eq.`, `is.null`,
 `in.()`, Range paging, the object Accept header, and the same 400 Postgres
-returns when asked to compare a timestamp with the string "null". It proxies
+returns when asked to compare a timestamp with the string "null". Set
+`MISSING_COLUMNS=users.profile_bg,users.profile_box` to make it answer PGRST204
+for a write touching those columns, which is what a database running behind a
+migration does. It proxies
 `/auth/v1` to the GoTrue stub, so one origin serves both exactly as a real
 project does, and `/api/health` reports `driver: supabase` against it.
 
@@ -302,7 +338,7 @@ production. `POST /__seed` takes `{table: [rows]}` for state the app has no UI
 for — a profile with sixty followers, say — and `GET /__dump` returns
 everything it holds.
 
-### 13. What each page costs — `perf-report.mjs` + `seed-perf.py`
+### 14. What each page costs — `perf-report.mjs` + `seed-perf.py`
 
 The instrumented stand-in counts every query and every row a page asks for, so
 performance work can be aimed rather than guessed at. `seed-perf.py` fills it
@@ -336,8 +372,9 @@ it:
 
 ### Which store each suite wants
 
-`auth-flow`, `video-flow`, `videos-flow`, `messaging-flow` and
-`social-navigation` create their own accounts and want an EMPTY store
+`auth-flow`, `video-flow`, `videos-flow`, `messaging-flow`,
+`profile-colours-flow` and `social-navigation` create their own accounts and
+want an EMPTY store
 (`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and
 `social-flow` sign in as the seeded demo accounts and check against them —
 `signup-form-state` takes `tommy` as its already-taken username — so those need
