@@ -280,12 +280,59 @@ const run = async () => {
     );
   }
 
-  // The picture is a link too, not just the name.
+  // The picture is inside the clickable tile, not merely next to it.
   await J.page.goto(`/u/${me}`, { waitUntil: 'domcontentloaded' });
-  const avatarLinks = await J.page
-    .locator('section:has(h2:text("Top creators")) ol > li a[aria-label$="profile"]')
-    .count();
-  check('10. the profile photo is a link as well', avatarLinks === 3, `${avatarLinks} photo links`);
+  const photosInLinks = await J.page.evaluate(() => {
+    const section = [...document.querySelectorAll('section')].find((node) =>
+      /Top creators/i.test(node.querySelector('h2')?.textContent ?? ''),
+    );
+    return [...(section?.querySelectorAll('ol > li') ?? [])].filter((row) => {
+      const link = row.querySelector('a[href^="/u/"]');
+      if (!link) return false;
+      // The photo: a 44pt round element inside the link, whether it is an
+      // uploaded picture or the initials fallback.
+      return [...link.children].some(
+        (child) => child.clientWidth >= 40 && child.clientHeight >= 40,
+      );
+    }).length;
+  });
+  check('10. the photo is inside the link, so the whole tile opens the profile', photosInLinks === 3, `${photosInLinks} of 3`);
+
+  /* ============================== the layout ============================= */
+  section('LAYOUT — three across, one row');
+
+  const layout = await J.page.evaluate(() => {
+    const section = [...document.querySelectorAll('section')].find((node) =>
+      /Top creators/i.test(node.querySelector('h2')?.textContent ?? ''),
+    );
+    const rows = [...(section?.querySelectorAll('ol > li') ?? [])];
+    const boxes = rows.map((row) => row.getBoundingClientRect());
+    return {
+      tops: boxes.map((box) => Math.round(box.top)),
+      lefts: boxes.map((box) => Math.round(box.left)),
+      height: Math.round(section?.getBoundingClientRect().height ?? 0),
+      // The name has to sit under the picture, not beside it.
+      stacked: rows.every((row) => {
+        const link = row.querySelector('a[href^="/u/"]');
+        const photo = link ? [...link.children].find((c) => c.clientHeight >= 40) : null;
+        const name = link?.querySelector('span:last-of-type');
+        if (!photo || !name) return false;
+        return name.getBoundingClientRect().top >= photo.getBoundingClientRect().bottom - 1;
+      }),
+    };
+  });
+  check(
+    'L. the three sit on one row',
+    new Set(layout.tops).size === 1,
+    layout.tops.join(' / '),
+  );
+  check(
+    'L. side by side, left to right',
+    layout.lefts[0] < layout.lefts[1] && layout.lefts[1] < layout.lefts[2],
+    layout.lefts.join(' < '),
+  );
+  check('L. the name is under the photo', layout.stacked);
+  check('L. and the section stays compact', layout.height <= 200, `${layout.height}px tall`);
 
   /* ======================== 11. unfollowing =========================== */
   section('11 — unfollowing somebody in the Top 3');
@@ -305,7 +352,7 @@ const run = async () => {
   );
   check(
     '11. and the owner is asked to fill the slot',
-    /pick someone you follow/i.test(await A.page.locator('section:has(h2:text("Top creators"))').innerText()),
+    /pick someone/i.test(await A.page.locator('section:has(h2:text("Top creators"))').innerText()),
   );
   check(
     '11. they are not offered any more either',
@@ -365,6 +412,32 @@ const run = async () => {
     'P. nothing spills off the side',
     await small.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
   );
+  const phoneLayout = await small.evaluate(() => {
+    const section = [...document.querySelectorAll('section')].find((node) =>
+      /Top creators/i.test(node.querySelector('h2')?.textContent ?? ''),
+    );
+    const rows = [...(section?.querySelectorAll('ol > li') ?? [])];
+    const boxes = rows.map((row) => row.getBoundingClientRect());
+    return {
+      tops: boxes.map((box) => Math.round(box.top)),
+      widest: Math.max(...boxes.map((box) => Math.round(box.width))),
+      right: Math.round(Math.max(...boxes.map((box) => box.right))),
+      overflowing: rows.some((row) => row.scrollWidth > row.clientWidth + 1),
+      height: Math.round(section?.getBoundingClientRect().height ?? 0),
+    };
+  });
+  check(
+    'P. still three across on a phone',
+    new Set(phoneLayout.tops).size === 1,
+    phoneLayout.tops.join(' / '),
+  );
+  check(
+    'P. inside the screen, with names truncated rather than spilling',
+    phoneLayout.right <= 390 && !phoneLayout.overflowing,
+    `rightmost edge ${phoneLayout.right}px, column ${phoneLayout.widest}px`,
+  );
+  // Compact meaning: no more than a quarter of a phone screen.
+  check('P. and still compact', phoneLayout.height <= 211, `${phoneLayout.height}px tall`);
   await small.locator('button[aria-label="Edit your Top 3 creators"]').click();
   await small.waitForSelector('[role=dialog]', { timeout: 10000 });
   const box = await small.locator('select[aria-label="Top 3 slot 1"]').boundingBox();
