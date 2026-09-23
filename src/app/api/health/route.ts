@@ -83,6 +83,24 @@ async function probeSchema(): Promise<{
   return { missingTables, missingColumns, migrations: [...migrations].sort() };
 }
 
+/**
+ * Which build is answering.
+ *
+ * "It is pushed" and "it is live" are different claims, and without this the
+ * only way to tell them apart is to go looking for a feature and guess at why
+ * it is not there. Vercel sets these on every deployment; locally they are
+ * absent and the field says so. A short commit sha and a branch name are not
+ * secrets — they are what you need to answer "is my change deployed yet".
+ */
+function build() {
+  const sha = process.env.VERCEL_GIT_COMMIT_SHA || null;
+  return {
+    commit: sha ? sha.slice(0, 7) : null,
+    branch: process.env.VERCEL_GIT_COMMIT_REF || null,
+    environment: process.env.VERCEL_ENV || (process.env.NODE_ENV ?? null),
+  };
+}
+
 export async function GET() {
   const missing = missingAuthVars();
   const durable = storageIsDurable();
@@ -97,6 +115,7 @@ export async function GET() {
   return NextResponse.json(
     {
       ready,
+      build: build(),
       auth: {
         configured: authConfigured(),
         missing,

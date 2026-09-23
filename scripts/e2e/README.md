@@ -248,6 +248,36 @@ they were fixed:
 It also covers the block rule — a blocked account leaves both the notification
 list and the follower list — and the phone layout.
 
+### 11. Running against PostgREST — `postgrest-stub.mjs`
+
+Every browser suite here runs on the local JSON driver. Production does not,
+and the last two production failures were both Supabase-only — a `where`
+clause that the local driver answered correctly and PostgREST rejected.
+Neither could have been caught by a test that never spoke the protocol.
+
+This stands in for PostgREST over an in-memory dataset: `eq.`, `is.null`,
+`in.()`, Range paging, the object Accept header, and the same 400 Postgres
+returns when asked to compare a timestamp with the string "null". It proxies
+`/auth/v1` to the GoTrue stub, so one origin serves both exactly as a real
+project does, and `/api/health` reports `driver: supabase` against it.
+
+```bash
+STUB_PORT=54321 node scripts/e2e/gotrue-stub.mjs &
+PORT=55300 GOTRUE_PORT=54321 node scripts/e2e/postgrest-stub.mjs &
+
+SUPABASE_URL=http://127.0.0.1:55300 \
+NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:55300 \
+SUPABASE_ANON_KEY=stub SUPABASE_SERVICE_ROLE_KEY=stub-secret \
+  npm start &
+
+node scripts/e2e/social-navigation.mjs     # or any other suite
+```
+
+Worth running any suite through it before believing a feature works in
+production. `POST /__seed` takes `{table: [rows]}` for state the app has no UI
+for — a profile with sixty followers, say — and `GET /__dump` returns
+everything it holds.
+
 ### Which store each suite wants
 
 `auth-flow`, `video-flow`, `messaging-flow` and `social-navigation` create

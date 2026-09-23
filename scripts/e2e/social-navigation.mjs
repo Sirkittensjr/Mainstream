@@ -199,15 +199,25 @@ const run = async () => {
   check('a comment notification arrived', new RegExp(`@${cH} commented on your post`).test(feed));
   check('a rating notification arrived', new RegExp(`@${dH} rated your post`).test(feed));
 
-  /** Finds the notification row matching `text` and clicks the person in it. */
+  /**
+   * Finds the notification about `expected` doing `text`, and clicks them.
+   *
+   * Scoped to the row that mentions that person, not merely the first row of
+   * that kind: three people follow A here, so "the first follow notification"
+   * is whichever one the database happened to return first.
+   */
   async function clickPersonIn(text, expected) {
     await A.page.goto('/notifications', { waitUntil: 'domcontentloaded' });
     await waitFor(A.page, 'li div.card');
-    const row = A.page.locator('li', { hasText: text }).first();
-    const personLink = row.locator(`a[href="/u/${expected}"]`).first();
-    const count = await personLink.count();
-    if (count === 0) return { handle: null, url: 'no link to the person in that row' };
-    return clickThrough(A.page, personLink);
+    const row = A.page
+      .locator('li')
+      .filter({ hasText: text })
+      .filter({ has: A.page.locator(`a[href="/u/${expected}"]`) })
+      .first();
+    if ((await row.count()) === 0) {
+      return { handle: null, url: `no row where @${expected} ${text}` };
+    }
+    return clickThrough(A.page, row.locator(`a[href="/u/${expected}"]`).first());
   }
 
   const followNote = await clickPersonIn('started following you', dH);

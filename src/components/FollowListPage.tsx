@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { Avatar } from '@/components/Avatar';
 import { ChevronIcon } from '@/components/Icons';
 import { PageTopBar } from '@/components/PageTopBar';
+import { LoadMore } from '@/components/LoadMore';
 import { PeopleList } from '@/components/PeopleList';
 import { formatCount } from '@/lib/format';
 import {
@@ -20,12 +21,17 @@ import { getViewer } from '@/lib/session';
  * It reads as part of the profile rather than as a new screen: the same top
  * bar, the same card, and a link back to the person whose list this is.
  */
+/** How many people a page shows before offering the rest. */
+const PAGE = 50;
+
 export async function FollowListPage({
   username,
   list,
+  show,
 }: {
   username: string;
   list: 'followers' | 'following';
+  show?: string;
 }) {
   const viewer = await getViewer();
   const user = await getUserByUsername(username);
@@ -35,7 +41,7 @@ export async function FollowListPage({
   const isSelf = viewer?.id === user.id;
   const blocked = viewer && !isSelf ? await isBlockedEitherWay(viewer.id, user.id) : false;
 
-  const [people, stats] = await Promise.all([
+  const [everyone, stats] = await Promise.all([
     blocked
       ? Promise.resolve([])
       : list === 'followers'
@@ -43,6 +49,12 @@ export async function FollowListPage({
         : followingOf(user.id, viewer?.id ?? null),
     getUserStats(user.id),
   ]);
+
+  // Paged the same way the feeds are: a plain link that grows the page, so it
+  // works before the bundle has loaded and a long list is still countable.
+  const requested = Number.parseInt(show ?? '', 10);
+  const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, PAGE), 1000) : PAGE;
+  const people = everyone.slice(0, limit);
 
   const title = list === 'followers' ? 'Followers' : 'Following';
   const count = list === 'followers' ? stats.followers : stats.following;
@@ -100,16 +112,22 @@ export async function FollowListPage({
             <p className="mt-1">You and this person have blocked each other.</p>
           </div>
         ) : (
-          <PeopleList
-            people={people}
-            signedIn={Boolean(viewer)}
-            emptyTitle={list === 'followers' ? 'No followers yet' : 'Not following anyone yet'}
-            emptyBody={
-              list === 'followers'
-                ? `${who === 'You' ? 'Nobody follows you' : `Nobody follows ${who}`} yet. Post something and people will find their way here.`
-                : `${who === 'You' ? 'You have not followed' : `${who} has not followed`} anyone yet.`
-            }
-          />
+          <>
+            <PeopleList
+              people={people}
+              signedIn={Boolean(viewer)}
+              emptyTitle={list === 'followers' ? 'No followers yet' : 'Not following anyone yet'}
+              emptyBody={
+                list === 'followers'
+                  ? `${who === 'You' ? 'Nobody follows you' : `Nobody follows ${who}`} yet. Post something and people will find their way here.`
+                  : `${who === 'You' ? 'You have not followed' : `${who} has not followed`} anyone yet.`
+              }
+            />
+            <LoadMore
+              href={`/u/${user.username}/${list}?show=${limit + PAGE}`}
+              hasMore={everyone.length > people.length}
+            />
+          </>
         )}
       </div>
     </>
