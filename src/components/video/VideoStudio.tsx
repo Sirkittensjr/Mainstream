@@ -278,15 +278,18 @@ export function VideoStudio() {
     setPosting(true);
     setError(null);
     try {
+      // Not gated on the preview thumbnail having arrived. That is an async
+      // effect, so somebody who types a caption quickly and presses post used
+      // to lose their thumbnail to a race — and a video post with no poster
+      // costs everybody who scrolls past it in the Videos feed, which shows
+      // posters rather than downloading clips it has not reached yet.
       let poster: string | undefined;
-      if (thumbnail) {
-        try {
-          const frame = await grabFrame(finished.previewUrl, thumbnailAt, { maxEdge: 720 });
-          const uploaded = await uploadMedia(frame, 'image/jpeg');
-          poster = uploaded.url;
-        } catch {
-          // A failed thumbnail must not cost somebody their post.
-        }
+      try {
+        const frame = await grabFrame(finished.previewUrl, thumbnailAt, { maxEdge: 720 });
+        const uploaded = await uploadMedia(frame, 'image/jpeg');
+        poster = uploaded.url;
+      } catch {
+        // A failed thumbnail must not cost somebody their post.
       }
 
       const result = await createVideoPostAction({
