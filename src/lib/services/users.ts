@@ -88,12 +88,12 @@ export interface PersonSummary {
  * Who is left out: banned accounts, and anyone the viewer has blocked or who
  * has blocked the viewer. A block already hides that person everywhere else,
  * and a follower list is not the place it stops applying.
+ *
+ * Everyone who survives that is returned. The page decides how many to put on
+ * screen at once, so "25 followers" can always be counted out to 25 rather
+ * than quietly stopping at whatever number this function felt like.
  */
-async function peopleFrom(
-  ids: ID[],
-  viewerId: ID | null,
-  limit: number,
-): Promise<PersonSummary[]> {
+async function peopleFrom(ids: ID[], viewerId: ID | null): Promise<PersonSummary[]> {
   if (ids.length === 0) return [];
   const [records, hidden, viewerFollowing] = await Promise.all([
     getUsers(ids),
@@ -103,7 +103,6 @@ async function peopleFrom(
 
   const out: PersonSummary[] = [];
   for (const id of ids) {
-    if (out.length >= limit) break;
     const user = records.get(id);
     if (!user || user.status === 'banned' || hidden.has(id)) continue;
     out.push({
@@ -116,29 +115,21 @@ async function peopleFrom(
 }
 
 /** Everyone who follows this person, most recent first. */
-export async function followersOf(
-  userId: ID,
-  viewerId: ID | null,
-  limit = 200,
-): Promise<PersonSummary[]> {
+export async function followersOf(userId: ID, viewerId: ID | null): Promise<PersonSummary[]> {
   const rows = await db().query('follows', { where: { following_id: userId } });
   const ids = [...rows]
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .map((row) => row.follower_id);
-  return peopleFrom(ids, viewerId, limit);
+  return peopleFrom(ids, viewerId);
 }
 
 /** Everyone this person follows, most recently followed first. */
-export async function followingOf(
-  userId: ID,
-  viewerId: ID | null,
-  limit = 200,
-): Promise<PersonSummary[]> {
+export async function followingOf(userId: ID, viewerId: ID | null): Promise<PersonSummary[]> {
   const rows = await db().query('follows', { where: { follower_id: userId } });
   const ids = [...rows]
     .sort((a, b) => b.created_at.localeCompare(a.created_at))
     .map((row) => row.following_id);
-  return peopleFrom(ids, viewerId, limit);
+  return peopleFrom(ids, viewerId);
 }
 
 export async function isFollowing(followerId: ID, followingId: ID): Promise<boolean> {

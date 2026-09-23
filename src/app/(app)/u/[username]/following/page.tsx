@@ -12,7 +12,13 @@ export async function generateMetadata({
   return { title: `People @${username} follows` };
 }
 
-export default async function Following({ params }: { params: Promise<{ username: string }> }) {
-  const { username } = await params;
-  return <FollowListPage username={username} list="following" />;
+export default async function Following({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ username: string }>;
+  searchParams: Promise<{ show?: string }>;
+}) {
+  const [{ username }, { show }] = await Promise.all([params, searchParams]);
+  return <FollowListPage username={username} list="following" show={show} />;
 }
