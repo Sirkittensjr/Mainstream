@@ -8,7 +8,7 @@ import { UnblockButton } from './UnblockButton';
 import { SettingsForm } from './SettingsForm';
 import { ProfileColours } from './ProfileColours';
 import { DangerZone } from './DangerZone';
-import { blockedList } from '@/lib/services/users';
+import { blockedList, profileColoursSupported } from '@/lib/services/users';
 import { requireViewer } from '@/lib/session';
 import { supabaseConfigured } from '@/lib/db';
 
@@ -53,6 +53,9 @@ export default async function SettingsPage() {
             <ProfileColours
               background={viewer.profile_bg ?? null}
               box={viewer.profile_box ?? null}
+              // Said before anybody picks anything, rather than after they
+              // have chosen and pressed save.
+              available={profileColoursSupported(viewer)}
             />
           </div>
         </section>

@@ -1,5 +1,5 @@
 import 'server-only';
-import { db, isMissingRelation } from '@/lib/db';
+import { db, isMissingRelation, supabaseConfigured } from '@/lib/db';
 import { communityCache, refreshCommunity } from './community-cache';
 import { newId } from '@/lib/ids';
 import type { Category, ID, PublicUser, User } from '@/lib/types';
@@ -279,6 +279,26 @@ export async function updateProfile(userId: ID, input: UpdateProfileInput): Prom
   refreshCommunity();
 }
 
+export type ColourSaveResult = { ok: true } | { ok: false; error: string };
+
+export const COLOURS_UNAVAILABLE =
+  'Profile colours are not switched on for this deployment yet — migration ' +
+  '0005 has not been run against this database.';
+
+/**
+ * Whether this database can store profile colours at all.
+ *
+ * PostgREST returns the columns a row actually has, so a row that comes back
+ * without these two is a database that has not had migration 0005 run against
+ * it. The local JSON driver stores whatever it is handed, so there is nothing
+ * to check there.
+ */
+export function profileColoursSupported(user: User): boolean {
+  if (!supabaseConfigured()) return true;
+  const row = user as unknown as Record<string, unknown>;
+  return 'profile_bg' in row && 'profile_box' in row;
+}
+
 /**
  * Saves the two colours somebody picked for their profile.
  *
@@ -288,42 +308,75 @@ export async function updateProfile(userId: ID, input: UpdateProfileInput): Prom
  * putting the colours in the same UPDATE would mean one missing column costs
  * somebody the rest of their profile edit.
  *
- * Returns false when the columns are not there. The caller says so; nothing
- * else changes, and nothing is silently swallowed: any other failure throws.
+ * The write is then READ BACK before this reports success. An UPDATE that
+ * matched no row does not fail: PostgREST answers 200 with nothing in it, so
+ * a policy that silently refuses the write, or an id that matches nobody,
+ * looks exactly like a save that worked. Telling somebody their colours are
+ * saved when the database does not hold them is the one outcome worth
+ * spending a second query to rule out — the colours are on a public profile,
+ * so "it looked right in my browser" is not evidence of anything.
+ *
+ * Only the profile's owner ever reaches this: the action passes the signed-in
+ * viewer's own id and takes no id from the request.
  */
 export async function updateProfileColours(
   userId: ID,
   background: string | null,
   box: string | null,
-): Promise<boolean> {
+): Promise<ColourSaveResult> {
   try {
     await db().update('users', userId, {
       profile_bg: background,
       profile_box: box,
     } as UpdateProfileInput);
-    refreshCommunity();
-    return true;
   } catch (error) {
     // `users` is there but one of these two columns is not: migration 0005
     // has not been run. A missing TABLE is a different and much larger
     // problem, and still throws.
     if (isMissingRelation(error) && error.table === 'users' && error.column !== null) {
-      if (!warnedAboutColours) {
-        warnedAboutColours = true;
-        console.error(
-          '[faytarra] Profile colours are switched off: this database has no `profile_bg` / ' +
-            '`profile_box` columns on `users`. Run ' +
-            'supabase/migrations/0005_profile_colours.sql against it to turn them on. ' +
-            `(${error instanceof Error ? error.message : String(error)})`,
-        );
-      }
-      return false;
+      warnAboutColours(error);
+      return { ok: false, error: COLOURS_UNAVAILABLE };
     }
     throw error;
   }
+
+  const stored = await db().get('users', userId);
+  if (!stored) {
+    return { ok: false, error: 'Could not find your profile to save those colours to.' };
+  }
+  if (!profileColoursSupported(stored)) {
+    warnAboutColours(new Error('the row came back without the columns'));
+    return { ok: false, error: COLOURS_UNAVAILABLE };
+  }
+  if ((stored.profile_bg ?? null) !== background || (stored.profile_box ?? null) !== box) {
+    console.error(
+      '[faytarra] A profile colour update was accepted and did not stick. Asked for ' +
+        `${background ?? 'default'}/${box ?? 'default'}, the row holds ` +
+        `${stored.profile_bg ?? 'default'}/${stored.profile_box ?? 'default'}. ` +
+        'Check the update grants and RLS policy on public.users.',
+    );
+    return {
+      ok: false,
+      error: 'The database did not keep those colours. Nothing has been changed.',
+    };
+  }
+
+  refreshCommunity();
+  return { ok: true };
 }
 
 let warnedAboutColours = false;
+
+function warnAboutColours(error: unknown): void {
+  if (warnedAboutColours) return;
+  warnedAboutColours = true;
+  console.error(
+    '[faytarra] Profile colours are switched off: this database has no `profile_bg` / ' +
+      '`profile_box` columns on `users`. Run ' +
+      'supabase/migrations/0005_profile_colours.sql against it to turn them on. ' +
+      `(${error instanceof Error ? error.message : String(error)})`,
+  );
+}
 
 export interface SuggestedPerson {
   user: PublicUser;

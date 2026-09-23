@@ -103,6 +103,32 @@ const MISSING_COLUMNS = new Set(
   (process.env.MISSING_COLUMNS ?? '').split(',').map((entry) => entry.trim()).filter(Boolean),
 );
 
+/**
+ * Nullable columns later migrations added, per table.
+ *
+ * A real PostgREST answers with every column of the table, so a row that has
+ * never been given one of these still comes back holding null for it — and
+ * the app reads exactly that to tell "this column exists and is empty" from
+ * "this database is behind the code". A stub that echoed only what was
+ * inserted would look permanently un-migrated, so it fills them in here, and
+ * leaves out whatever MISSING_COLUMNS says is not there.
+ */
+const ADDED_COLUMNS = {
+  users: ['username_changed_at', 'profile_bg', 'profile_box', 'top_creators'],
+};
+
+function withColumns(table, rows) {
+  const columns = (ADDED_COLUMNS[table] ?? []).filter(
+    (column) => !MISSING_COLUMNS.has(`${table}.${column}`),
+  );
+  if (columns.length === 0) return rows;
+  return rows.map((row) => {
+    const filled = { ...row };
+    for (const column of columns) if (!(column in filled)) filled[column] = null;
+    return filled;
+  });
+}
+
 function rest(req, res, url) {
   const table = url.pathname.replace('/rest/v1/', '').split('?')[0];
   if (!TABLES.includes(table)) {
@@ -140,7 +166,7 @@ function rest(req, res, url) {
         scanned: rows.length,
       });
     }
-    return respond(req, res, paged);
+    return respond(req, res, withColumns(table, paged));
   }
 
   return body(req).then((payload) => {
@@ -170,7 +196,7 @@ function rest(req, res, url) {
       const matching = filtered(table, url.searchParams, res);
       if (matching === null) return undefined;
       for (const row of matching) Object.assign(row, payload);
-      return respond(req, res, matching);
+      return respond(req, res, withColumns(table, matching));
     }
     if (req.method === 'DELETE') {
       const matching = filtered(table, url.searchParams, res);

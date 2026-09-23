@@ -15,6 +15,8 @@ const BASE = process.env.BASE_URL || 'http://localhost:3000';
 const OUTBOX = process.env.OUTBOX || '/tmp/fay-outbox.jsonl';
 const CHROMIUM = process.env.CHROMIUM_PATH;
 const PASSWORD = 'a long enough password';
+/** The PostgREST stub, when one is serving this run: lets the row be read. */
+const STUB = process.env.STUB || '';
 /**
  * Set when the database behind the app has NOT had migration 0005 run against
  * it. The suite then checks the other half of the contract: the feature says
@@ -54,13 +56,58 @@ async function createAccount(browser, handle, interest, options = {}) {
   return { context, page, handle };
 }
 
-/** Picks a swatch in the settings form and waits for the save to land. */
-async function pick(page, group, label) {
+/** Selects a swatch. Selecting is local — nothing is stored until Save. */
+async function choose(page, group, label) {
   await page.locator(`button[aria-label="${group}: ${label}"]`).click();
-  await page.waitForFunction(() => !document.body.innerText.includes('Saving…'), undefined, {
+  await page.waitForTimeout(150);
+}
+
+/** Presses Save and waits for the server's answer. */
+async function save(page) {
+  await page.locator('button', { hasText: /^Save colours$/ }).click();
+  await page.waitForFunction(
+    () => {
+      const text = document.body.innerText;
+      return !text.includes('Saving…') && (text.includes('Saved to your profile') || text.includes('not switched on') || text.includes('did not keep'));
+    },
+    undefined,
+    { timeout: 25000 },
+  );
+  await page.waitForTimeout(400);
+}
+
+/** Selects both colours and saves them. */
+async function pick(page, group, label) {
+  await choose(page, group, label);
+  await save(page);
+}
+
+/** Signs out through the account menu, the way somebody actually would. */
+async function signOut(actor) {
+  await actor.goto('/settings', { waitUntil: 'domcontentloaded' });
+  await actor.locator('button', { hasText: /^Log out$/ }).first().click();
+  await actor.waitForFunction(() => !location.pathname.startsWith('/settings'), undefined, {
     timeout: 20000,
   });
-  await page.waitForTimeout(600);
+}
+
+async function signIn(actor, handle) {
+  await actor.goto('/login', { waitUntil: 'domcontentloaded' });
+  await actor.fill('#identifier', handle);
+  await actor.fill('#password', PASSWORD);
+  await actor.locator('form button[type=submit]').last().click();
+  await actor.waitForFunction(() => !location.pathname.startsWith('/login'), undefined, {
+    timeout: 30000,
+  });
+}
+
+/** What the user row in the database actually holds, when a stub is serving it. */
+async function storedColours(handle) {
+  if (!STUB) return null;
+  const dump = await (await fetch(`${STUB}/__dump`)).json();
+  const row = (dump.users ?? []).find((user) => user.username === handle);
+  if (!row) return null;
+  return { bg: row.profile_bg ?? null, box: row.profile_box ?? null };
 }
 
 /** What the profile is actually painted in, straight off the rendered page. */
@@ -123,13 +170,19 @@ const run = async () => {
     section('NO MIGRATION — the columns are not there yet');
 
     await A.page.goto('/settings', { waitUntil: 'domcontentloaded' });
-    await A.page.locator('button[aria-label="Background: Purple"]').click();
-    await A.page.waitForTimeout(2500);
-    const message = await A.page.locator('body').innerText();
+    const notice = await A.page.locator('body').innerText();
     check(
-      'M. picking a colour says the feature is not switched on',
-      /not switched on/i.test(message),
-      message.split('\n').find((line) => /switched on/i.test(line)),
+      'M. the page says so before anybody picks anything',
+      /0005_profile_colours\.sql/.test(notice),
+      notice.split('\n').find((line) => /0005/.test(line))?.slice(0, 110),
+    );
+    check(
+      'M. and the swatches are not offered',
+      await A.page.locator('button[aria-label="Background: Purple"]').isDisabled(),
+    );
+    check(
+      'M. nor is the save button',
+      await A.page.locator('button', { hasText: /^Save colours$/ }).isDisabled(),
     );
 
     // The important half: the rest of the profile still saves. The colours are
@@ -168,11 +221,29 @@ const run = async () => {
   const boxChoices = await A.page.locator('button[aria-label^="Boxes:"]').count();
   check('0. and the boxes are chosen separately', boxChoices >= 8, `${boxChoices} box swatches`);
 
-  /* ============================== painting =============================== */
-  section('PAINT — black background, purple boxes');
+  /* =============================== TEST 1 ================================ */
+  section('TEST 1 — black background, purple boxes, then a refresh');
 
-  await pick(A.page, 'Background', 'Black');
-  await pick(A.page, 'Boxes', 'Purple');
+  await choose(A.page, 'Background', 'Black');
+  await choose(A.page, 'Boxes', 'Purple');
+  check(
+    '1. selecting does not claim to have saved anything',
+    /Not saved yet/.test(await A.page.locator('body').innerText()),
+  );
+  await save(A.page);
+  check(
+    '1. saving says so, and says it is on the profile',
+    /Saved to your profile/.test(await A.page.locator('body').innerText()),
+  );
+
+  const row = await storedColours(owner);
+  if (row) {
+    check(
+      '1. the DATABASE row holds the two keys',
+      row.bg === 'black' && row.box === 'purple',
+      `profile_bg=${row.bg} profile_box=${row.box}`,
+    );
+  }
 
   await A.page.goto(`/u/${owner}`, { waitUntil: 'domcontentloaded' });
   const painted = await paint(A.page);
@@ -187,15 +258,37 @@ const run = async () => {
       (await A.page.locator('a[href="/settings"]').count()) > 0,
   );
 
-  /* ============================== persistence ============================ */
-  section('PERSIST — a refresh, and somebody else looking');
-
   await A.page.reload({ waitUntil: 'domcontentloaded' });
   const afterReload = await paint(A.page);
   check(
-    '2. the colours survive a refresh',
+    '1. the colours survive a refresh',
     afterReload?.background === 'rgb(7, 7, 12)' && afterReload?.box === 'rgb(51, 18, 94)',
+    `${afterReload?.background} / ${afterReload?.box}`,
   );
+
+  /* =============================== TEST 2 ================================ */
+  section('TEST 2 — log out, log back in');
+
+  await signOut(A.page);
+  check('2. signed out', !(await A.page.url()).includes('/settings'));
+  await signIn(A.page, owner);
+  await A.page.goto(`/u/${owner}`, { waitUntil: 'domcontentloaded' });
+  const afterLogin = await paint(A.page);
+  check(
+    '2. the colours are still there after signing back in',
+    afterLogin?.background === 'rgb(7, 7, 12)' && afterLogin?.box === 'rgb(51, 18, 94)',
+    `${afterLogin?.background} / ${afterLogin?.box}`,
+  );
+
+  await A.page.goto('/settings', { waitUntil: 'domcontentloaded' });
+  check(
+    '2. and the picker comes back on the saved colours',
+    (await A.page.locator('button[aria-label="Background: Black"][aria-checked="true"]').count()) === 1 &&
+      (await A.page.locator('button[aria-label="Boxes: Purple"][aria-checked="true"]').count()) === 1,
+  );
+
+  /* =============================== TEST 3 ================================ */
+  section('TEST 3 — account B looks at account A');
 
   await B.page.goto(`/u/${owner}`, { waitUntil: 'domcontentloaded' });
   const asVisitor = await paint(B.page);
@@ -207,13 +300,84 @@ const run = async () => {
 
   await B.page.goto(`/u/${visitor}`, { waitUntil: 'domcontentloaded' });
   check('3. and their own profile is untouched by it', (await paint(B.page)) === null);
+  await B.page.goto('/home', { waitUntil: 'domcontentloaded' });
+  check(
+    '3. the rest of the site is not repainted either',
+    await B.page.evaluate(
+      () =>
+        !document.querySelector('[data-profile-skin="on"]') &&
+        getComputedStyle(document.body).backgroundColor === 'rgb(6, 6, 10)',
+    ),
+  );
+
+  /* ============================= TEST 4 + 5 ============================== */
+  section('TEST 4 + 5 — changed again, seen by B, and B refreshes');
+
+  await A.page.goto('/settings', { waitUntil: 'domcontentloaded' });
+  await choose(A.page, 'Background', 'Blue');
+  await choose(A.page, 'Boxes', 'Orange');
+  await save(A.page);
+
+  const changed = await storedColours(owner);
+  if (changed) {
+    check(
+      '4. the row was overwritten, not added to',
+      changed.bg === 'blue' && changed.box === 'orange',
+      `profile_bg=${changed.bg} profile_box=${changed.box}`,
+    );
+  }
+
+  await B.page.goto(`/u/${owner}`, { waitUntil: 'domcontentloaded' });
+  const changedForB = await paint(B.page);
+  check(
+    '4. B sees the new colours',
+    changedForB?.background === 'rgb(11, 42, 94)' && changedForB?.box === 'rgb(107, 46, 5)',
+    `${changedForB?.background} / ${changedForB?.box}`,
+  );
+
+  await B.page.reload({ waitUntil: 'domcontentloaded' });
+  const afterBRefresh = await paint(B.page);
+  check(
+    '5. and they are still there when B refreshes',
+    afterBRefresh?.background === 'rgb(11, 42, 94)' && afterBRefresh?.box === 'rgb(107, 46, 5)',
+    `${afterBRefresh?.background} / ${afterBRefresh?.box}`,
+  );
+
+  /* =============================== SECURITY ============================== */
+  section('SECURITY — B cannot paint A');
+
+  await B.page.goto('/settings', { waitUntil: 'domcontentloaded' });
+  await choose(B.page, 'Background', 'Green');
+  await save(B.page);
+  await B.page.goto(`/u/${owner}`, { waitUntil: 'domcontentloaded' });
+  const stillA = await paint(B.page);
+  check(
+    'S. B saving their own colours leaves A alone',
+    stillA?.background === 'rgb(11, 42, 94)',
+    stillA?.background,
+  );
+  await B.page.goto(`/u/${visitor}`, { waitUntil: 'domcontentloaded' });
+  check(
+    'S. and paints B',
+    (await paint(B.page))?.background === 'rgb(11, 61, 36)',
+  );
+  if (STUB) {
+    const bRow = await storedColours(visitor);
+    const aRow = await storedColours(owner);
+    check(
+      'S. two rows, two sets of colours',
+      bRow?.bg === 'green' && aRow?.bg === 'blue',
+      `A=${aRow?.bg} B=${bRow?.bg}`,
+    );
+  }
 
   /* ============================== readability ============================ */
   section('READABLE — the bright combinations, measured');
 
   await A.page.goto('/settings', { waitUntil: 'domcontentloaded' });
-  await pick(A.page, 'Background', 'Purple');
-  await pick(A.page, 'Boxes', 'Bright yellow');
+  await choose(A.page, 'Background', 'Purple');
+  await choose(A.page, 'Boxes', 'Bright yellow');
+  await save(A.page);
   await A.page.goto(`/u/${owner}`, { waitUntil: 'domcontentloaded' });
   const bright = await paint(A.page);
   check('4. a bright yellow box is yellow', bright?.box === 'rgb(255, 216, 77)', bright?.box);
@@ -229,8 +393,9 @@ const run = async () => {
   );
 
   await A.page.goto('/settings', { waitUntil: 'domcontentloaded' });
-  await pick(A.page, 'Background', 'Bright blue');
-  await pick(A.page, 'Boxes', 'Orange');
+  await choose(A.page, 'Background', 'Bright blue');
+  await choose(A.page, 'Boxes', 'Orange');
+  await save(A.page);
   await A.page.goto(`/u/${owner}`, { waitUntil: 'domcontentloaded' });
   const mixed = await paint(A.page);
   check(
@@ -267,42 +432,74 @@ const run = async () => {
   await phone.close();
 
   /* ================================ reset ================================ */
-  section('RESET — back to the way it was');
+  section('TEST 6 — reset to default');
 
   await A.page.goto('/settings', { waitUntil: 'domcontentloaded' });
   await A.page.locator('button', { hasText: 'Reset to default' }).click();
-  await A.page.waitForFunction(() => !document.body.innerText.includes('Saving…'), undefined, {
-    timeout: 20000,
-  });
-  await A.page.waitForTimeout(600);
+  await A.page.waitForFunction(
+    () => document.body.innerText.includes('Saved to your profile'),
+    undefined,
+    { timeout: 25000 },
+  );
+  await A.page.waitForTimeout(400);
   await A.page.goto(`/u/${owner}`, { waitUntil: 'domcontentloaded' });
   check('6. reset puts the profile back to the default', (await paint(A.page)) === null);
 
   await B.page.goto(`/u/${owner}`, { waitUntil: 'domcontentloaded' });
   check('6. for everybody else too', (await paint(B.page)) === null);
 
-  /* ============================== the data =============================== */
-  section('STORED — it is the database, not the browser');
+  if (STUB) {
+    const cleared = await storedColours(owner);
+    check(
+      '6. and the row holds nothing rather than an old colour',
+      cleared?.bg === null && cleared?.box === null,
+      `profile_bg=${cleared?.bg} profile_box=${cleared?.box}`,
+    );
+  }
 
-  const stored = await A.page.evaluate(async () => {
-    const response = await fetch('/api/v1/me');
-    return response.ok ? await response.json() : null;
-  });
-  check('7. the reset is what the server holds', stored !== null);
+  await A.page.reload({ waitUntil: 'domcontentloaded' });
+  check('6. the reset survives a refresh too', (await paint(A.page)) === null);
+
+  /* ============================== the data =============================== */
+  section('STORED — the database, not this browser');
 
   await A.page.goto('/settings', { waitUntil: 'domcontentloaded' });
   await pick(A.page, 'Background', 'Green');
-  // A brand new browser, never having touched this account's settings.
+
+  // A different browser entirely: its own storage, its own cookies, nobody
+  // signed in. If the colour were kept anywhere in a browser, this is where
+  // it would fail.
   const cold = await browser.newContext({ baseURL: BASE });
   const coldPage = await cold.newPage();
   await coldPage.goto(`/u/${owner}`, { waitUntil: 'domcontentloaded' });
   const signedOut = await paint(coldPage);
   check(
-    '7. a signed-out visitor in a clean browser sees the stored colour',
+    '7. another browser, signed out, sees the stored colour',
     signedOut?.background === 'rgb(11, 61, 36)',
     signedOut?.background,
   );
+  const noStorage = await coldPage.evaluate(() => {
+    try {
+      return { keys: Object.keys(localStorage).length, session: Object.keys(sessionStorage).length };
+    } catch {
+      return { keys: -1, session: -1 };
+    }
+  });
+  check(
+    '7. and that browser has stored nothing of its own to do it',
+    noStorage.keys === 0 && noStorage.session === 0,
+    `localStorage ${noStorage.keys}, sessionStorage ${noStorage.session}`,
+  );
   await cold.close();
+
+  if (STUB) {
+    const green = await storedColours(owner);
+    check(
+      '7. the row is what everybody is reading',
+      green?.bg === 'green',
+      `profile_bg=${green?.bg}`,
+    );
+  }
 
   /* =========================== nothing broken ============================ */
   section('UNCHANGED — the rest of the profile');

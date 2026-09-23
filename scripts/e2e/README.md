@@ -285,17 +285,31 @@ Nothing here is eyeballed. The colours are read back off the rendered page with
 `getComputedStyle`, and "the text is still readable" is a computed WCAG
 contrast ratio against the box the text is actually sitting on — a bright
 yellow box has to clear 4.5:1 for its heading and its quieter text alike, or
-the check fails. It also covers a reset going back to nothing, the same colours
-appearing for a different account and for a signed-out visitor in a clean
-browser (so it is the database answering, not a browser remembering), the phone
-layout, and the profile's followers, following, rating, tabs and buttons all
-still being there afterwards.
+the check fails.
+
+The persistence half is six numbered scenarios: save, refresh; log out and log
+back in; a second account seeing the same colours; changing them and the second
+account seeing the change; that account refreshing; and a reset going back to
+the default for everybody. Plus the ones that say where the colours actually
+live — a third browser with nothing signed in sees them and has an empty
+`localStorage` and `sessionStorage`, the rest of the site is not repainted
+while viewing somebody else's profile, and one account saving their own colours
+leaves the other account's alone.
+
+Point `STUB` at the PostgREST stub as well and it reads the `users` row back
+out of the database between steps, so "it saved" is the row holding
+`profile_bg=black`, not a page that looks right:
+
+```bash
+BASE_URL=http://localhost:3100 STUB=http://127.0.0.1:55300 \
+  node scripts/e2e/profile-colours-flow.mjs
+```
 
 Run it a second time with `EXPECT_NO_COLOURS=1` against a database that has
 **not** had migration 0005 applied. It then checks the other half of the
-contract: picking a colour says the feature is not switched on, and — the part
-that matters — the rest of a profile edit still saves. The PostgREST stub
-rehearses that state:
+contract: the page says so before anybody picks anything, the swatches and the
+save button are disabled, and — the part that matters — the rest of a profile
+edit still saves. The PostgREST stub rehearses that state:
 
 ```bash
 PORT=55300 GOTRUE_PORT=54321 \

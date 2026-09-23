@@ -337,17 +337,15 @@ export async function updateProfileColoursAction(background: string, box: string
     return { ok: false as const, error: 'That is not one of the colours.' };
   }
 
+  // `viewer.id` comes from the session, and this action takes no id of its
+  // own, so there is no request anybody can make that paints somebody else's
+  // profile.
   const saved = await updateProfileColours(
     viewer.id,
     background === PROFILE_DEFAULT ? null : background,
     box === PROFILE_DEFAULT ? null : box,
   );
-  if (!saved) {
-    return {
-      ok: false as const,
-      error: 'Profile colours are not switched on for this deployment yet.',
-    };
-  }
+  if (!saved.ok) return { ok: false as const, error: saved.error };
 
   revalidatePath('/settings');
   revalidatePath(`/u/${viewer.username}`);
