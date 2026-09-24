@@ -16,6 +16,7 @@ import { FollowButton } from '@/components/FollowButton';
 import type { PostCardData } from '@/components/PostCard';
 import { RateButton } from '@/components/RateSheet';
 import { ReportDialog } from '@/components/ReportDialog';
+import { VideoComments, type CommenterInfo, type VideoComment } from './VideoComments';
 import {
   CommentIcon,
   HeartIcon,
@@ -46,9 +47,12 @@ import {
 export function VideoFeed({
   items,
   viewerId,
+  viewer = null,
 }: {
   items: PostCardData[];
   viewerId: string | null;
+  /** Who is watching, for the row their own comment appears as. */
+  viewer?: CommenterInfo | null;
 }) {
   const [active, setActive] = useState(0);
   /**
@@ -94,6 +98,44 @@ export function VideoFeed({
   const setSlide = useCallback((index: number, node: HTMLElement | null) => {
     slides.current[index] = node;
   }, []);
+
+  /**
+   * Comments, opened over the video rather than on another page.
+   *
+   * The sheet is one instance for the whole feed, and what it has loaded is
+   * kept here by post id: nothing is fetched until somebody opens a video's
+   * comments, and opening the same one again costs nothing. Opening it
+   * touches no player, so the video behind carries on exactly as it was.
+   */
+  const [openFor, setOpenFor] = useState<string | null>(null);
+  /** Comment counts that have moved since the page was rendered. */
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [comments, setComments] = useState<Record<string, VideoComment[]>>({});
+  const [loading, setLoading] = useState(false);
+  const [commentsError, setCommentsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!openFor || comments[openFor]) return;
+    let cancelled = false;
+    setLoading(true);
+    setCommentsError(null);
+    void (async () => {
+      try {
+        const response = await fetch(`/api/v1/posts/${openFor}`, { cache: 'no-store' });
+        if (!response.ok) throw new Error('Could not load the comments.');
+        const payload = (await response.json()) as { comments?: VideoComment[] };
+        if (cancelled) return;
+        setComments((current) => ({ ...current, [openFor]: payload.comments ?? [] }));
+      } catch {
+        if (!cancelled) setCommentsError('Could not load the comments. Try again.');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [openFor, comments]);
 
   // Stable, because a slide re-runs its playback effect when these change.
   const handleBlocked = useCallback(() => setBlocked(true), []);
@@ -148,6 +190,8 @@ export function VideoFeed({
               // the queue touches the network.
               preload={index === active ? 'auto' : index === active + 1 ? 'metadata' : 'none'}
               muted={muted}
+              commentCount={counts[data.id] ?? data.comments}
+              onOpenComments={() => setOpenFor(data.id)}
               onBlocked={handleBlocked}
               onUnmute={handleUnmute}
               last={index === items.length - 1}
@@ -155,6 +199,27 @@ export function VideoFeed({
           );
         })}
       </div>
+
+      {openFor && (
+        <VideoComments
+          postId={openFor}
+          comments={comments[openFor] ?? null}
+          loading={loading}
+          error={commentsError}
+          viewer={viewer}
+          onClose={() => setOpenFor(null)}
+          onPosted={(comment) => {
+            setComments((current) => ({
+              ...current,
+              [openFor]: [...(current[openFor] ?? []), comment],
+            }));
+            setCounts((current) => ({
+              ...current,
+              [openFor]: (current[openFor] ?? items.find((item) => item.id === openFor)?.comments ?? 0) + 1,
+            }));
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -169,6 +234,8 @@ function Slide({
   isActive,
   preload,
   muted,
+  commentCount,
+  onOpenComments,
   onBlocked,
   onUnmute,
   last,
@@ -182,6 +249,8 @@ function Slide({
   isActive: boolean;
   preload: 'auto' | 'metadata' | 'none';
   muted: boolean;
+  commentCount: number;
+  onOpenComments: () => void;
   /** Autoplay with sound was refused, so everything from here plays muted. */
   onBlocked: () => void;
   onUnmute: () => void;
@@ -439,14 +508,20 @@ function Slide({
             <HeartIcon filled={liked} width={26} height={26} />
             {formatCount(likes)}
           </button>
-          <Link
-            href={`/post/${data.id}#comments`}
+          <button
+            type="button"
+            onClick={(event) => {
+              // A control, not a tap on the video: the play/pause layer is
+              // underneath and must not hear this.
+              event.stopPropagation();
+              onOpenComments();
+            }}
             aria-label="Comments"
             className="flex flex-col items-center gap-1 text-[11px] font-semibold text-white"
           >
             <CommentIcon width={26} height={26} />
-            {formatCount(data.comments)}
-          </Link>
+            {formatCount(commentCount)}
+          </button>
           <button
             type="button"
             onClick={share}
