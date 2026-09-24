@@ -396,7 +396,9 @@ const run = async () => {
   check('the feed does not scroll sideways on a phone', overflow <= 1, `${overflow}px of overflow`);
   check(
     'the bottom navigation is there on a phone',
-    await phonePage.locator('nav a[href="/discover"]').first().isVisible(),
+    // Discover moved into Home's tabs, so the bar is Home, Videos, Create,
+    // Alerts and Profile.
+    await phonePage.locator('nav a[href="/videos"]').first().isVisible(),
   );
   check(
     'search is reachable on a phone',

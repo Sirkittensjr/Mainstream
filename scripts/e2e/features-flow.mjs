@@ -128,6 +128,90 @@ const run = async () => {
     !aDiscover.includes(caption),
   );
 
+  // ===================== HOME TABS =====================
+  section('HOME — Following, Recommended and Discover, without leaving Home');
+
+  /** Home streams its skeleton first, so wait for the feed itself. */
+  async function openHome(page, tab) {
+    await page.goto(tab ? `/home?tab=${tab}` : '/home', { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('networkidle').catch(() => undefined);
+    return page.innerText('body');
+  }
+
+  const homeDefault = await openHome(A.page);
+  check(
+    'Home opens on Following for somebody signed in',
+    (await A.page.locator('nav[aria-label="Feed"] a[href="/home"][aria-current="page"]').count()) === 1,
+    homeDefault.split('\n').slice(0, 3).join(' | '),
+  );
+  check(
+    'all three tabs are offered',
+    (await A.page.locator('nav[aria-label="Feed"] a').count()) >= 3,
+    (await A.page.locator('nav[aria-label="Feed"] a').allInnerTexts()).join(' / '),
+  );
+
+  const recommended = await openHome(A.page, 'recommended');
+  check('the Recommended tab shows somebody else’s post', recommended.includes(bCaption));
+  check(
+    'and is marked as the tab you are on',
+    (await A.page
+      .locator('nav[aria-label="Feed"] a[href="/home?tab=recommended"][aria-current="page"]')
+      .count()) === 1,
+  );
+
+  const discover = await openHome(A.page, 'discover');
+  check('the Discover tab shows the same post the Discover page does', discover.includes(bCaption));
+  check(
+    'and is marked as the tab you are on',
+    (await A.page
+      .locator('nav[aria-label="Feed"] a[href="/home?tab=discover"][aria-current="page"]')
+      .count()) === 1,
+  );
+  check(
+    'with a way through to the boards and people',
+    (await A.page.locator('a[href="/discover"]').count()) > 0,
+  );
+
+  const following = await openHome(A.page, 'following');
+  check('and Following still works', following.includes(caption) || /following feed is quiet/i.test(following));
+
+  // The bottom bar is a phone thing, so it is checked at phone width.
+  const phone = await browser.newContext({
+    baseURL: BASE,
+    storageState: await A.context.storageState(),
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  const small = await phone.newPage();
+  await small.goto('/home', { waitUntil: 'domcontentloaded' });
+  const bottom = small.locator('nav.fixed');
+  check(
+    'the bottom bar no longer has Discover on it',
+    (await bottom.locator('a[href="/discover"]').count()) === 0,
+  );
+  check(
+    'and still has the other five',
+    (await bottom.locator('a').count()) === 5,
+    (await bottom.locator('a').allInnerTexts()).join(' / ').replace(/\n/g, ''),
+  );
+  check(
+    'with Create in the middle',
+    (await bottom.locator('a[aria-label="Create"]').count()) === 1,
+  );
+  check(
+    'the tabs fit a phone without scrolling the page sideways',
+    await small.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
+  );
+  await small.locator('nav[aria-label="Feed"] a', { hasText: 'Discover' }).click();
+  await small.waitForLoadState('networkidle').catch(() => undefined);
+  check(
+    'and tapping Discover on a phone stays on Home',
+    new URL(small.url()).pathname === '/home',
+    small.url(),
+  );
+  await phone.close();
+
   // ===================== RATINGS =====================
   section('RATINGS — displayed rating is the real average');
   await B.page.goto(`/post/${postId}`, { waitUntil: 'domcontentloaded' });

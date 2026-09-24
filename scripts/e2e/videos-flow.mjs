@@ -202,7 +202,19 @@ const run = async () => {
     first.map((p) => `${p.index}:${p.paused ? 'paused' : 'playing'}`).join(' '),
   );
   check('3. and it is the one on screen', first.find((p) => !p.paused)?.index === 0);
-  check('4. playback starts muted, as autoplay requires', first.every((p) => p.muted));
+  // Sound is the intended experience, so the feed asks for it. A browser that
+  // refuses autoplay with sound gets muted playback instead and the control
+  // says "Sound off" — both are correct, and which one you get is the
+  // browser's decision, not the app's. This browser allows it.
+  check(
+    '4. the active video plays with sound where the browser allows it',
+    first.find((p) => !p.paused)?.muted === false,
+    first.map((p) => `${p.index}:${p.muted ? 'muted' : 'sound'}`).join(' '),
+  );
+  check(
+    '4. and the control says which it is',
+    /Sound on/.test(await C.page.locator('body').innerText()),
+  );
 
   check(
     '5. only the clip playing and the next one are even loaded',
@@ -267,11 +279,39 @@ const run = async () => {
     (second.find((p) => p.index === 0)?.paused ?? true) === true,
   );
 
+  // Muting and unmuting must not move you anywhere or stop the video.
+  const wasPlaying = (await players(C.page)).find((p) => !p.paused)?.index;
+  const url = C.page.url();
+  await C.page.locator('button[aria-label="Mute"]').first().click();
+  await C.page.waitForTimeout(600);
+  const afterMute = await players(C.page);
+  check('9. sound can be turned off', afterMute.every((p) => p.muted));
+  check(
+    '9. and the video keeps playing while you do it',
+    afterMute.find((p) => p.index === wasPlaying)?.paused === false,
+  );
+  check('9. and it does not navigate anywhere', C.page.url() === url, C.page.url());
+
   await C.page.locator('button[aria-label="Unmute"]').first().click();
   await C.page.waitForTimeout(600);
   const unmuted = await players(C.page);
-  check('9. sound can be turned on', unmuted.every((p) => !p.muted));
-  await C.page.locator('button[aria-label="Mute"]').first().click();
+  check('9. and back on again', unmuted.find((p) => p.index === wasPlaying)?.muted === false);
+
+  // Tapping the frame is play/pause, and nothing else.
+  await C.page.locator('section[data-index="1"] button[aria-label="Pause video"]').click();
+  await C.page.waitForTimeout(500);
+  check(
+    '9. tapping the video pauses it',
+    (await players(C.page)).every((p) => p.paused),
+    C.page.url(),
+  );
+  check('9. without navigating away', C.page.url() === url);
+  await C.page.locator('section[data-index="1"] button[aria-label="Play video"]').click();
+  await C.page.waitForTimeout(700);
+  check(
+    '9. and tapping again plays it',
+    (await players(C.page)).find((p) => p.index === wasPlaying)?.paused === false,
+  );
 
   /* ========================== the social features ======================== */
   section('SOCIAL — a video is a normal FayTarra post');

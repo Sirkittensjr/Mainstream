@@ -27,11 +27,17 @@ export interface NavUser {
   unreadMessages: number;
 }
 
+/**
+ * The bottom bar: five slots, and Discover is not one of them.
+ *
+ * Discovering things is browsing, and browsing belongs on Home — it is a tab
+ * there now, beside Following and Recommended. The page and every link to it
+ * still work; it is just not somewhere you need a permanent button for.
+ */
 const PRIMARY = [
   { href: '/home', label: 'Home', icon: HomeIcon },
   { href: '/videos', label: 'Videos', icon: ReelIcon },
   { href: '/create', label: 'Create', icon: PlusIcon },
-  { href: '/discover', label: 'Discover', icon: CompassIcon },
   { href: '/notifications', label: 'Alerts', icon: BellIcon },
 ] as const;
 
@@ -107,7 +113,7 @@ function NavTab({
     <Link
       href={href}
       aria-current={active ? 'page' : undefined}
-      className={`flex w-[3.25rem] flex-col items-center gap-1 py-2 text-[10px] font-semibold tracking-wide transition ${
+      className={`flex w-16 flex-col items-center gap-1 py-2 text-[10px] font-semibold tracking-wide transition ${
         active ? 'text-white' : 'text-white/40'
       }`}
     >

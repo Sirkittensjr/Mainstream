@@ -51,9 +51,24 @@ export function VideoFeed({
   viewerId: string | null;
 }) {
   const [active, setActive] = useState(0);
-  // Autoplay is only allowed to start muted, so that is where everybody
-  // starts. One tap turns the sound on and it stays on for the session.
-  const [muted, setMuted] = useState(true);
+  /**
+   * What the person wants, and what the browser has allowed.
+   *
+   * The intended experience is sound, so `wantsSound` starts true and every
+   * clip tries to play with it. Safari — and Chrome, on a page nobody has
+   * touched yet — refuses that, and the refusal arrives as a rejected
+   * play(): the slide then falls back to muted playback and says so here, by
+   * setting `blocked`. That is the only thing that mutes anybody who has not
+   * asked to be muted, and one tap on the speaker clears it for good, because
+   * a tap is the interaction those policies were waiting for.
+   *
+   * Nothing here is an attempt to get around the policy. It is the two
+   * outcomes the policy allows, in the order that gives somebody sound as
+   * soon as they are entitled to it.
+   */
+  const [wantsSound, setWantsSound] = useState(true);
+  const [blocked, setBlocked] = useState(false);
+  const muted = !wantsSound || blocked;
   const scroller = useRef<HTMLDivElement>(null);
   const slides = useRef<Array<HTMLElement | null>>([]);
 
@@ -80,17 +95,32 @@ export function VideoFeed({
     slides.current[index] = node;
   }, []);
 
+  // Stable, because a slide re-runs its playback effect when these change.
+  const handleBlocked = useCallback(() => setBlocked(true), []);
+  const handleUnmute = useCallback(() => {
+    setBlocked(false);
+    setWantsSound(true);
+  }, []);
+
   return (
     <div className="relative bg-black lg:rounded-3xl lg:overflow-hidden">
       <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center gap-3 bg-gradient-to-b from-black/70 to-transparent px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-8">
         <h1 className="font-display text-lg font-extrabold tracking-tight drop-shadow">Videos</h1>
         <button
           type="button"
-          onClick={() => setMuted((value) => !value)}
+          onClick={(event) => {
+            // This tap is a control, not a tap on the video: it must not
+            // reach the play/pause layer underneath.
+            event.stopPropagation();
+            setBlocked(false);
+            setWantsSound(muted);
+          }}
           aria-label={muted ? 'Unmute' : 'Mute'}
-          className="pointer-events-auto ml-auto rounded-full bg-black/50 p-2.5 text-white backdrop-blur transition active:scale-95"
+          aria-pressed={!muted}
+          className="pointer-events-auto ml-auto flex items-center gap-1.5 rounded-full bg-black/55 px-3 py-2.5 text-white backdrop-blur transition active:scale-95"
         >
           <VolumeIcon muted={muted} width={20} height={20} />
+          <span className="text-[11px] font-semibold">{muted ? 'Sound off' : 'Sound on'}</span>
         </button>
       </div>
 
@@ -118,7 +148,8 @@ export function VideoFeed({
               // the queue touches the network.
               preload={index === active ? 'auto' : index === active + 1 ? 'metadata' : 'none'}
               muted={muted}
-              onUnmute={() => setMuted(false)}
+              onBlocked={handleBlocked}
+              onUnmute={handleUnmute}
               last={index === items.length - 1}
             />
           );
@@ -138,6 +169,7 @@ function Slide({
   isActive,
   preload,
   muted,
+  onBlocked,
   onUnmute,
   last,
 }: {
@@ -150,6 +182,8 @@ function Slide({
   isActive: boolean;
   preload: 'auto' | 'metadata' | 'none';
   muted: boolean;
+  /** Autoplay with sound was refused, so everything from here plays muted. */
+  onBlocked: () => void;
   onUnmute: () => void;
   last: boolean;
 }) {
@@ -168,17 +202,37 @@ function Slide({
   useEffect(() => {
     const element = video.current;
     if (!element) return;
-    if (isActive && !covered) {
-      // A rejected play() is normal — the browser refuses autoplay until it
-      // trusts the page. The poster and the play button stay, and a tap
-      // starts it.
-      void element.play().catch(() => undefined);
-    } else {
+    if (!isActive || covered) {
       element.pause();
       element.currentTime = 0;
       setProgress(0);
+      return;
     }
-  }, [isActive, mounted, covered]);
+
+    let cancelled = false;
+    void (async () => {
+      element.muted = muted;
+      try {
+        await element.play();
+      } catch {
+        if (cancelled || element.muted) {
+          // Already muted and still refused: the browser is not going to
+          // start this on its own. The poster and the play button stay, and
+          // a tap starts it.
+          return;
+        }
+        // Refused with sound. Mute and try once more, which is the one thing
+        // every autoplay policy does allow, and tell the feed so the rest of
+        // the clips do not each repeat this.
+        element.muted = true;
+        onBlocked();
+        await element.play().catch(() => undefined);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isActive, mounted, covered, muted, onBlocked]);
 
   // React will not re-mute a player that has already started, so the mute
   // state is applied to the element itself.
@@ -297,7 +351,10 @@ function Slide({
       {muted && isActive && (
         <button
           type="button"
-          onClick={onUnmute}
+          onClick={(event) => {
+            event.stopPropagation();
+            onUnmute();
+          }}
           className="absolute left-1/2 top-[22%] z-20 -translate-x-1/2 rounded-full bg-black/55 px-4 py-2 text-xs font-semibold backdrop-blur"
         >
           Tap for sound
