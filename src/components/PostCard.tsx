@@ -25,6 +25,8 @@ export interface PostCardData {
   tags: string[];
   views: number;
   createdAt: string;
+  /** The author asked for this to stay covered until somebody taps it. */
+  contentWarning?: boolean;
   likes: number;
   comments: number;
   liked: boolean;
@@ -158,7 +160,9 @@ export function PostCard({
         </Link>
       )}
 
-      {data.media.length > 0 && <MediaStrip media={data.media} postId={data.id} />}
+      {data.media.length > 0 && (
+        <MediaStrip media={data.media} postId={data.id} warned={data.contentWarning === true} />
+      )}
 
       <footer className="flex items-center gap-1 px-2 py-2">
         <button
@@ -257,10 +261,35 @@ export function PostCard({
   );
 }
 
-function MediaStrip({ media, postId }: { media: Media[]; postId: string }) {
+function MediaStrip({
+  media,
+  postId,
+  warned,
+}: {
+  media: Media[];
+  postId: string;
+  warned: boolean;
+}) {
   const [index, setIndex] = useState(0);
+  // The cover is in front of the media rather than instead of it: the post,
+  // its caption and everything under it read normally, and one tap gets to
+  // what the author flagged.
+  const [covered, setCovered] = useState(warned);
   return (
     <div className="relative">
+      {covered && (
+        <button
+          type="button"
+          onClick={() => setCovered(false)}
+          className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 rounded-2xl bg-ink-950/80 px-6 text-center backdrop-blur-xl"
+        >
+          <span className="font-display text-sm font-bold">Content warning</span>
+          <span className="text-xs text-white/55">
+            {media[0]?.kind === 'video' ? 'The author covered this video.' : 'The author covered this.'}{' '}
+            Tap to view.
+          </span>
+        </button>
+      )}
       <div
         className="hide-scrollbar flex snap-x snap-mandatory overflow-x-auto"
         onScroll={(event) => {

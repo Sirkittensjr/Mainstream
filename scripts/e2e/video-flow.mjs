@@ -63,7 +63,20 @@ async function createAccount(browser, handle, interest) {
 async function openStudio(page) {
   await page.goto('/create', { waitUntil: 'domcontentloaded' });
   await page.locator('button[role=tab]', { hasText: 'Video' }).click();
-  await page.waitForSelector('text=Start your video', { timeout: 10000 });
+  await page.waitForSelector('text=Post a video', { timeout: 10000 });
+}
+
+/**
+ * Into the multi-clip editor, which is deliberately not where anybody starts.
+ * One video is the normal case and gets a plain screen; this is the door to
+ * the rest, and everything from here down is the advanced half.
+ */
+async function openClipEditor(page) {
+  const opener = page.locator('button', { hasText: /^(Add another clip|\d+ clips)$/ });
+  if ((await opener.count()) > 0) {
+    await opener.first().click();
+    await page.waitForTimeout(400);
+  }
 }
 
 async function addClip(page, name) {
@@ -114,9 +127,30 @@ const run = async () => {
   await openStudio(A.page);
   check('the existing Post tab is still there', (await A.page.locator('button[role=tab]', { hasText: 'Post' }).count()) === 1);
 
-  // 1. Upload a video.
+  // 1. Upload a video. One video is the plain screen, so the clip strip only
+  // exists once somebody goes looking for it.
   await addClip(A.page, 'landscape.webm');
-  check('1. a video file can be uploaded into the editor', (await clipCount(A.page)) === 1);
+  check('1. a video file can be uploaded', (await A.page.locator('#video-title').count()) === 1);
+  check(
+    '1. and one video shows no clip machinery at all',
+    !/Clip 1|Combining|clip 1 of/i.test(await A.page.locator('body').innerText()),
+  );
+
+  // 12. Choose a thumbnail. Tucked away, because most posts never touch it.
+  await A.page.locator('summary', { hasText: 'Cover frame' }).click();
+  await A.page.waitForTimeout(1500);
+  const thumbSlider = A.page.locator('#thumbnail');
+  const firstThumb = await A.page.locator('img[alt="The frame chosen for this post"]').getAttribute('src');
+  await setRange(thumbSlider, Number(await thumbSlider.getAttribute('max')) * 0.6);
+  await A.page.waitForTimeout(1500);
+  const secondThumb = await A.page.locator('img[alt="The frame chosen for this post"]').getAttribute('src');
+  check(
+    '12. a different frame can be chosen as the thumbnail',
+    Boolean(firstThumb && secondThumb && firstThumb !== secondThumb),
+  );
+
+  await openClipEditor(A.page);
+  check('1. the clip strip is there for anybody who wants it', (await clipCount(A.page)) === 1);
   const firstRow = await clips(A.page).first().innerText();
   check('the clip shows its length', /\d:\d\d(\.\d)?/.test(firstRow), firstRow.replace(/\n/g, ' '));
 
@@ -197,8 +231,9 @@ const run = async () => {
   await A.page.waitForTimeout(300);
   check('10. volume can be taken to silent', (await A.page.locator('text=This clip will be silent').count()) === 1);
 
-  await A.page.locator('button', { hasText: 'Done' }).click();
+  await A.page.locator('button', { hasText: 'Done' }).first().click();
   await A.page.waitForTimeout(500);
+  await openClipEditor(A.page);
 
   const trimmedLength = await lengthOf(0);
   check('7. trimming makes the clip shorter', trimmedLength !== null && startingLength !== null && trimmedLength < startingLength, `${startingLength}s -> ${trimmedLength}s`);
@@ -238,25 +273,18 @@ const run = async () => {
   }
   check('11. the editor is down to the clips we want to combine', (await clipCount(A.page)) === 2);
 
-  await A.page.locator('button', { hasText: 'Preview' }).last().click();
-  await A.page.waitForSelector('text=Ready to post', { timeout: 180000 });
-  check('11. the combined video renders and previews', true);
+  await A.page.locator('button', { hasText: /^Done$/ }).last().click();
+  await A.page.waitForSelector('#video-title', { timeout: 20000 });
+  check('11. two clips are ready to post as one video', true);
 
-  // 12. Choose a thumbnail.
-  const thumbnailSlider = A.page.locator('#thumbnail');
-  const firstThumb = await A.page.locator('img[alt="The frame chosen for this post"]').getAttribute('src');
-  await setRange(thumbnailSlider, Number(await thumbnailSlider.getAttribute('max')) * 0.6);
-  await A.page.waitForTimeout(1500);
-  const secondThumb = await A.page.locator('img[alt="The frame chosen for this post"]').getAttribute('src');
-  check('12. a different frame can be chosen as the thumbnail', Boolean(firstThumb && secondThumb && firstThumb !== secondThumb));
-
-  // 13 + 14. Caption and post.
+  // 13 + 14. Caption and post. The clips are combined on the way, and the
+  // upload only starts here.
   const caption = `my first faytarra video ${stamp}`;
-  await A.page.fill('#video-caption', caption);
+  await A.page.fill('#video-title', caption);
   await A.page.selectOption('#video-category', 'Music');
   await A.page.fill('#video-tags', 'firstvideo');
   await A.page.locator('button', { hasText: 'Post video' }).click();
-  await A.page.waitForURL(/\/post\//, { timeout: 90000 });
+  await A.page.waitForURL(/\/post\//, { timeout: 240000 });
   const postUrl = A.page.url();
   check('13 + 14. the video posts and lands on its post page', /\/post\/[0-9a-f-]+$/.test(postUrl), postUrl);
 
@@ -485,6 +513,8 @@ const run = async () => {
     A.page.waitForURL(/\/post\//, { timeout: 30000 }),
     A.page.locator('form button[type=submit]').last().click(),
   ]);
+  // /post/[id] streams: the URL changes before the post itself arrives.
+  await A.page.locator('article').first().waitFor({ state: 'visible', timeout: 20000 });
   check('22. a text-only post still works', (await A.page.locator(`text=${textCaption}`).count()) > 0);
 
   await A.page.goto('/create', { waitUntil: 'domcontentloaded' });
@@ -503,6 +533,7 @@ const run = async () => {
     A.page.waitForURL(/\/post\//, { timeout: 30000 }),
     A.page.locator('form button[type=submit]').last().click(),
   ]);
+  await A.page.locator('article').first().waitFor({ state: 'visible', timeout: 20000 });
   // Photos are served through Next's optimiser now, so the src is a
   // /_next/image URL pointing at the stored file rather than the file itself.
   check(

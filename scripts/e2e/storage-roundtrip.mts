@@ -90,7 +90,7 @@ const served = await fetch(publicUrl);
 check('the published file is readable where the post points', served.status === 200, `${served.status}`);
 check('and is the same file that was uploaded', Number(served.headers.get('content-length')) === good.length);
 
-section('REFUSING — a video past three minutes');
+section('REFUSING — a video past two minutes');
 const overTicket = await createPendingUpload(USER, 'toolong.webm');
 const tooLong = readFileSync(path.join(FIXTURES, 'toolong.webm'));
 await put(overTicket.uploadUrl, tooLong, 'video/webm');

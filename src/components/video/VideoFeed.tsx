@@ -159,6 +159,7 @@ function Slide({
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [covered, setCovered] = useState(data.contentWarning === true);
   const [liked, setLiked] = useState(data.liked);
   const [likes, setLikes] = useState(data.likes);
   const router = useRouter();
@@ -167,7 +168,7 @@ function Slide({
   useEffect(() => {
     const element = video.current;
     if (!element) return;
-    if (isActive) {
+    if (isActive && !covered) {
       // A rejected play() is normal — the browser refuses autoplay until it
       // trusts the page. The poster and the play button stay, and a tap
       // starts it.
@@ -177,7 +178,7 @@ function Slide({
       element.currentTime = 0;
       setProgress(0);
     }
-  }, [isActive, mounted]);
+  }, [isActive, mounted, covered]);
 
   // React will not re-mute a player that has already started, so the mute
   // state is applied to the element itself.
@@ -264,6 +265,19 @@ function Slide({
           />
         ) : null}
       </div>
+
+      {covered && (
+        <button
+          type="button"
+          onClick={() => setCovered(false)}
+          className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-ink-950/85 px-8 text-center backdrop-blur-xl"
+        >
+          <span className="font-display text-base font-bold">Content warning</span>
+          <span className="text-sm text-white/55">
+            The author covered this video. Tap to watch.
+          </span>
+        </button>
+      )}
 
       {/* The whole frame is the play/pause control, the way it is in every
           other video feed. It sits under the overlay so links still win. */}

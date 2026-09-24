@@ -16,7 +16,7 @@ has never been installed.
 | Row 1 says | Run |
 | --- | --- |
 | `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including both migrations. |
-| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005` and `0006`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
+| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`, `0006` and `0007`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
 | anything between | Stop and ask. A half-installed schema needs looking at, not a migration. |
 
 If the storage bucket row shows `none`, create it in the dashboard
@@ -248,3 +248,45 @@ REST API naming a stranger therefore shows as an empty slot rather than a name.
 **Not running it is survivable.** Every profile still shows its default Top 3 —
 only changing it is unavailable, and the app says so rather than failing.
 `/api/health` names `0006` under `schema.migrations` until it has been run.
+
+---
+
+## 0007_resumable_uploads.sql
+
+Lets a video reach Supabase Storage at all, and adds the content warning
+checkbox's column. Safe to run twice. **Nothing in this file is destructive** —
+no drops, no deletes, no existing row rewritten, no stored object touched.
+
+| Step | Statement | What it touches | Risk |
+| --- | --- | --- | --- |
+| 1 | `update storage.buckets set file_size_limit = 262144000` | One bucket setting | None. Raises the ceiling; never lowers it |
+| 2 | Three policies on `storage.objects` for `pending/<uid>/` | Permissions only | None to data. This is what makes the upload possible |
+| 3 | `add column if not exists content_warning` on `posts` | Adds one column with a default | None. Existing posts become `false`, which is what they have always meant |
+
+**This is the fix for "Payload too large".** A video off a phone is tens or
+hundreds of megabytes, so the browser uploads it straight to Storage in chunks
+(the resumable/TUS endpoint) rather than through the app. Two things have to be
+true for that to work, and neither is the app's to arrange:
+
+1. **The size limits.** A bucket with no `file_size_limit` inherits the
+   project's global upload limit — 50MB on a new project, which a 19-second
+   iPhone clip clears easily. Storage answers `413 Payload too large` and the
+   app repeats what it said. Step 1 raises the bucket's own ceiling to 250MB.
+   **The project-wide limit is not settable from SQL**: raise it first in the
+   dashboard under **Settings → Storage → "Upload file size limit"** → 250MB.
+2. **The policies.** The resumable endpoint is authorised with the uploader's
+   own access token, not the service role, so Storage's row level security
+   decides. Step 2 lets a signed-in account write, read and finish objects
+   under `pending/<their own id>/` — and nowhere else. Until they exist, every
+   chunk is refused.
+
+Nothing here lets anybody publish anything. An upload lands in `pending/`, and
+only the server — with the service role, after checking the bytes, the type,
+the size and the duration — moves it to `media/`, which is the only prefix a
+post may reference.
+
+**Not running it:** videos cannot be uploaded on a Supabase deployment, and the
+content warning checkbox stores nothing (the app notices the missing column,
+says so once in the log, and posts normally without it). `/api/health` names
+`0007` under `schema.migrations` until the column exists; the storage side is
+not visible there, so check it with the `verdict` this file prints.

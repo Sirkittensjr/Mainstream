@@ -62,17 +62,17 @@ async function createAccount(browser, handle, interest, options = {}) {
 async function postVideo(page, file, title, category, { description = '', tags = '' } = {}) {
   await page.goto('/create', { waitUntil: 'domcontentloaded' });
   await page.locator('button[role=tab]', { hasText: 'Video' }).click();
-  await page.waitForSelector('text=Start your video', { timeout: 15000 });
+  await page.waitForSelector('text=Post a video', { timeout: 15000 });
   await page.locator('input[type=file]').setInputFiles(fixture(file));
-  await page.waitForSelector('li:has(video)', { timeout: 20000 });
-  await page.locator('button', { hasText: 'Preview' }).last().click();
-  await page.waitForSelector('text=Ready to post', { timeout: 180000 });
+  // One video goes straight to the composer: no clips, no preview step, and
+  // nothing is uploaded until Post video.
+  await page.waitForSelector('#video-title', { timeout: 30000 });
   await page.fill('#video-title', title);
   if (description) await page.fill('#video-caption', description);
   if (tags) await page.fill('#video-tags', tags);
   await page.selectOption('#video-category', category);
-  await page.locator('button', { hasText: 'Post video' }).click();
-  await page.waitForURL(/\/post\//, { timeout: 90000 });
+  await page.locator('button', { hasText: /^Post video$/ }).click();
+  await page.waitForURL(/\/post\//, { timeout: 180000 });
   return page.url().split('/post/')[1];
 }
 
@@ -152,19 +152,19 @@ const run = async () => {
 
   await A.page.goto('/create', { waitUntil: 'domcontentloaded' });
   await A.page.locator('button[role=tab]', { hasText: 'Video' }).click();
-  await A.page.waitForSelector('text=Start your video', { timeout: 15000 });
+  await A.page.waitForSelector('text=Post a video', { timeout: 15000 });
   check(
     'T. the editor says two minutes, not three',
     /2 minutes/.test(await A.page.locator('body').innerText()),
   );
   await A.page.locator('input[type=file]').setInputFiles(fixture('toolong.webm'));
-  await A.page.waitForTimeout(2500);
+  await A.page.waitForTimeout(3000);
   const refusal = await A.page.locator('p.text-fay-soft').innerText().catch(() => '');
-  check('T. a video over two minutes is refused', (await A.page.locator('li:has(video)').count()) === 0);
+  check('T. a video over two minutes is refused', (await A.page.locator('#video-title').count()) === 0);
   check(
     'T. and the person is told why, not silently cut off',
-    /room is left|Trim/.test(refusal),
-    refusal.slice(0, 90),
+    /trim it and try again|room is left|Trim/i.test(refusal),
+    refusal.slice(0, 100),
   );
 
   await A.page.goto('/create', { waitUntil: 'domcontentloaded' });

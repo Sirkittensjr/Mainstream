@@ -128,6 +128,21 @@ export function CreateForm() {
         />
       </div>
 
+      <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+        <input
+          id="content_warning"
+          name="content_warning"
+          type="checkbox"
+          className="mt-0.5 h-5 w-5 shrink-0 rounded accent-fay"
+        />
+        <span>
+          <span className="block text-sm font-semibold">Content warning</span>
+          <span className="block text-xs text-white/45">
+            What you attach stays covered until somebody chooses to see it.
+          </span>
+        </span>
+      </label>
+
       {state?.error && (
         <p className="rounded-2xl border border-fay/40 bg-fay/10 px-4 py-3 text-sm text-fay-soft">
           {state.error}

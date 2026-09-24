@@ -6,17 +6,20 @@
  * the last two production failures were both Supabase-only, and neither could
  * have been caught by a test that never spoke PostgREST. This speaks the
  * protocol — `eq.`, `is.null`, `in.()`, Range paging, the object Accept
- * header — over an in-memory dataset, and proxies /auth/v1 to the GoTrue stub
- * so the same origin serves both, exactly as a real project does.
+ * header — over an in-memory dataset, and proxies /auth/v1 and /storage/v1 to
+ * the GoTrue and Storage stubs so one origin serves all three, exactly as a
+ * real project does.
  *
  *   STUB_PORT=54321 node scripts/e2e/gotrue-stub.mjs &
- *   PORT=55300 GOTRUE_PORT=54321 node scripts/e2e/postgrest-stub.mjs &
+ *   STORAGE_PORT=54500 node scripts/e2e/storage-stub.mjs &
+ *   PORT=55300 GOTRUE_PORT=54321 STORAGE_PORT=54500 node scripts/e2e/postgrest-stub.mjs &
  */
 import { createServer, request as httpRequest } from 'node:http';
 import { randomUUID } from 'node:crypto';
 
 const PORT = Number(process.env.PORT || 55300);
 const GOTRUE = Number(process.env.GOTRUE_PORT || 54321);
+const STORAGE = Number(process.env.STORAGE_PORT || 54500);
 
 /** Columns Postgres would refuse to compare against the string "null". */
 const TYPED_COLUMNS = new Set([
@@ -244,13 +247,21 @@ createServer((req, res) => {
 
   if (url.pathname.startsWith('/rest/v1/')) return rest(req, res, url);
 
+  // One origin serves auth, data and storage, exactly as a real project does:
+  // the app and the browser both derive every one of those from a single
+  // SUPABASE_URL, so splitting them across ports here would test a shape that
+  // does not exist in production.
+  const [port, name] = url.pathname.startsWith('/storage/v1/')
+    ? [STORAGE, 'storage']
+    : [GOTRUE, 'auth'];
+
   const proxy = httpRequest(
-    { host: '127.0.0.1', port: GOTRUE, path: req.url, method: req.method, headers: req.headers },
+    { host: '127.0.0.1', port, path: req.url, method: req.method, headers: req.headers },
     (upstream) => {
       res.writeHead(upstream.statusCode, upstream.headers);
       upstream.pipe(res);
     },
   );
-  proxy.on('error', () => json(res, 502, { message: 'auth stub unreachable' }));
+  proxy.on('error', () => json(res, 502, { message: `${name} stub unreachable` }));
   req.pipe(proxy);
 }).listen(PORT, '127.0.0.1', () => console.log(`[postgrest-stub] listening on :${PORT}`));
