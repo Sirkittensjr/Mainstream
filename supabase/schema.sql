@@ -70,10 +70,16 @@ create table if not exists public.posts (
   category       text not null default 'Other',
   tags           text[] not null default '{}',
   views          integer not null default 0,
+  -- Set by the author when they post. The media stays behind a cover until
+  -- the viewer asks for it.
+  content_warning boolean not null default false,
   removed        boolean not null default false,
   removed_reason text,
   created_at     timestamptz not null default now()
 );
+
+-- Present for databases created before content warnings existed.
+alter table public.posts add column if not exists content_warning boolean not null default false;
 
 create index if not exists posts_author_idx on public.posts (author_id);
 create index if not exists posts_created_idx on public.posts (created_at desc);

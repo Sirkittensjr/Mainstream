@@ -1,6 +1,6 @@
 import 'server-only';
 import { cookies } from 'next/headers';
-import { db } from '@/lib/db';
+import { db, isMissingColumn } from '@/lib/db';
 import { communityCache, refreshCommunity } from './community-cache';
 import { newId } from '@/lib/ids';
 import type { Category, ID, Media, Post, PublicUser, User } from '@/lib/types';
@@ -129,7 +129,19 @@ export interface CreatePostInput {
   media: Media[];
   category: Category;
   tags: string[];
+  contentWarning?: boolean;
 }
+
+/**
+ * Whether this database has the content warning column.
+ *
+ * Null until an insert has told us. A deployment that has not run migration
+ * 0007 has no `content_warning`, and sending it would fail the whole insert —
+ * which would mean nobody could post anything at all over a checkbox. So the
+ * first insert that meets the missing column drops it and tries again, and
+ * everything after that goes straight to the second form.
+ */
+let warningsStored: boolean | null = null;
 
 export async function createPost(input: CreatePostInput): Promise<Post> {
   const store = db();
@@ -141,11 +153,27 @@ export async function createPost(input: CreatePostInput): Promise<Post> {
     category: input.category,
     tags: input.tags.map((tag) => tag.replace(/^#/, '').trim()).filter(Boolean).slice(0, 8),
     views: 0,
+    content_warning: input.contentWarning === true,
     removed: false,
     removed_reason: null,
     created_at: new Date().toISOString(),
   };
-  await store.insert('posts', post);
+
+  if (warningsStored === false) delete post.content_warning;
+  try {
+    await store.insert('posts', post);
+    warningsStored ??= true;
+  } catch (error) {
+    if (!isMissingColumn(error, 'posts', 'content_warning')) throw error;
+    warningsStored = false;
+    console.error(
+      '[faytarra] Content warnings are switched off: this database has no `content_warning` ' +
+        'column on `posts`. Run supabase/migrations/0007_resumable_uploads.sql against it. ' +
+        'Posting works as normal; the checkbox does nothing until then.',
+    );
+    delete post.content_warning;
+    await store.insert('posts', post);
+  }
 
   const author = await store.get('users', input.authorId);
   await notifyMentions(

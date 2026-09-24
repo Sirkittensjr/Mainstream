@@ -36,20 +36,27 @@ import {
   formatSeconds,
 } from '@/lib/video/limits';
 import { canRender, renderClips } from '@/lib/video/render';
-import { UploadError, contentTypeFor, uploadMedia } from '@/lib/video/upload-client';
+import { UploadError, contentTypeFor, discardMedia, uploadMedia } from '@/lib/video/upload-client';
 import { ClipEditor } from './ClipEditor';
 import { VideoRecorder } from './VideoRecorder';
 
 /**
- * Create → record or upload → edit → preview → caption → post.
+ * Posting a video.
  *
- * The clips only ever exist in this browser tab until the last step: editing
- * is a set of numbers on each clip, and one render pass at the end turns them
- * into the single video that gets uploaded. Nothing is sent while somebody is
- * still deciding, and what they preview is what they post.
+ * The common case is one video off a phone, and that is what this is shaped
+ * around: choose it, see it, write a caption, post. Nothing about clips,
+ * combining, rendering or uploading is on screen until somebody asks for it,
+ * because none of it is their problem. Trimming, cropping, rotating, muting
+ * and putting several clips together are all still here — behind "Edit" and
+ * "Add another clip" — but they are the exception, not the doorway.
+ *
+ * Nothing is uploaded until Post video is pressed. Before that everything is
+ * a blob URL in this tab, so backing out costs nothing and nobody has waited
+ * on a transfer they then abandoned. After it, the progress shown is the real
+ * number of bytes Supabase Storage has acknowledged.
  */
 
-type Stage = 'clips' | 'editing' | 'posting';
+type Stage = 'compose' | 'clips' | 'editing';
 
 let counter = 0;
 const nextId = () => `clip-${(counter += 1)}-${Date.now().toString(36)}`;
@@ -65,13 +72,16 @@ export function VideoStudio() {
   const objectUrls = useRef<string[]>([]);
 
   const [clips, setClips] = useState<Clip[]>([]);
-  const [stage, setStage] = useState<Stage>('clips');
+  const [stage, setStage] = useState<Stage>('compose');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const [progress, setProgress] = useState<{ label: string; ratio: number } | null>(null);
+  const [progress, setProgress] = useState<{ label: string; ratio: number; bytes?: number } | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
 
+  /** The combined video, once one has had to be built. */
   const [finished, setFinished] = useState<Finished | null>(null);
   const [thumbnailAt, setThumbnailAt] = useState(0);
   const [thumbnail, setThumbnail] = useState<string | null>(null);
@@ -79,6 +89,7 @@ export function VideoStudio() {
   const [caption, setCaption] = useState('');
   const [category, setCategory] = useState<Category>('Life');
   const [tags, setTags] = useState('');
+  const [contentWarning, setContentWarning] = useState(false);
   const [posting, setPosting] = useState(false);
 
   const cancelled = useRef<AbortController | null>(null);
@@ -95,9 +106,35 @@ export function VideoStudio() {
     [],
   );
 
+  // The cover frame, kept in step with the scrubber. A nicety: a post with
+  // no poster still works, it just costs the Videos feed a download.
+  useEffect(() => {
+    if (!previewUrl) return;
+    let cancelledHere = false;
+    void (async () => {
+      try {
+        const frame = await grabFrame(previewUrl, thumbnailAt);
+        if (cancelledHere) return;
+        setThumbnail((previous) => {
+          if (previous) URL.revokeObjectURL(previous);
+          return trackUrl(URL.createObjectURL(frame));
+        });
+      } catch {
+        // Some browsers refuse to draw a frame from a file they will still
+        // play. The post simply goes without a cover.
+      }
+    })();
+    return () => {
+      cancelledHere = true;
+    };
+  });
+
   const total = totalDuration(clips);
   const left = remainingSeconds(clips);
   const editing = clips.find((clip) => clip.id === editingId) ?? null;
+  /** What the compose screen plays: the combined video if there is one, else the only clip. */
+  const previewUrl = finished?.previewUrl ?? (clips.length === 1 ? clips[0].src : null);
+  const simple = clips.length === 1 && !needsRender(clips);
 
   /** Turns a file or a recording into a clip, once we know how long it is. */
   const addSource = useCallback(
@@ -115,7 +152,13 @@ export function VideoStudio() {
       setClips((current) => {
         const room = canAdd(current, facts.duration);
         if (!room.ok) {
-          setError(room.error);
+          // The first video is the common case and deserves the plain
+          // version of this: nothing is "left" yet, it is simply too long.
+          setError(
+            current.length === 0
+              ? `That video is ${formatSeconds(facts.duration)} long. FayTarra videos can be up to ${MAX_VIDEO_SECONDS / 60} minutes — trim it and try again.`
+              : room.error,
+          );
           return current;
         }
         added = true;
@@ -151,6 +194,8 @@ export function VideoStudio() {
     setBusy('Reading your video…');
     try {
       for (const file of Array.from(list)) {
+        // Both of these are checked here, before anything is sent anywhere:
+        // a file that cannot be posted should cost nobody an upload.
         if (file.size > MAX_VIDEO_BYTES) {
           setError(
             `${file.name} is ${formatMegabytes(file.size)}. Videos can be up to ${formatMegabytes(MAX_VIDEO_BYTES)}.`,
@@ -169,132 +214,99 @@ export function VideoStudio() {
     }
   }
 
-  /* ----------------------------------------------- putting the video together */
+  /* ------------------------------------------------- putting the video together */
 
-  async function buildVideo(): Promise<Finished | null> {
+  /** Renders the clips into one video, or hands back the single untouched one. */
+  async function build(signal: AbortSignal): Promise<Finished | null> {
+    if (finished) return finished;
     if (clips.length === 0) return null;
+
+    let blob: Blob;
+    let contentType: string;
+    let size = outputSize(clips);
+
+    if (!needsRender(clips)) {
+      // One clip, untouched: it is already the video. Re-encoding it would
+      // cost minutes and some quality to end up where we started.
+      const [only] = clips;
+      blob = only.file as File;
+      contentType = contentTypeFor(only.file as File);
+      size = { width: only.sourceWidth, height: only.sourceHeight };
+    } else {
+      if (!canRender()) {
+        setError(
+          'This browser cannot combine video clips. Post a single clip without edits, or try another browser.',
+        );
+        return null;
+      }
+      setProgress({ label: 'Preparing your video…', ratio: 0 });
+      const rendered = await renderClips(clips, {
+        signal,
+        onProgress: ({ seconds, total: length, clip, clips: count }) =>
+          setProgress({
+            label:
+              count > 1
+                ? `Preparing your video — clip ${clip} of ${count}`
+                : 'Preparing your video…',
+            ratio: length > 0 ? seconds / length : 0,
+          }),
+      });
+      blob = rendered.blob;
+      contentType = rendered.mimeType.split(';')[0];
+      size = { width: rendered.width, height: rendered.height };
+    }
+
+    setProgress({ label: 'Uploading…', ratio: 0 });
+    const media = await uploadMedia(blob, contentType, {
+      signal,
+      onProgress: ({ ratio, phase }) =>
+        setProgress({
+          label: phase === 'checking' ? 'Checking your video…' : 'Uploading…',
+          ratio,
+          bytes: blob.size,
+        }),
+    });
+
+    const built: Finished = {
+      media: {
+        ...media,
+        width: media.width ?? size.width,
+        height: media.height ?? size.height,
+        duration: media.duration ?? total,
+      },
+      previewUrl: needsRender(clips) ? trackUrl(URL.createObjectURL(blob)) : clips[0].src,
+    };
+    setFinished(built);
+    return built;
+  }
+
+  async function post() {
+    if (clips.length === 0 || posting) return;
+    setPosting(true);
     setError(null);
     const controller = new AbortController();
     cancelled.current = controller;
 
+    let uploaded: Finished | null = null;
     try {
-      let blob: Blob;
-      let contentType: string;
-      let size = outputSize(clips);
+      uploaded = await build(controller.signal);
+      if (!uploaded) return;
 
-      if (!needsRender(clips)) {
-        // One clip, untouched: it is already the video. Re-encoding it would
-        // cost minutes and some quality to end up where we started.
-        const [only] = clips;
-        blob = only.file as File;
-        contentType = contentTypeFor(only.file as File);
-        size = { width: only.sourceWidth, height: only.sourceHeight };
-      } else {
-        if (!canRender()) {
-          setError(
-            'This browser cannot combine video clips. Post a single clip without edits, or try another browser.',
-          );
-          return null;
-        }
-        setProgress({ label: 'Putting your video together…', ratio: 0 });
-        const rendered = await renderClips(clips, {
-          signal: controller.signal,
-          onProgress: ({ seconds, total: length, clip, clips: count }) =>
-            setProgress({
-              label: `Putting your video together — clip ${clip} of ${count}`,
-              ratio: length > 0 ? seconds / length : 0,
-            }),
-        });
-        blob = rendered.blob;
-        contentType = rendered.mimeType.split(';')[0];
-        size = { width: rendered.width, height: rendered.height };
-      }
-
-      setProgress({ label: 'Uploading…', ratio: 0 });
-      const media = await uploadMedia(blob, contentType, {
-        signal: controller.signal,
-        onProgress: ({ ratio, phase }) =>
-          setProgress({
-            label: phase === 'checking' ? 'Checking your video…' : 'Uploading…',
-            ratio,
-          }),
-      });
-
-      const previewUrl = trackUrl(URL.createObjectURL(blob));
-      const result: Finished = {
-        media: {
-          ...media,
-          width: media.width ?? size.width,
-          height: media.height ?? size.height,
-          duration: media.duration ?? total,
-        },
-        previewUrl,
-      };
-      setFinished(result);
-      setThumbnailAt(0);
-      return result;
-    } catch (failure) {
-      if ((failure as DOMException)?.name === 'AbortError') return null;
-      setError(
-        failure instanceof UploadError || failure instanceof Error
-          ? failure.message
-          : 'Something went wrong putting your video together.',
-      );
-      return null;
-    } finally {
-      setProgress(null);
-      cancelled.current = null;
-    }
-  }
-
-  async function goToPosting() {
-    const built = finished ?? (await buildVideo());
-    if (built) setStage('posting');
-  }
-
-  /* --------------------------------------------------------------- thumbnail */
-
-  useEffect(() => {
-    if (!finished) return;
-    let cancelledHere = false;
-    void (async () => {
-      try {
-        const frame = await grabFrame(finished.previewUrl, thumbnailAt);
-        if (cancelledHere) return;
-        setThumbnail((previous) => {
-          if (previous) URL.revokeObjectURL(previous);
-          return trackUrl(URL.createObjectURL(frame));
-        });
-      } catch {
-        // A thumbnail is a nicety. The post still works without one.
-      }
-    })();
-    return () => {
-      cancelledHere = true;
-    };
-  }, [finished, thumbnailAt, trackUrl]);
-
-  async function post() {
-    if (!finished) return;
-    setPosting(true);
-    setError(null);
-    try {
-      // Not gated on the preview thumbnail having arrived. That is an async
-      // effect, so somebody who types a caption quickly and presses post used
-      // to lose their thumbnail to a race — and a video post with no poster
-      // costs everybody who scrolls past it in the Videos feed, which shows
-      // posters rather than downloading clips it has not reached yet.
+      // The poster is grabbed from the local copy and uploaded separately: it
+      // is a few KB, and a video post without one costs everybody who scrolls
+      // past it in the Videos feed.
       let poster: string | undefined;
       try {
-        const frame = await grabFrame(finished.previewUrl, thumbnailAt, { maxEdge: 720 });
-        const uploaded = await uploadMedia(frame, 'image/jpeg');
-        poster = uploaded.url;
+        const frame = await grabFrame(uploaded.previewUrl, thumbnailAt, { maxEdge: 720 });
+        const image = await uploadMedia(frame, 'image/jpeg', { signal: controller.signal });
+        poster = image.url;
       } catch {
         // A failed thumbnail must not cost somebody their post.
       }
 
+      setProgress({ label: 'Posting…', ratio: 1 });
       const result = await createVideoPostAction({
-        media: { ...finished.media, ...(poster ? { poster } : {}) },
+        media: { ...uploaded.media, ...(poster ? { poster } : {}) },
         // A video post is an ordinary FayTarra post, so the title is the first
         // line of its caption rather than a second field in the database that
         // only videos would ever use. It is what the feed, the Videos feed,
@@ -302,15 +314,34 @@ export function VideoStudio() {
         caption: [title.trim(), caption.trim()].filter(Boolean).join('\n\n'),
         category,
         tags,
+        contentWarning,
       });
       if (result?.error) {
+        // The video is in storage and no post points at it. Take it back out
+        // rather than leaving it there for nobody.
+        await discardMedia(uploaded.media.url);
+        setFinished(null);
         setError(result.error);
-        setPosting(false);
         return;
       }
-      if (result?.postId) router.push(`/post/${result.postId}`);
+      if (result?.postId) {
+        setProgress({ label: 'Posted', ratio: 1 });
+        router.push(`/post/${result.postId}`);
+        return;
+      }
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'The post did not go through.');
+      if ((failure as DOMException)?.name === 'AbortError') {
+        setError(null);
+      } else {
+        setError(
+          failure instanceof UploadError || failure instanceof Error
+            ? failure.message
+            : 'The post did not go through.',
+        );
+      }
+    } finally {
+      cancelled.current = null;
+      setProgress(null);
       setPosting(false);
     }
   }
@@ -333,25 +364,6 @@ export function VideoStudio() {
   if (stage === 'editing' && editing) {
     return (
       <div className="space-y-4">
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              setStage('clips');
-              setEditingId(null);
-            }}
-            className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10"
-            aria-label="Back to the clips"
-          >
-            <ChevronIcon direction="left" />
-          </button>
-          <div className="min-w-0">
-            <p className="truncate font-display text-lg font-bold">{editing.label}</p>
-            <p className="text-xs text-white/40">
-              {formatPreciseSeconds(clipDuration(editing))} in this clip
-            </p>
-          </div>
-        </div>
         <ClipEditor
           clip={editing}
           onChange={(patch) => {
@@ -359,7 +371,7 @@ export function VideoStudio() {
             setFinished(null);
           }}
           onDone={() => {
-            setStage('clips');
+            setStage(clips.length > 1 ? 'clips' : 'compose');
             setEditingId(null);
           }}
         />
@@ -367,147 +379,27 @@ export function VideoStudio() {
     );
   }
 
-  if (stage === 'posting' && finished) {
+  if (stage === 'clips') {
     return (
       <div className="space-y-5">
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => setStage('clips')}
+            onClick={() => setStage('compose')}
             className="flex h-11 w-11 items-center justify-center rounded-full bg-white/10"
-            aria-label="Back to the editor"
+            aria-label="Back"
           >
             <ChevronIcon direction="left" />
           </button>
-          <p className="font-display text-lg font-bold">Ready to post</p>
-        </div>
-
-        <video
-          src={finished.previewUrl}
-          poster={thumbnail ?? undefined}
-          controls
-          playsInline
-          className="mx-auto max-h-[48vh] w-full rounded-2xl bg-black object-contain"
-        />
-
-        <div>
-          <label className="label" htmlFor="thumbnail">
-            Thumbnail
-          </label>
-          <p className="mt-1 text-xs text-white/40">
-            Scrub to the frame you want people to see before they press play.
-          </p>
-          <div className="mt-3 flex items-center gap-3">
-            {thumbnail && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={thumbnail}
-                alt="The frame chosen for this post"
-                className="h-16 w-16 shrink-0 rounded-xl bg-black object-contain"
-              />
-            )}
-            <input
-              id="thumbnail"
-              type="range"
-              min={0}
-              max={Math.max(0.1, (finished.media.duration ?? total) - 0.1)}
-              step={0.1}
-              value={thumbnailAt}
-              onChange={(event) => setThumbnailAt(Number(event.target.value))}
-              className="h-11 w-full accent-fay"
-            />
+          <div>
+            <p className="font-display text-lg font-bold">Your clips</p>
+            <p className="text-xs text-white/45">
+              {clips.length} clip{clips.length === 1 ? '' : 's'} · {formatSeconds(total)} ·{' '}
+              {formatSeconds(left)} left
+            </p>
           </div>
         </div>
 
-        <div>
-          <label className="label" htmlFor="video-title">
-            Title
-          </label>
-          <input
-            id="video-title"
-            maxLength={120}
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="What is this video?"
-            className="mt-2 w-full text-base"
-          />
-          <p className="mt-1 text-xs text-white/40">
-            The first thing people read, in the feed and in Videos.
-          </p>
-        </div>
-
-        <div>
-          <label className="label" htmlFor="video-caption">
-            Description (optional)
-          </label>
-          <textarea
-            id="video-caption"
-            rows={3}
-            maxLength={1200}
-            value={caption}
-            onChange={(event) => setCaption(event.target.value)}
-            placeholder="Say more about it. @mention anyone you want to bring in."
-            className="mt-2 w-full text-base"
-          />
-        </div>
-
-        <div>
-          <label className="label" htmlFor="video-category">
-            Category
-          </label>
-          <select
-            id="video-category"
-            value={category}
-            onChange={(event) => setCategory(event.target.value as Category)}
-            className="mt-2 w-full"
-          >
-            {CATEGORIES.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="label" htmlFor="video-tags">
-            Tags (optional)
-          </label>
-          <input
-            id="video-tags"
-            value={tags}
-            onChange={(event) => setTags(event.target.value)}
-            placeholder="firstvideo, studio, behindthescenes"
-            className="mt-2 w-full"
-          />
-        </div>
-
-        {error && (
-          <p className="rounded-2xl border border-fay/40 bg-fay/10 px-4 py-3 text-sm text-fay-soft">
-            {error}
-          </p>
-        )}
-
-        <button type="button" onClick={post} disabled={posting} className="btn-primary w-full py-4">
-          {posting ? 'Posting…' : 'Post video'}
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-5">
-      {/* The strip ------------------------------------------------------ */}
-      {clips.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-white/15 bg-white/[0.03] p-8 text-center">
-          <VideoIcon width={30} height={30} className="mx-auto text-white/35" />
-          <p className="mt-3 font-display text-lg font-bold">Start your video</p>
-          <p className="mx-auto mt-1 max-w-sm text-sm text-white/45">
-            Record it here or add one you already have. You can put several clips together, up to{' '}
-            {MAX_VIDEO_SECONDS / 60} minutes in total.
-          </p>
-        </div>
-      ) : (
         <ul className="space-y-2">
           {clips.map((clip, index) => (
             <li
@@ -584,66 +476,244 @@ export function VideoStudio() {
             </li>
           ))}
         </ul>
-      )}
 
-      {/* Length --------------------------------------------------------- */}
-      {clips.length > 0 && (
-        <div>
-          <div className="flex items-baseline justify-between text-xs">
-            <span className="text-white/45">
-              {clips.length} clip{clips.length === 1 ? '' : 's'} · {formatSeconds(total)}
-            </span>
-            <span className={left < 10 ? 'text-fay' : 'text-white/35'}>
-              {formatSeconds(left)} left of {MAX_VIDEO_SECONDS / 60} minutes
-            </span>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={() => fileInput.current?.click()}
+            disabled={Boolean(busy) || left < 0.5}
+            className="btn-ghost min-h-[56px] py-4 disabled:opacity-40"
+          >
+            <PlusIcon width={18} height={18} /> Add video
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setError(null);
+              setRecording(true);
+            }}
+            disabled={left < 0.5}
+            className="btn-ghost min-h-[56px] py-4 disabled:opacity-40"
+          >
+            <RecordIcon width={18} height={18} /> Record video
+          </button>
+        </div>
+        <FilePicker inputRef={fileInput} onFiles={pickFiles} />
+
+        {busy && <p className="text-sm text-white/45">{busy}</p>}
+        {error && <Problem>{error}</Problem>}
+
+        <button type="button" onClick={() => setStage('compose')} className="btn-primary w-full py-4">
+          Done
+        </button>
+      </div>
+    );
+  }
+
+  /* ------------------------------------------------------------- the simple one */
+
+  if (clips.length === 0) {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-3xl border border-dashed border-white/15 bg-white/[0.03] p-8 text-center">
+          <VideoIcon width={30} height={30} className="mx-auto text-white/35" />
+          <p className="mt-3 font-display text-lg font-bold">Post a video</p>
+          <p className="mx-auto mt-1 max-w-sm text-sm text-white/45">
+            Up to {MAX_VIDEO_SECONDS / 60} minutes and {formatMegabytes(MAX_VIDEO_BYTES)}. MP4, MOV
+            or WEBM — straight off your phone is fine.
+          </p>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => fileInput.current?.click()}
+              disabled={Boolean(busy)}
+              className="btn-primary min-h-[56px] py-4"
+            >
+              <PlusIcon width={18} height={18} /> Select video
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                setRecording(true);
+              }}
+              className="btn-ghost min-h-[56px] py-4"
+            >
+              <RecordIcon width={18} height={18} /> Record
+            </button>
           </div>
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
-            <div
-              className="h-full rounded-full bg-fay transition-[width]"
-              style={{ width: `${Math.min(100, (total / MAX_VIDEO_SECONDS) * 100)}%` }}
-            />
-          </div>
+        </div>
+        <FilePicker inputRef={fileInput} onFiles={pickFiles} />
+        {busy && <p className="text-sm text-white/45">{busy}</p>}
+        {error && <Problem>{error}</Problem>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {previewUrl ? (
+        <video
+          src={previewUrl}
+          controls
+          playsInline
+          preload="metadata"
+          className="mx-auto max-h-[52vh] w-full rounded-2xl bg-black object-contain"
+        />
+      ) : (
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 text-center text-sm text-white/45">
+          {clips.length} clips, {formatSeconds(total)} in total. They are put together when you
+          post.
         </div>
       )}
 
-      {/* Add ------------------------------------------------------------ */}
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="chip tabular-nums">{formatSeconds(total)}</span>
+        {simple && clips[0].file && (
+          <span className="chip text-white/45">{formatMegabytes(clips[0].file.size)}</span>
+        )}
         <button
           type="button"
-          onClick={() => fileInput.current?.click()}
-          disabled={Boolean(busy) || left < 0.5}
-          className="btn-ghost min-h-[56px] py-4 disabled:opacity-40"
+          onClick={() => {
+            setEditingId(clips[0].id);
+            setStage('editing');
+          }}
+          disabled={posting}
+          className="chip hover:bg-white/10 disabled:opacity-40"
         >
-          <PlusIcon width={18} height={18} /> Add video
+          Edit
+        </button>
+        <button
+          type="button"
+          onClick={() => setStage('clips')}
+          disabled={posting}
+          className="chip hover:bg-white/10 disabled:opacity-40"
+        >
+          {clips.length > 1 ? `${clips.length} clips` : 'Add another clip'}
         </button>
         <button
           type="button"
           onClick={() => {
+            setClips([]);
+            setFinished(null);
             setError(null);
-            setRecording(true);
           }}
-          disabled={left < 0.5}
-          className="btn-ghost min-h-[56px] py-4 disabled:opacity-40"
+          disabled={posting}
+          className="chip ml-auto text-white/45 hover:bg-white/10 disabled:opacity-40"
         >
-          <RecordIcon width={18} height={18} /> Record video
+          Start over
         </button>
       </div>
-      <input
-        ref={fileInput}
-        type="file"
-        accept={VIDEO_ACCEPT}
-        multiple
-        className="hidden"
-        onChange={(event) => void pickFiles(event.target.files)}
-      />
 
-      {busy && <p className="text-sm text-white/45">{busy}</p>}
-
-      {error && (
-        <p className="rounded-2xl border border-fay/40 bg-fay/10 px-4 py-3 text-sm text-fay-soft">
-          {error}
-        </p>
+      {previewUrl && (
+        <details className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+          <summary className="cursor-pointer text-sm font-semibold text-white/70">
+            Cover frame
+          </summary>
+          <p className="mt-1 text-xs text-white/40">
+            The frame people see before they press play. The start of the video by default.
+          </p>
+          <div className="mt-3 flex items-center gap-3">
+            {thumbnail && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={thumbnail}
+                alt="The frame chosen for this post"
+                className="h-16 w-16 shrink-0 rounded-xl bg-black object-contain"
+              />
+            )}
+            <input
+              id="thumbnail"
+              type="range"
+              min={0}
+              max={Math.max(0.1, total - 0.1)}
+              step={0.1}
+              value={thumbnailAt}
+              onChange={(event) => setThumbnailAt(Number(event.target.value))}
+              className="h-11 w-full accent-fay"
+            />
+          </div>
+        </details>
       )}
+
+      <div>
+        <label className="label" htmlFor="video-title">
+          Title
+        </label>
+        <input
+          id="video-title"
+          maxLength={120}
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          placeholder="What is this video?"
+          className="mt-2 w-full text-base"
+        />
+      </div>
+
+      <div>
+        <label className="label" htmlFor="video-caption">
+          Description (optional)
+        </label>
+        <textarea
+          id="video-caption"
+          rows={3}
+          maxLength={1200}
+          value={caption}
+          onChange={(event) => setCaption(event.target.value)}
+          placeholder="Say more about it. @mention anyone you want to bring in."
+          className="mt-2 w-full text-base"
+        />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label className="label" htmlFor="video-category">
+            Category
+          </label>
+          <select
+            id="video-category"
+            value={category}
+            onChange={(event) => setCategory(event.target.value as Category)}
+            className="mt-2 w-full"
+          >
+            {CATEGORIES.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="label" htmlFor="video-tags">
+            Tags (optional)
+          </label>
+          <input
+            id="video-tags"
+            value={tags}
+            onChange={(event) => setTags(event.target.value)}
+            placeholder="firstvideo, studio"
+            className="mt-2 w-full"
+          />
+        </div>
+      </div>
+
+      <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+        <input
+          id="video-content-warning"
+          type="checkbox"
+          checked={contentWarning}
+          onChange={(event) => setContentWarning(event.target.checked)}
+          className="mt-0.5 h-5 w-5 shrink-0 rounded accent-fay"
+        />
+        <span>
+          <span className="block text-sm font-semibold">Content warning</span>
+          <span className="block text-xs text-white/45">
+            The video stays covered until somebody chooses to watch it.
+          </span>
+        </span>
+      </label>
+
+      {error && <Problem>{error}</Problem>}
 
       {progress && (
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
@@ -657,10 +727,12 @@ export function VideoStudio() {
               style={{ width: `${Math.max(2, progress.ratio * 100)}%` }}
             />
           </div>
-          <p className="mt-2 text-xs text-white/35">
-            Combining clips plays them through once, so it takes about as long as the video itself.
-            You can leave this tab open and watch.
-          </p>
+          {progress.bytes ? (
+            <p className="mt-2 text-xs tabular-nums text-white/35">
+              {formatMegabytes(progress.ratio * progress.bytes)} of{' '}
+              {formatMegabytes(progress.bytes)} · it carries on if your connection drops
+            </p>
+          ) : null}
           <button
             type="button"
             onClick={() => cancelled.current?.abort()}
@@ -673,12 +745,39 @@ export function VideoStudio() {
 
       <button
         type="button"
-        onClick={() => void goToPosting()}
-        disabled={clips.length === 0 || Boolean(progress) || Boolean(busy)}
+        onClick={() => void post()}
+        disabled={posting || Boolean(busy)}
         className="btn-primary w-full py-4"
       >
-        {finished ? 'Preview and post' : 'Preview'}
+        {posting ? 'Posting…' : 'Post video'}
       </button>
     </div>
+  );
+}
+
+function FilePicker({
+  inputRef,
+  onFiles,
+}: {
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  onFiles: (list: FileList | null) => void;
+}) {
+  return (
+    <input
+      ref={inputRef}
+      type="file"
+      accept={VIDEO_ACCEPT}
+      multiple
+      className="hidden"
+      onChange={(event) => void onFiles(event.target.files)}
+    />
+  );
+}
+
+function Problem({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="rounded-2xl border border-fay/40 bg-fay/10 px-4 py-3 text-sm text-fay-soft">
+      {children}
+    </p>
   );
 }

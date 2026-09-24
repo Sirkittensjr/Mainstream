@@ -145,6 +145,7 @@ export interface CreateVideoPostInput {
   caption?: string;
   category?: string;
   tags?: string;
+  contentWarning?: boolean;
 }
 
 /**
@@ -185,6 +186,7 @@ export async function createVideoPostAction(input: CreateVideoPostInput) {
       .split(/[\s,]+/)
       .map((tag) => tag.slice(0, 30))
       .filter(Boolean),
+    contentWarning: input.contentWarning === true,
   });
 
   revalidatePath('/home');

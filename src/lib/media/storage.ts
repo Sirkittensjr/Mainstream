@@ -64,12 +64,36 @@ export async function createPendingUpload(
   userId: string,
   fileName: string,
 ): Promise<UploadTicket> {
-  const path = `${PENDING}/${userId}/${fileName}`;
+  const path = pendingPathFor(userId, fileName);
   const { data, error } = await storage().createSignedUploadUrl(path, { upsert: true });
   if (error || !data) {
     throw new Error(error?.message ?? 'Could not start the upload.');
   }
   return { path, uploadUrl: data.signedUrl, token: data.token };
+}
+
+/** Where this person's uploads live while they are being checked. */
+export function pendingPathFor(userId: string, fileName: string): string {
+  return `${PENDING}/${userId}/${fileName}`;
+}
+
+/**
+ * Supabase Storage's resumable (TUS) endpoint.
+ *
+ * The one-shot signed PUT above is fine for a picture. It is not fine for a
+ * video off a phone: the whole file is one request, so a dropped connection
+ * starts again from zero, and the request has to fit whatever the project and
+ * its gateway allow in a single body. A resumable upload sends the file in
+ * chunks, each one its own request, and can pick up where it stopped — which
+ * is what makes a 100MB clip over mobile data a normal thing to do rather
+ * than a gamble.
+ *
+ * It is authorised with the uploader's OWN access token, never the service
+ * role, and the storage policies from migration 0007 only let that token
+ * write under `pending/<their id>/`.
+ */
+export function resumableEndpoint(): string {
+  return `${storageUrl()}/storage/v1/upload/resumable`;
 }
 
 /** Is this path one this person is allowed to be committing? */
@@ -132,6 +156,37 @@ export async function publishPending(path: string): Promise<string> {
   const { error } = await storage().move(path, destination);
   if (error) throw new Error(error.message);
   return publicUrlFor(destination);
+}
+
+/** Is this published URL one of this person's own uploads? */
+export function ownsPublishedUrl(url: string, userId: string): boolean {
+  const prefix = publicUrlFor(`${PUBLISHED}/${userId}/`);
+  return (
+    typeof url === 'string' &&
+    url.startsWith(prefix) &&
+    !url.includes('..') &&
+    url.length < 512 &&
+    /^[A-Za-z0-9:/._-]+$/.test(url)
+  );
+}
+
+/**
+ * Removes a published object, unless a post is using it.
+ *
+ * The check is the point: this only exists to clean up after a post that
+ * failed to be created, and a file that turns out to be on a post is not
+ * rubbish. The lookup is a scan of the posts table's media, which is cheap
+ * next to deleting somebody's video by mistake.
+ */
+export async function discardPublished(url: string): Promise<{ inUse: boolean; removed: boolean }> {
+  const { db } = await import('@/lib/db');
+  const posts = await db().query('posts');
+  const used = posts.some((post) => post.media.some((item) => item.url === url));
+  if (used) return { inUse: true, removed: false };
+
+  const path = url.slice(publicUrlFor('').length);
+  const { error } = await storage().remove([path]);
+  return { inUse: false, removed: !error };
 }
 
 export async function discardPending(path: string): Promise<void> {

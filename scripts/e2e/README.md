@@ -149,7 +149,9 @@ and the old password no longer working.
 
 ### 7. Video — `make-video-fixtures.mjs` + `video-flow.mjs`
 
-The whole video creator, in a real browser: uploading a file, recording clips
+The video EDITOR, in a real browser — the advanced half, behind "Add another
+clip". For the ordinary one-video-off-a-phone path and how the bytes get to
+Storage, see `video-upload-flow.mjs` below. It covers: uploading a file, recording clips
 from the camera with a microphone, reordering, deleting, trimming, cropping,
 rotating, muting, combining, choosing a thumbnail, captioning, posting, and
 watching the result from a second account on desktop and at phone width. It
@@ -177,7 +179,38 @@ past two minutes, a file that only claims to be video, a 400MB upload,
 another person's pending object, a path climbing out of its own folder, and
 the same calls with no account at all.
 
-### 8. The production upload path — `storage-stub.mjs` + `storage-roundtrip.mts`
+### 8. Posting a video the way a phone does — `video-upload-flow.mjs`
+
+The transport, measured rather than watched. A video must go from the browser
+straight to Supabase Storage, in chunks, and no part of it may ever be a
+request body the app receives — which is exactly what was wrong when an
+iPhone clip came back "Payload too large".
+
+```bash
+STUB_PORT=54321 node scripts/e2e/gotrue-stub.mjs &
+STORAGE_PORT=54500 node scripts/e2e/storage-stub.mjs &
+PORT=55300 GOTRUE_PORT=54321 STORAGE_PORT=54500 node scripts/e2e/postgrest-stub.mjs &
+
+# built and started against that one origin, exactly as production is
+BASE_URL=http://localhost:3100 STUB=http://127.0.0.1:55300 \
+  node scripts/e2e/video-upload-flow.mjs
+```
+
+The checks that matter are arithmetic: how many bytes Storage received (asked
+of Storage, because Chromium reports a streamed request body as zero), and the
+largest body the app got, which has to stay metadata-sized. It also covers the
+composer being plain — one video, no clips, no combining — a 9MB file that no
+single serverless request could carry, refusals that happen before a byte
+moves, cancelling mid-upload, two taps on Post making one post, and the
+finished video appearing in the normal feed, the Videos feed, the profile and
+search.
+
+`EXPECT_INTERRUPTION=1`, with the storage stub started as
+`STORAGE_FAIL_AT=7000000`, refuses one chunk in the middle of a 14MB upload.
+The upload has to finish anyway, and the bytes sent have to stay well under
+twice the file — that is the difference between resuming and starting again.
+
+### 9. The production upload path — `storage-stub.mjs` + `storage-roundtrip.mts`
 
 A deployment with Supabase does not send uploads through the app: a 250MB
 request body is refused by every serverless host long before it arrives
@@ -186,9 +219,12 @@ straight to Storage, and the server reads it back to check it. None of that
 runs on the local driver, so without this the one path production actually
 uses would be the one path never exercised.
 
-`storage-stub.mjs` speaks Storage's HTTP protocol — signed upload URLs, ranged
-reads, list, move, delete — and the app's own module drives it through the real
-`@supabase/storage-js` client.
+`storage-stub.mjs` speaks Storage's HTTP protocol — signed upload URLs, the
+resumable (TUS) endpoint a video actually arrives through, ranged reads, list,
+move and delete — and the app's own module drives it through the real
+`@supabase/storage-js` client. `STORAGE_LIMIT` makes it refuse an oversized
+object with the same words Storage uses; `STORAGE_FAIL_AT` refuses one chunk
+mid-upload.
 
 ```bash
 STORAGE_PORT=54500 node scripts/e2e/storage-stub.mjs &
@@ -204,7 +240,7 @@ It proves the round trip end to end and, just as importantly, that a video
 past the limit is caught **after** it has landed: read from both ends of a 6MB
 object, refused, and deleted rather than left in the bucket.
 
-### 9. Direct messages — `messaging-flow.mjs`
+### 10. Direct messages — `messaging-flow.mjs`
 
 The seven scenarios that define messaging, with three real accounts in three
 browser contexts: a one-way follow both ways round, a mutual follow, unfollow,
@@ -225,7 +261,7 @@ It also checks what nobody should be able to reach: a third account guessing
 either side of somebody else's conversation URL, and a signed-out visitor
 landing on the login page rather than in the thread.
 
-### 10. Getting to a profile — `social-navigation.mjs`
+### 11. Getting to a profile — `social-navigation.mjs`
 
 Followers, following and notifications, as navigation. Four accounts with real
 follows, likes, comments and ratings between them; every check ends by
@@ -248,7 +284,7 @@ they were fixed:
 It also covers the block rule — a blocked account leaves both the notification
 list and the follower list — and the phone layout.
 
-### 11. The Videos feed — `videos-flow.mjs`
+### 12. The Videos feed — `videos-flow.mjs`
 
 The full-screen video experience, with four real video posts made through the
 real editor by two accounts and watched by a third. It needs the same fixtures
@@ -272,7 +308,7 @@ survive. Then the ordering: a liked video leads a newer one, a brand-new
 account's first clip with no likes, no ratings and no followers still lands on
 the first screenful, and a blocked account's videos disappear.
 
-### 12. Profile colours — `profile-colours-flow.mjs`
+### 13. Profile colours — `profile-colours-flow.mjs`
 
 Two accounts: one paints their profile, the other looks at it. Needs an EMPTY
 store.
@@ -319,7 +355,7 @@ EXPECT_NO_COLOURS=1 BASE_URL=http://localhost:3100 \
   node scripts/e2e/profile-colours-flow.mjs
 ```
 
-### 13. The Top 3 creators — `top-creators-flow.mjs`
+### 14. The Top 3 creators — `top-creators-flow.mjs`
 
 Five accounts, follows made in a known order, and every answer read off the
 rendered profile. Needs an EMPTY store.
@@ -343,7 +379,7 @@ had migration 0006 applied — the stub rehearses that with
 `MISSING_COLUMNS=users.top_creators`. Profiles must still show their default
 Top 3; only changing it is unavailable, and it has to say so rather than fail.
 
-### 14. Running against PostgREST — `postgrest-stub.mjs`
+### 15. Running against PostgREST — `postgrest-stub.mjs`
 
 Every browser suite here runs on the local JSON driver. Production does not,
 and the last two production failures were both Supabase-only — a `where`
@@ -378,7 +414,7 @@ production. `POST /__seed` takes `{table: [rows]}` for state the app has no UI
 for — a profile with sixty followers, say — and `GET /__dump` returns
 everything it holds.
 
-### 15. What each page costs — `perf-report.mjs` + `seed-perf.py`
+### 16. What each page costs — `perf-report.mjs` + `seed-perf.py`
 
 The instrumented stand-in counts every query and every row a page asks for, so
 performance work can be aimed rather than guessed at. `seed-perf.py` fills it
@@ -412,9 +448,9 @@ it:
 
 ### Which store each suite wants
 
-`auth-flow`, `video-flow`, `videos-flow`, `messaging-flow`,
-`profile-colours-flow`, `top-creators-flow` and `social-navigation` create
-their own accounts and want an EMPTY store
+`auth-flow`, `video-flow`, `videos-flow`, `video-upload-flow`,
+`messaging-flow`, `profile-colours-flow`, `top-creators-flow` and
+`social-navigation` create their own accounts and want an EMPTY store
 (`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and
 `social-flow` sign in as the seeded demo accounts and check against them —
 `signup-form-state` takes `tommy` as its already-taken username — so those need

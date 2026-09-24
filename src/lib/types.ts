@@ -121,6 +121,12 @@ export interface Post {
   category: Category;
   tags: string[];
   views: number;
+  /**
+   * The author asked for this to stay covered until somebody chooses to see
+   * it. Optional because a database without migration 0007 does not return
+   * the column, and a post from before it has never had one.
+   */
+  content_warning?: boolean;
   removed: boolean;
   removed_reason: string | null;
   created_at: ISODate;

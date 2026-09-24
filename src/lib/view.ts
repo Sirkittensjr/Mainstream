@@ -10,6 +10,7 @@ export function toCardData(view: PostView): PostCardData {
     category: view.post.category,
     tags: view.post.tags,
     views: view.post.views,
+    contentWarning: view.post.content_warning === true,
     createdAt: view.post.created_at,
     likes: view.likes,
     comments: view.comments,
