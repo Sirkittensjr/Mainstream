@@ -36,5 +36,21 @@ export default async function VideosPage({
     );
   }
 
-  return <VideoFeed items={feed.posts.map(toCardData)} viewerId={viewer?.id ?? null} />;
+  return (
+    <VideoFeed
+      items={feed.posts.map(toCardData)}
+      viewerId={viewer?.id ?? null}
+      // Only for the row their own comment appears as, the moment they write
+      // it — everything else about them already comes from the server.
+      viewer={
+        viewer
+          ? {
+              username: viewer.username,
+              displayName: viewer.display_name,
+              avatarUrl: viewer.avatar_url,
+            }
+          : null
+      }
+    />
+  );
 }

@@ -342,13 +342,109 @@ const run = async () => {
     C.page.url(),
   );
 
+  /* ============================== comments =============================== */
+  section('COMMENTS — over the video, not instead of it');
+
   await C.page.goto('/videos', { waitUntil: 'domcontentloaded' });
   await C.page.waitForSelector('section[data-index]');
-  await C.page.locator('section[data-index="0"] a[aria-label="Comments"]').click();
+  await C.page.waitForTimeout(2500);
+  const beforeComments = C.page.url();
+  const playingBefore = (await players(C.page)).find((p) => !p.paused);
+  const atBefore = await C.page.evaluate(() => {
+    const video = document.querySelector('section[data-index="0"] video');
+    return video ? video.currentTime : 0;
+  });
+
+  await C.page.locator('section[data-index="0"] button[aria-label="Comments"]').click();
+  await C.page.waitForSelector('[role=dialog][aria-label="Comments"]', { timeout: 15000 });
+  check('13. the comment button opens a panel', true);
+  check('13. and does not navigate anywhere', C.page.url() === beforeComments, C.page.url());
+  check(
+    '13. the video is still there behind it',
+    (await C.page.locator('section[data-index="0"] video').count()) === 1,
+  );
+
+  const during = (await players(C.page)).find((p) => p.index === 0);
+  check(
+    '13. and still playing, from where it was',
+    playingBefore ? during?.paused === false : true,
+  );
+  const atDuring = await C.page.evaluate(() => {
+    const video = document.querySelector('section[data-index="0"] video');
+    return video ? video.currentTime : 0;
+  });
+  check(
+    '13. the video did not restart',
+    atDuring >= atBefore - 0.05,
+    `${atBefore.toFixed(2)}s -> ${atDuring.toFixed(2)}s`,
+  );
+
+  // 8 + 9. Write one, and see it without a reload.
+  const said = `nice one ${stamp}`;
+  await C.page.fill('[role=dialog] textarea', said);
+  await C.page.locator('[role=dialog] button', { hasText: /^Send$/ }).click();
+  await C.page.waitForFunction(
+    (text) => document.querySelector('[role=dialog]')?.textContent?.includes(text) ?? false,
+    said,
+    { timeout: 15000 },
+  );
+  check('13. a new comment appears straight away', true);
+  check('13. without leaving the feed', C.page.url() === beforeComments);
+
+  await C.page.keyboard.press('Escape');
+  await C.page.waitForSelector('[role=dialog][aria-label="Comments"]', {
+    state: 'detached',
+    timeout: 10000,
+  });
+  const after = (await players(C.page)).find((p) => p.index === 0);
+  check('13. Escape closes the panel', true);
+  check(
+    '13. and the video is where it was left',
+    playingBefore ? after?.paused === false : true,
+  );
+  check('13. with the sound setting untouched', after?.muted === during?.muted);
+
+  // The comment really is stored, on the right post, by the existing system.
+  // The route there is the ••• menu now that the comment button stays put.
+  await C.page.locator('section[data-index="0"] button[aria-label="More options"]').click();
+  await C.page.locator('section[data-index="0"] a', { hasText: 'Open post' }).click();
   await C.page.waitForURL(/\/post\//, { timeout: 15000 });
   await C.page.locator('article').first().waitFor({ state: 'visible', timeout: 15000 });
-  check('13. comments open the post page', /\/post\/[0-9a-f-]+/.test(C.page.url()), C.page.url());
+  check('13. and it is on the post itself', (await C.page.locator('body').innerText()).includes(said));
   check('13. and the like given in the feed is on the post', (await C.page.locator('button[aria-label="Unlike"]').count()) >= 1);
+
+  // Each video's own comments, fetched only when asked for.
+  await C.page.goto('/videos', { waitUntil: 'domcontentloaded' });
+  await C.page.waitForSelector('section[data-index]');
+  const commentRequests = [];
+  C.page.on('request', (request) => {
+    if (/\/api\/v1\/posts\//.test(request.url())) commentRequests.push(request.url());
+  });
+  await C.page.waitForTimeout(1500);
+  check('14. no comments are fetched until somebody asks', commentRequests.length === 0);
+
+  await scrollToSlide(C.page, 1);
+  await C.page.locator('section[data-index="1"] button[aria-label="Comments"]').click();
+  await C.page.waitForSelector('[role=dialog][aria-label="Comments"]', { timeout: 15000 });
+  await C.page.waitForTimeout(1200);
+  const otherPanel = await C.page.locator('[role=dialog]').innerText();
+  check(
+    '14. the second video shows its own comments, not the first one’s',
+    !otherPanel.includes(said),
+    otherPanel.split('\n').slice(0, 3).join(' | '),
+  );
+  check('14. and one fetch was made for it', commentRequests.length === 1, `${commentRequests.length} requests`);
+  await C.page.locator('[role=dialog] button[aria-label="Close comments"]').first().click();
+  await C.page.waitForTimeout(400);
+  await C.page.locator('section[data-index="1"] button[aria-label="Comments"]').click();
+  await C.page.waitForSelector('[role=dialog][aria-label="Comments"]', { timeout: 10000 });
+  await C.page.waitForTimeout(800);
+  check(
+    '14. reopening it does not fetch again',
+    commentRequests.length === 1,
+    `${commentRequests.length} requests`,
+  );
+  await C.page.keyboard.press('Escape');
 
   /* ============================== the ranking ============================ */
   section('RANKING — the recommendation, not the clock');
@@ -430,6 +526,29 @@ const run = async () => {
   check('18. the like button is on screen', await small.locator('section[data-index="0"] button[aria-label]', { hasText: '' }).first().isVisible());
   const phonePlayers = await players(small);
   check('18. one video plays on a phone too', phonePlayers.filter((p) => !p.paused).length === 1);
+
+  // The comments sheet, at phone width: it has to sit inside the screen and
+  // leave the video above it visible.
+  await small.locator('section[data-index="0"] button[aria-label="Comments"]').click();
+  await small.waitForSelector('[role=dialog][aria-label="Comments"]', { timeout: 15000 });
+  const sheet = await small.locator('[role=dialog][aria-label="Comments"]').boundingBox();
+  check(
+    '18. the comments sheet fits the phone',
+    sheet.width <= 390 && sheet.height <= 844 * 0.7,
+    `${Math.round(sheet.width)}x${Math.round(sheet.height)}`,
+  );
+  check('18. and leaves the video visible above it', sheet.y > 100, `top at ${Math.round(sheet.y)}px`);
+  check(
+    '18. with somewhere to type and a way out',
+    (await small.locator('[role=dialog] textarea').count()) === 1 &&
+      (await small.locator('[role=dialog] button[aria-label="Close comments"]').count()) >= 1,
+  );
+  check(
+    '18. and the page still does not scroll sideways',
+    await small.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
+  );
+  await small.locator('[role=dialog] button[aria-label="Close comments"]').first().click();
+  await small.waitForTimeout(300);
   const overflow = await small.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
   check('18. nothing spills off the side', overflow);
   await phone.close();
