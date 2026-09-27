@@ -16,7 +16,7 @@ test('every Supabase template FayTarra uses has a body', () => {
 test("Supabase's own variables survive rendering", () => {
   for (const { email, html } of rendered) {
     // A template with no button carries a CODE rather than a link: the admin
-    // step-up and reauthentication both ask for six digits.
+    // step-up and reauthentication both ask for a typed code.
     if (!email.action) {
       assert.match(html, /\{\{ \.Token \}\}/, email.slug);
       assert.match(email.text, /\{\{ \.Token \}\}/, email.slug);

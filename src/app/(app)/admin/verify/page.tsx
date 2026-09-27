@@ -41,7 +41,7 @@ export default async function AdminVerifyPage() {
         </div>
 
         <p className="text-sm text-white/60">
-          The admin dashboard needs a second step. We will email a six-digit code to{' '}
+          The admin dashboard needs a second step. We will email an eight-digit code to{' '}
           <span className="font-semibold text-white">{masked}</span>. It expires shortly, works
           once, and asking for a new one cancels the last.
         </p>

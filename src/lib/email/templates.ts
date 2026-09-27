@@ -175,16 +175,16 @@ export const EMAILS: AuthEmail[] = [
      * This is Supabase's "Magic Link" template, which is what `signInWithOtp`
      * renders. FayTarra signs everybody in with a password and asks for a
      * one-time code in exactly one place — opening the admin dashboard — so
-     * this template has one job, and `{{ .Token }}` is the six digits.
+     * this template has one job, and `{{ .Token }}` is that code.
      *
      * Deliberately NOT a link. A link in an inbox is one forward or one
-     * shoulder away from being used by somebody else; six digits typed into a
+     * shoulder away from being used by somebody else; a code typed into a
      * screen the admin already has open are not.
      */
     slug: 'magic-link',
     dashboardTemplate: 'Magic Link',
     subject: 'Your FayTarra admin verification code',
-    preheader: 'Your six-digit code for the FayTarra admin dashboard.',
+    preheader: 'Your verification code for the FayTarra admin dashboard.',
     heading: 'Your admin verification code',
     body: ['Enter this code on FayTarra to open the admin dashboard:'],
     code: '{{ .Token }}',

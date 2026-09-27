@@ -130,7 +130,7 @@ node scripts/e2e/signup-form-state.mjs
 ### 3b. The admin's second step — `admin-step-up.mjs`
 
 An administrator signs in with a password like anybody else, then has to type a
-six-digit code emailed to the admin address before /admin opens. The code is
+code emailed to the admin address before /admin opens. The code is
 Supabase's — `signInWithOtp` issues it, `verifyOtp` checks it — so what these
 checks cover is what FayTarra decides: that the dashboard stays shut until the
 code is entered, and that a wrong, stale, reused or superseded code does not
@@ -143,7 +143,8 @@ ADMIN_EMAILS=admin@faytarra.com ADMIN_CODE_COOLDOWN_SECONDS=3 \
 node scripts/e2e/admin-step-up.mjs
 ```
 
-The stub issues real six-digit codes and writes them to the outbox, which
+The stub issues real codes — eight digits, as the project does — and writes
+them to the outbox, which
 stands in for the inbox; `POST /auth/v1/__expire-otp` ages the outstanding one
 so expiry is deterministic rather than a race against a short lifetime.
 

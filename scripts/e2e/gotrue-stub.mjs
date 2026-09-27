@@ -147,10 +147,11 @@ const OTP_TTL_MS = Number(process.env.STUB_OTP_TTL_MS ?? 600000);
  *
  * GoTrue's own MAILER_OTP_LENGTH, which Supabase exposes as "Email OTP
  * Length" and allows to be set anywhere from 6 to 10. It is configurable here
- * for the same reason it matters in production: a project set to 8 mails eight
- * digits, and the app has to refuse them rather than trim them to fit.
+ * for the same reason it matters in production. FayTarra's project mails
+ * EIGHT, so that is the default here — the harness should meet the same code
+ * the admin does.
  */
-const OTP_DIGITS = Math.min(10, Math.max(6, Number(process.env.STUB_OTP_DIGITS ?? 6)));
+const OTP_DIGITS = Math.min(10, Math.max(6, Number(process.env.STUB_OTP_DIGITS ?? 8)));
 
 /**
  * Token hashes, the stateless half of the flow.

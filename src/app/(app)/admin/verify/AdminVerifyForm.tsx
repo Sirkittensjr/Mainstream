@@ -83,10 +83,10 @@ export function AdminVerifyForm() {
           inputMode="numeric"
           autoComplete="one-time-code"
           pattern="[0-9]*"
-          // Deliberately a little longer than the code itself. Only six digits
-          // ever verify, but a longer one pasted in reaches the server and is
-          // answered with "codes are 6 digits" instead of being silently cut
-          // down and spent as a wrong guess.
+          // Deliberately a little longer than the code itself. Only a code of
+          // exactly the right length ever verifies, but a longer one pasted in
+          // reaches the server and is answered with how many digits it should
+          // have, instead of being silently cut down and spent as a wrong guess.
           maxLength={ADMIN_CODE_DIGITS + 4}
           required
           placeholder={'0'.repeat(ADMIN_CODE_DIGITS)}

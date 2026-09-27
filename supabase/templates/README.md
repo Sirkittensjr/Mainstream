@@ -45,45 +45,32 @@ sends `multipart/alternative`. They are kept in step either way.
 FayTarra does not use magic links or invites. They are branded anyway so that
 no path can fall back to Supabase's unbranded default.
 
-### ⚠️ The admin code must be 6 digits — set Email OTP Length
+### The admin code length — leave Email OTP Length alone
 
-**Authentication → Providers → Email** (newer dashboards: *Authentication →
-Sign In / Providers → Email*) has an **Email OTP Length** field. Supabase
-allows 6 to 10; set it to **6**. Self-hosted, the same setting is
-`GOTRUE_MAILER_OTP_LENGTH=6`.
+The admin verification code is Supabase's. GoTrue generates it and renders it
+into `{{ .Token }}`, and how many digits it has is the project's
+`mailer_otp_length` — "Email OTP Length" under Authentication → Providers →
+Email. Supabase allows 6 to 10 and newer projects default to **8**.
 
-This is the only thing that decides how long the code is. GoTrue generates it
-and renders it into `{{ .Token }}`, so a project set to 8 mails eight digits
-and nothing in this repository can change that. Projects created more recently
-default to **8**, which is why this needs setting rather than checking.
+**This project sends 8, and FayTarra expects 8.** Do not change the setting:
+the two have to agree, and the app is the side that was made to match. A
+screen that insists on a length Supabase never sends is a screen nobody can
+get through.
 
-If the dashboard field is hard to find, set it through the Management API
-instead — same setting, no hunting:
+If it ever does change, change `ADMIN_CODE_DIGITS` in
+`src/lib/services/admin-code.ts` to match — that one constant is what the
+label, the placeholder, the field and the server-side check all read.
+
+To see what the project is actually set to:
 
 ```bash
-# what is it now?
 SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_PROJECT_REF=<ref> \
   node scripts/supabase-otp-length.mjs
-
-# set it to six, and read it back to confirm
-SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_PROJECT_REF=<ref> \
-  node scripts/supabase-otp-length.mjs --set 6
 ```
 
-The access token comes from https://supabase.com/dashboard/account/tokens and
-the project ref is the subdomain of your project URL. The script reads the
-value back after writing it, because a PATCH that is accepted and silently
-ignored looks exactly like one that worked.
-
-FayTarra will not pretend otherwise. An eight-digit code is refused with
-"FayTarra admin codes are 6 digits. That one has 8." — **not** trimmed to its
-first six. Truncating would throw away two digits of entropy, a hundredth of
-the search space, which is the opposite of what a second factor is for. The
-refusal costs no verification attempt, so a mismatched project setting cannot
-lock the admin out; it just will not let them in until the length agrees.
-
-It also changes nothing for normal users: signup, password reset and email
-change all use links, not codes.
+It reports the configured length and whether the app agrees with it. The
+access token comes from https://supabase.com/dashboard/account/tokens and the
+project ref is the subdomain of your project URL.
 
 ### ⚠️ If the admin code email arrives as a "sign-in link"
 
