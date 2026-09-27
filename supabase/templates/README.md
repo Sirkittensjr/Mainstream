@@ -54,7 +54,26 @@ allows 6 to 10; set it to **6**. Self-hosted, the same setting is
 
 This is the only thing that decides how long the code is. GoTrue generates it
 and renders it into `{{ .Token }}`, so a project set to 8 mails eight digits
-and nothing in this repository can change that.
+and nothing in this repository can change that. Projects created more recently
+default to **8**, which is why this needs setting rather than checking.
+
+If the dashboard field is hard to find, set it through the Management API
+instead — same setting, no hunting:
+
+```bash
+# what is it now?
+SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_PROJECT_REF=<ref> \
+  node scripts/supabase-otp-length.mjs
+
+# set it to six, and read it back to confirm
+SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_PROJECT_REF=<ref> \
+  node scripts/supabase-otp-length.mjs --set 6
+```
+
+The access token comes from https://supabase.com/dashboard/account/tokens and
+the project ref is the subdomain of your project URL. The script reads the
+value back after writing it, because a PATCH that is accepted and silently
+ignored looks exactly like one that worked.
 
 FayTarra will not pretend otherwise. An eight-digit code is refused with
 "FayTarra admin codes are 6 digits. That one has 8." — **not** trimmed to its
