@@ -144,7 +144,10 @@ following list and a notification; an ordinary account carrying none anywhere;
 and — the important one — an ordinary account renaming itself "FayTarra Admin"
 and pasting `<span data-admin-badge>` into its bio, then getting back text
 rather than a badge. It also checks /api/v1/me exposes `isAdmin` and never
-`role`.
+`role`, and that the display name "FayTarra Admin" is reserved: an ordinary
+account is refused it in every casing, spacing, punctuation and lookalike
+variation tried, an administrator may use it and keeps the badge with it, and
+an ordinary name that merely mentions FayTarra still saves.
 
 **Counting badges is scoped.** A profile can legitimately show one lower down,
 on a Top 3 card naming an admin the person follows, so checks about whose NAME
