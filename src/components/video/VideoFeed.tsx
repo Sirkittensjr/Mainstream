@@ -1,4 +1,5 @@
 'use client';
+import { AdminBadge } from '@/components/AdminBadge';
 
 import Image from 'next/image';
 import Link from 'next/link';
@@ -440,12 +441,15 @@ function Slide({
               size="sm"
             />
             <div className="min-w-0">
-              <Link
-                href={`/u/${data.author.username}`}
-                className="block truncate text-sm font-semibold leading-tight hover:underline"
-              >
-                {data.author.displayName}
-              </Link>
+              <span className="flex min-w-0 items-center gap-1.5">
+                <Link
+                  href={`/u/${data.author.username}`}
+                  className="truncate text-sm font-semibold leading-tight hover:underline"
+                >
+                  {data.author.displayName}
+                </Link>
+                {data.author.isAdmin && <AdminBadge />}
+              </span>
               <p className="truncate text-[12px] text-white/55">
                 @{data.author.username} · {timeAgo(data.createdAt)}
               </p>

@@ -7,6 +7,9 @@
  * Run it the same way as auth-flow.mjs — see README.md.
  */
 import { chromium } from 'playwright';
+import { readFileSync } from 'node:fs';
+
+const OUTBOX = process.env.OUTBOX || '/tmp/fay-outbox.jsonl';
 
 const BASE = process.env.BASE_URL || 'http://localhost:3000';
 const CHROMIUM = process.env.CHROMIUM_PATH;
@@ -31,9 +34,18 @@ async function signIn(context, who) {
   await page.fill('#identifier', who.email);
   await page.fill('#password', who.password);
   await Promise.all([
-    page.waitForURL(/\/home/, { timeout: 20000 }),
+    // An ADMIN account lands on the second-factor screen instead of the feed.
+    // That screen is not what this suite is about: the password alone is a
+    // perfectly good FayTarra session, it just is not an admin one, so carry
+    // on to the feed and leave /admin shut.
+    page.waitForURL(/\/home|\/admin\/verify/, { timeout: 20000 }),
     page.locator('form button[type=submit]').click(),
   ]);
+
+  if (/\/admin\/verify/.test(page.url())) {
+    await page.goto('/home', { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('networkidle');
+  }
   return page;
 }
 
@@ -308,6 +320,30 @@ const run = async () => {
   );
 
   // --- admin ----------------------------------------------------------------
+  // /admin needs the emailed second-factor code as well as the role. Complete
+  // it the way an administrator does: ask for a code, read it out of the
+  // outbox, type it in.
+  await otherPage.goto('/admin/verify', { waitUntil: 'domcontentloaded' });
+  await otherPage.waitForLoadState('networkidle');
+  const sendCode = otherPage.locator('button', { hasText: /Email me a code|Send another code/ });
+  if (await sendCode.count()) {
+    await sendCode.first().click();
+    await otherPage.waitForTimeout(2500);
+    const codes = readFileSync(OUTBOX, 'utf8')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((mail) => mail.type === 'otp');
+    const code = codes.at(-1)?.code;
+    if (code) {
+      await otherPage.fill('#admin-code', code);
+      await otherPage.locator('form button[type=submit]').last().click();
+      await otherPage.waitForLoadState('networkidle');
+      await otherPage.waitForTimeout(1500);
+    }
+  }
+
   await otherPage.goto('/admin', { waitUntil: 'domcontentloaded' });
   const adminHtml = await otherPage.content();
   check('the admin dashboard loads for an admin', new URL(otherPage.url()).pathname === '/admin');

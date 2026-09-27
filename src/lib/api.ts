@@ -1,5 +1,6 @@
 import 'server-only';
 import { NextResponse } from 'next/server';
+import { isAdminRole } from '@/lib/admin-badge';
 import type { PostView } from '@/lib/services/posts';
 import type { UserRatingSummary } from '@/lib/services/ratings';
 import type { PublicUser, User } from '@/lib/types';
@@ -29,6 +30,9 @@ export function serialiseUser(user: PublicUser | User, rating?: UserRatingSummar
     location: user.location,
     interests: user.interests,
     joinedAt: user.created_at,
+    // A derived fact, not the column. `role` stays server-side: a client that
+    // can read it is one step from a client that thinks it can set it.
+    isAdmin: isAdminRole((user as { role?: string }).role),
     rating: rating
       ? {
           overall: rating.overall,
@@ -65,6 +69,7 @@ export function serialisePost(view: PostView) {
       avatarUrl: view.author.avatar_url,
       followers: view.authorFollowers,
       rating: view.authorRating,
+      isAdmin: isAdminRole(view.author.role),
     },
     reason: view.reason ?? null,
   };

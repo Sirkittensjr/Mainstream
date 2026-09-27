@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+import { AdminBadge } from '@/components/AdminBadge';
+import { isAdminRole } from '@/lib/admin-badge';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Avatar } from '@/components/Avatar';
@@ -109,8 +111,9 @@ export default async function ProfilePage({
                 href={false}
               />
               <div className="min-w-0 flex-1">
-                <h1 className="truncate font-display text-2xl font-extrabold tracking-tight">
-                  {user.display_name}
+                <h1 className="flex min-w-0 items-center gap-2 font-display text-2xl font-extrabold tracking-tight">
+                  <span className="truncate">{user.display_name}</span>
+                  {isAdminRole(user.role) && <AdminBadge size="md" />}
                 </h1>
                 <p className="text-white/45">@{user.username}</p>
                 {user.status === 'suspended' && (

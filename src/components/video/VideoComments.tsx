@@ -1,4 +1,5 @@
 'use client';
+import { AdminBadge } from '@/components/AdminBadge';
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
@@ -12,10 +13,12 @@ export interface VideoComment {
   id: string;
   body: string;
   createdAt: string;
-  author: { username: string; displayName: string; avatarUrl: string | null };
+  author: { username: string; displayName: string; avatarUrl: string | null; isAdmin?: boolean };
 }
 
 export interface CommenterInfo {
+  /** Decided on the server, so the optimistic row matches the stored one. */
+  isAdmin?: boolean;
   username: string;
   displayName: string;
   avatarUrl: string | null;
@@ -169,12 +172,15 @@ export function VideoComments({
                   />
                   <div className="min-w-0 flex-1">
                     <p className="flex items-baseline gap-2">
-                      <Link
-                        href={`/u/${comment.author.username}`}
-                        className="truncate text-[13px] font-semibold hover:underline"
-                      >
-                        {comment.author.displayName}
-                      </Link>
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        <Link
+                          href={`/u/${comment.author.username}`}
+                          className="truncate text-[13px] font-semibold hover:underline"
+                        >
+                          {comment.author.displayName}
+                        </Link>
+                        {comment.author.isAdmin && <AdminBadge />}
+                      </span>
                       <time
                         dateTime={comment.createdAt}
                         className="shrink-0 text-[11px] text-white/35"

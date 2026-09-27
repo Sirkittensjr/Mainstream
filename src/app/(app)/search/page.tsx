@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+import { AdminBadge } from '@/components/AdminBadge';
+import { isAdminRole } from '@/lib/admin-badge';
 import Link from 'next/link';
 import { Avatar } from '@/components/Avatar';
 import { FollowButton } from '@/components/FollowButton';
@@ -85,12 +87,15 @@ export default async function SearchPage({
                     size="sm"
                   />
                   <div className="min-w-0 flex-1">
-                    <Link
-                      href={`/u/${entry.user.username}`}
-                      className="block truncate font-semibold hover:underline"
-                    >
-                      {entry.user.display_name}
-                    </Link>
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      <Link
+                        href={`/u/${entry.user.username}`}
+                        className="truncate font-semibold hover:underline"
+                      >
+                        {entry.user.display_name}
+                      </Link>
+                      {isAdminRole(entry.user.role) && <AdminBadge />}
+                    </span>
                     <p className="truncate text-xs text-white/40">
                       @{entry.user.username} · {entry.followers} followers
                     </p>

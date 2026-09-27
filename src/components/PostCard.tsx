@@ -10,6 +10,7 @@ import { isVectorImage } from '@/lib/image';
 import { formatVotes } from '@/lib/ratings';
 import { timeAgo } from '@/lib/time';
 import { VideoPlayer } from './VideoPlayer';
+import { AdminBadge } from './AdminBadge';
 import type { Media, Reaction } from '@/lib/types';
 import { Avatar } from './Avatar';
 import { FollowButton } from './FollowButton';
@@ -43,6 +44,8 @@ export interface PostCardData {
     avatarUrl: string | null;
     followers: number;
     rating: number | null;
+    /** Decided on the server from the role column. Never the raw role. */
+    isAdmin?: boolean;
   };
 }
 
@@ -113,12 +116,15 @@ export function PostCard({
           src={data.author.avatarUrl}
         />
         <div className="min-w-0 flex-1">
-          <Link
-            href={`/u/${data.author.username}`}
-            className="block truncate font-semibold leading-tight hover:underline"
-          >
-            {data.author.displayName}
-          </Link>
+          <span className="flex min-w-0 items-center gap-1.5">
+            <Link
+              href={`/u/${data.author.username}`}
+              className="truncate font-semibold leading-tight hover:underline"
+            >
+              {data.author.displayName}
+            </Link>
+            {data.author.isAdmin && <AdminBadge />}
+          </span>
           <p className="mt-0.5 truncate text-[13px] text-white/45">
             @{data.author.username} · {timeAgo(data.createdAt)}
           </p>

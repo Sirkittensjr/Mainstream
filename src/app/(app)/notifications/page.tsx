@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+import { AdminBadge } from '@/components/AdminBadge';
+import { isAdminRole } from '@/lib/admin-badge';
 import Link from 'next/link';
 import { Avatar } from '@/components/Avatar';
 import { EmptyState } from '@/components/EmptyState';
@@ -126,7 +128,13 @@ function NotificationRow({ entry }: { entry: NotificationView }) {
               className="relative z-10 font-semibold text-white hover:underline"
             >
               @{actor.username}
-            </Link>{' '}
+            </Link>
+            {isAdminRole(actor.role) && (
+              <>
+                {' '}
+                <AdminBadge />
+              </>
+            )}{' '}
             {rest}
           </>
         ) : (

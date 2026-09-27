@@ -1,3 +1,4 @@
+import { isAdminRole } from '@/lib/admin-badge';
 import type { PostView } from '@/lib/services/posts';
 import type { PostCardData } from '@/components/PostCard';
 
@@ -27,6 +28,10 @@ export function toCardData(view: PostView): PostCardData {
       avatarUrl: view.author.avatar_url,
       followers: view.authorFollowers,
       rating: view.authorRating,
+      // Derived here, on the server, from the role column. The card is a
+      // client component: handing it `role` would ship a value the browser
+      // could then be handed anything for.
+      isAdmin: isAdminRole(view.author.role),
     },
   };
 }
