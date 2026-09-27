@@ -2,6 +2,7 @@
 
 import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
+import { AVATAR_BUDGET_BYTES } from '@/lib/media/avatar-image';
 import { EXTENSION_FOR, sniffType, type SniffedType } from '@/lib/file-type';
 import { newId } from '@/lib/ids';
 import {
@@ -31,10 +32,20 @@ export async function signupAction(_prev: AuthState, formData: FormData): Promis
   // The avatar is validated here but only STORED once Supabase has actually
   // created the account. Writing it first would make this an upload endpoint
   // that needs no account at all — free storage for anyone with a script.
+  //
+  // It is the one file on FayTarra that travels inside a Server Action, for
+  // that reason, and a Server Action body stops at 1MB — so the browser shrinks
+  // it to `AVATAR_BUDGET_BYTES` before submitting (see lib/media/avatar-image).
+  // The ceiling here is that budget with room to spare: generous enough never
+  // to argue with a legitimately prepared picture, small enough that a submit
+  // which skipped the browser is refused with a sentence rather than killed by
+  // the runtime with a 413 nobody can read.
   const avatar = formData.get('avatar');
   let avatarBytes: { data: Uint8Array; type: SniffedType } | null = null;
   if (avatar instanceof File && avatar.size > 0) {
-    if (avatar.size > 6 * 1024 * 1024) return { error: 'Profile picture must be under 6MB.' };
+    if (avatar.size > 2 * AVATAR_BUDGET_BYTES) {
+      return { error: 'That profile picture is too large to send. Try a smaller one.' };
+    }
     const data = new Uint8Array(await avatar.arrayBuffer());
     const type = sniffType(data);
     if (!type || !type.startsWith('image/')) {
