@@ -3,7 +3,9 @@ import Link from 'next/link';
 import { Avatar } from '@/components/Avatar';
 import { EmptyState } from '@/components/EmptyState';
 import { formatUnread } from '@/lib/format';
+import { MarkReadOnOpen } from '@/components/MarkReadOnOpen';
 import { PageTopBar } from '@/components/PageTopBar';
+import { markMessagesReadAction } from '@/app/actions';
 import { conversations, messagingAvailable } from '@/lib/services/messages';
 import { requireViewer } from '@/lib/session';
 import { timeAgo, timestamp } from '@/lib/time';
@@ -18,9 +20,16 @@ export default async function MessagesPage() {
     messagingAvailable(),
   ]);
 
+  // What the inbox was carrying when this render started. Opening the inbox
+  // is what clears it; a message that arrives after this counts as unread.
+  const unread = threads.reduce((total, entry) => total + entry.unread, 0);
+
   return (
     <>
       <PageTopBar title="Messages" />
+
+      {/* Same as Notifications: opening the inbox is the read receipt. */}
+      <MarkReadOnOpen unread={unread} action={markMessagesReadAction} />
       <div className="mx-auto max-w-2xl px-4 pt-4 lg:pt-8">
         <div className="mb-5 hidden lg:block">
           <h1 className="font-display text-3xl font-extrabold tracking-tight">Messages</h1>

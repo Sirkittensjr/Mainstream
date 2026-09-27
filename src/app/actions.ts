@@ -33,7 +33,11 @@ import {
   updateProfileColours,
 } from '@/lib/services/users';
 import { changeUsername, deleteAccount, signOut } from '@/lib/services/account';
-import { send as sendMessage, markThreadRead } from '@/lib/services/messages';
+import {
+  send as sendMessage,
+  markAllMessagesRead,
+  markThreadRead,
+} from '@/lib/services/messages';
 import { getUserByUsername } from '@/lib/services/users';
 import { submitRating } from '@/lib/services/ratings';
 import { saveTopCreators } from '@/lib/services/top-creators';
@@ -295,11 +299,34 @@ export async function changeUsernameAction(_prev: unknown, formData: FormData) {
   };
 }
 
+/**
+ * Marks every unread notification read. Called when the Notifications page is
+ * opened, not when a notification arrives and not from any other page.
+ *
+ * `revalidatePath('/', 'layout')` is what clears the badge: the count is
+ * rendered by the app layout, so revalidating only /notifications would leave
+ * the number in the navigation stale until the next full load.
+ */
 export async function markNotificationsReadAction() {
   const viewer = await getViewer();
   if (!viewer) return;
   await markAllRead(viewer.id);
   revalidatePath('/notifications');
+  revalidatePath('/', 'layout');
+}
+
+/**
+ * The same, for the message inbox.
+ *
+ * Only the viewer's own received messages are touched — see
+ * `markAllMessagesRead`. Who may message whom is not consulted or changed.
+ */
+export async function markMessagesReadAction() {
+  const viewer = await getViewer();
+  if (!viewer) return;
+  await markAllMessagesRead(viewer.id);
+  revalidatePath('/messages');
+  revalidatePath('/', 'layout');
 }
 
 export async function updateProfileAction(_prev: unknown, formData: FormData) {
