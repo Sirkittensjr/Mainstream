@@ -136,17 +136,22 @@ const run = async () => {
     !/Clip 1|Combining|clip 1 of/i.test(await A.page.locator('body').innerText()),
   );
 
-  // 12. Choose a thumbnail. Tucked away, because most posts never touch it.
-  await A.page.locator('summary', { hasText: 'Cover frame' }).click();
-  await A.page.waitForTimeout(1500);
+  // 12. Choose a cover. On screen rather than behind a disclosure now, with
+  // the frame scrubber and the upload option side by side.
+  await A.page.waitForSelector('#cover-heading', { timeout: 20000 });
   const thumbSlider = A.page.locator('#thumbnail');
-  const firstThumb = await A.page.locator('img[alt="The frame chosen for this post"]').getAttribute('src');
+  const cover = A.page.locator('img[data-cover-preview]');
+  const firstThumb = await cover.getAttribute('src');
   await setRange(thumbSlider, Number(await thumbSlider.getAttribute('max')) * 0.6);
   await A.page.waitForTimeout(1500);
-  const secondThumb = await A.page.locator('img[alt="The frame chosen for this post"]').getAttribute('src');
+  const secondThumb = await cover.getAttribute('src');
   check(
     '12. a different frame can be chosen as the thumbnail',
     Boolean(firstThumb && secondThumb && firstThumb !== secondThumb),
+  );
+  check(
+    '12. and a custom thumbnail can be uploaded instead',
+    (await A.page.locator('label[for="cover-file"]').count()) >= 1,
   );
 
   await openClipEditor(A.page);

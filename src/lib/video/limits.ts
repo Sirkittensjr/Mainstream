@@ -34,6 +34,19 @@ export const DURATION_TOLERANCE_SECONDS = 2.5;
 /** The hard server-side ceiling, tolerance included. */
 export const MAX_VIDEO_SECONDS_ENFORCED = MAX_VIDEO_SECONDS + DURATION_TOLERANCE_SECONDS;
 
+/**
+ * The most a custom cover image may weigh.
+ *
+ * Well under the 25MB the upload route allows any image, because this one is
+ * drawn at the size of a feed card and a phone's camera roll is full of photos
+ * many times larger than it needs. Refusing early is kinder than uploading
+ * 20MB to represent a thumbnail.
+ */
+export const MAX_COVER_BYTES = 8 * 1024 * 1024;
+
+/** What the cover picker offers. */
+export const COVER_ACCEPT = 'image/jpeg,image/png,image/webp,image/gif,image/*';
+
 /** How many clips one post may be built from. */
 export const MAX_CLIPS = 12;
 

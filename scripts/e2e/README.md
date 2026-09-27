@@ -116,6 +116,34 @@ cleared.
 node scripts/e2e/signup-form-state.mjs
 ```
 
+### 4a. Video covers — `video-cover-flow.mjs`
+
+The picture that stands in for a video before anybody plays it: a frame picked
+off the scrubber, an image the creator supplied, or neither — in which case a
+frame is taken anyway.
+
+```bash
+node scripts/e2e/video-cover-flow.mjs
+```
+
+Records its own short fixture in the browser, so there is nothing to build
+first. The fixture changes colour every second, which is what makes "a
+different frame" something a test can actually see.
+
+Covers: publishing with nothing chosen still getting a cover; the scrubber
+selecting a different frame; a supplied image winning over the frame and
+falling back when removed; the cover being stored as its own file and never
+the video; the video still playing from its original URL; the cover appearing
+on Home, the profile, Search, Recommended, Discover and the Videos feed; a
+second account being offered no way to change it; and — the one that matters
+for orphans — that choosing, replacing and removing covers uploads NOTHING
+until the post is published, so exactly two files are stored per post.
+
+Two notes on surfaces. Recommended, Discover and the Videos feed deliberately
+leave your OWN posts out, so those are checked from a second account; and
+Discover ranks by community rating, so the check is scoped to the post's
+category rather than racing hundreds of already-rated seeded posts.
+
 ### 5a. Opening a tab clears its badge — `mark-read-on-open.mjs`
 
 Notifications and Messages both mark themselves read because the page was
