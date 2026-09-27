@@ -367,7 +367,7 @@ export async function signIn(email: string, password: string): Promise<SignInRes
   const supabase = await createAuthClient();
   if (!supabase) return { ok: false, error: AUTH_NOT_CONFIGURED };
 
-  const { data, error } = await supabase.auth.signInWithPassword({
+  const { error } = await supabase.auth.signInWithPassword({
     email: email.trim().toLowerCase(),
     password,
   });
@@ -386,7 +386,39 @@ export async function signIn(email: string, password: string): Promise<SignInRes
     return { ok: false, error: 'Those details do not match an account.' };
   }
 
-  const profile = data.user ? await profileForAuthUser(data.user) : null;
+  // Ask Supabase who this actually is, rather than believing the sign-in
+  // response.
+  //
+  // `data.user` is decoded from the token that was just issued; getUser goes
+  // back to Supabase for the current record. They differ exactly when it
+  // matters — an address confirmed a moment ago in another tab, on a phone, or
+  // by a link opened in a different browser. Deciding "is this address
+  // confirmed?" from the authoritative record is what stops a confirmed
+  // account being sent back to "check your email".
+  const { data: current, error: lookupError } = await supabase.auth.getUser();
+  const user = lookupError ? null : current.user;
+
+  // A sign-in that produced no readable user is a failure, not a pass. Never
+  // treat "we could not check" as "it is fine".
+  if (!user) {
+    await supabase.auth.signOut().catch(() => undefined);
+    return { ok: false, error: 'Could not complete the sign-in. Try again.' };
+  }
+
+  // Supabase normally refuses an unconfirmed sign-in outright, above. This is
+  // the same rule enforced against the record itself, so a project whose
+  // confirmation setting is changed later cannot quietly let unverified
+  // accounts in through this door.
+  if (!user.email_confirmed_at) {
+    await supabase.auth.signOut().catch(() => undefined);
+    return {
+      ok: false,
+      error: 'Confirm your email first — check your inbox for the link.',
+      needsEmailConfirmation: true,
+    };
+  }
+
+  const profile = await profileForAuthUser(user);
   if (profile?.status === 'banned') {
     await supabase.auth.signOut();
     return { ok: false, error: 'This account has been banned for breaking the rules.' };

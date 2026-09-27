@@ -4,7 +4,7 @@ You have been invited to create an account on FayTarra.
 
 Accept the invitation here:
 
-{{ .ConfirmationURL }}
+{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=invite&next=/home
 
 This invitation link can be used once and expires after a short time.
 If you were not expecting this, you can safely ignore this email.

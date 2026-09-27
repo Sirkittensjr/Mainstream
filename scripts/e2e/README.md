@@ -116,6 +116,23 @@ cleared.
 node scripts/e2e/signup-form-state.mjs
 ```
 
+### 6a. The confirmation loop — `verification-login.mjs`
+
+The regression guard for "I confirmed my email and it still asks me to confirm
+it". Signs up, confirms **from a browser that never saw the signup** (what a
+phone does with a link mailed to it), then logs in and checks the account is
+not sent back to the verification page — and that a refresh keeps the session.
+
+```bash
+AUTH_EMAIL_COOLDOWN_SECONDS=2 node scripts/e2e/verification-login.mjs
+```
+
+It also demonstrates the root cause directly: a `{{ .ConfirmationURL }}`-style
+PKCE link opened in another browser cannot be exchanged, so the address stays
+unconfirmed, while the token-hash link for the same account confirms fine from
+that same browser. If anyone puts `{{ .ConfirmationURL }}` back into the
+templates, that check is the alarm.
+
 ### 6. Verification and password recovery — `auth-email-flow.mjs`
 
 The branded emails, "send verification email again", and the whole

@@ -2,7 +2,7 @@ SIGN IN TO FAYTARRA
 
 Use the link below to sign in to your FayTarra account:
 
-{{ .ConfirmationURL }}
+{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=magiclink&next=/home
 
 This link signs in whoever opens it, once, and expires after a short time.
 Do not forward it to anybody.

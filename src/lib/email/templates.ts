@@ -16,8 +16,28 @@
  */
 import { renderHtml, SITE, type EmailContent } from './layout';
 
-/** Supabase's action link. Left exactly as-is for Supabase to replace. */
-const URL_VAR = '{{ .ConfirmationURL }}';
+/**
+ * The action link, built from Supabase's own token hash rather than from
+ * `{{ .ConfirmationURL }}`.
+ *
+ * `{{ .ConfirmationURL }}` points at Supabase's /auth/v1/verify, which bounces
+ * back to the app carrying a PKCE `code`. Exchanging that code needs the
+ * code-verifier cookie written in the browser that signed up — so opening the
+ * email on a different device, or in a mail app's in-app browser, fails on a
+ * link that was perfectly valid. @supabase/ssr pins the client to PKCE, so
+ * that is not something the app can opt out of.
+ *
+ * `{{ .TokenHash }}` has no such tie. The app hands it back to Supabase with
+ * verifyOtp, server-side, and that one call both confirms the address and
+ * returns the session — from any browser, on any device. This is Supabase's
+ * own documented pattern for server-rendered apps.
+ *
+ * `{{ .SiteURL }}` is the project's Site URL, so the domain still comes from
+ * the dashboard rather than from anything written here.
+ */
+const actionUrl = (type: string, next: string) =>
+  `{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=${type}&next=${next}`;
+
 
 export interface AuthEmail extends EmailContent {
   /**
@@ -49,7 +69,7 @@ export const EMAILS: AuthEmail[] = [
       'Thanks for joining FayTarra.',
       'Please verify your email address to finish creating your account.',
     ],
-    action: { label: 'Verify my email', href: URL_VAR },
+    action: { label: 'Verify my email', href: actionUrl('signup', '/home') },
     footnotes: [
       'This verification link confirms that this email address belongs to your FayTarra account. It can be used once, and it expires after a short time — if it has already expired, you can ask for a new one from the confirmation screen.',
       IGNORE_SIGNUP,
@@ -61,7 +81,7 @@ export const EMAILS: AuthEmail[] = [
       '',
       'Please verify your email address to finish creating your account:',
       '',
-      URL_VAR,
+      actionUrl('signup', '/home'),
       '',
       'This verification link confirms that this email address belongs to your',
       'FayTarra account. It can be used once, and it expires after a short time.',
@@ -85,7 +105,7 @@ export const EMAILS: AuthEmail[] = [
       'We received a request to reset the password for your FayTarra account.',
       'If you requested this, click below to choose a new password.',
     ],
-    action: { label: 'Reset password', href: URL_VAR },
+    action: { label: 'Reset password', href: actionUrl('recovery', '/reset-password') },
     footnotes: [
       'For your security this link can be used once, and it expires according to the authentication system’s normal expiration rules. Your current password stays in place until you choose a new one.',
       'If you did not request a password reset, you can safely ignore this email — your password will not change.',
@@ -97,7 +117,7 @@ export const EMAILS: AuthEmail[] = [
       '',
       'If you requested this, open the link below to choose a new password:',
       '',
-      URL_VAR,
+      actionUrl('recovery', '/reset-password'),
       '',
       'For your security this link can be used once, and it expires according to',
       'the authentication system’s normal expiration rules. Your current password',
@@ -122,7 +142,7 @@ export const EMAILS: AuthEmail[] = [
       'A request was made to change the email address on your FayTarra account from {{ .Email }} to {{ .NewEmail }}.',
       'Confirm the change below. Until you do, your account keeps its current address.',
     ],
-    action: { label: 'Confirm new email', href: URL_VAR },
+    action: { label: 'Confirm new email', href: actionUrl('email_change', '/settings') },
     footnotes: [
       'This link can be used once and expires after a short time.',
       'If you did not ask to change your email address, ignore this email and consider changing your password — someone may know it.',
@@ -135,7 +155,7 @@ export const EMAILS: AuthEmail[] = [
       '',
       'Confirm the change here. Until you do, your account keeps its current address:',
       '',
-      URL_VAR,
+      actionUrl('email_change', '/settings'),
       '',
       'This link can be used once and expires after a short time.',
       '',
@@ -161,7 +181,7 @@ export const EMAILS: AuthEmail[] = [
     preheader: 'Sign in to FayTarra with this one-time link.',
     heading: 'Sign in to FayTarra',
     body: ['Use the link below to sign in to your FayTarra account.'],
-    action: { label: 'Sign in to FayTarra', href: URL_VAR },
+    action: { label: 'Sign in to FayTarra', href: actionUrl('magiclink', '/home') },
     footnotes: [
       'This link signs in whoever opens it, once, and expires after a short time. Do not forward it to anybody.',
       'If you did not ask to sign in, you can safely ignore this email.',
@@ -171,7 +191,7 @@ export const EMAILS: AuthEmail[] = [
       '',
       'Use the link below to sign in to your FayTarra account:',
       '',
-      URL_VAR,
+      actionUrl('magiclink', '/home'),
       '',
       'This link signs in whoever opens it, once, and expires after a short time.',
       'Do not forward it to anybody.',
@@ -194,7 +214,7 @@ export const EMAILS: AuthEmail[] = [
       'You have been invited to create an account on FayTarra — a place to post, be rated by the community, and be found on merit rather than follower count.',
       'Accept the invitation below to set up your account.',
     ],
-    action: { label: 'Accept invitation', href: URL_VAR },
+    action: { label: 'Accept invitation', href: actionUrl('invite', '/home') },
     footnotes: [
       'This invitation link can be used once and expires after a short time.',
       'If you were not expecting this, you can safely ignore this email.',
@@ -206,7 +226,7 @@ export const EMAILS: AuthEmail[] = [
       '',
       'Accept the invitation here:',
       '',
-      URL_VAR,
+      actionUrl('invite', '/home'),
       '',
       'This invitation link can be used once and expires after a short time.',
       'If you were not expecting this, you can safely ignore this email.',

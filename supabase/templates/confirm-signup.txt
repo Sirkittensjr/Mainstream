@@ -4,7 +4,7 @@ Thanks for joining FayTarra.
 
 Please verify your email address to finish creating your account:
 
-{{ .ConfirmationURL }}
+{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=signup&next=/home
 
 This verification link confirms that this email address belongs to your
 FayTarra account. It can be used once, and it expires after a short time.

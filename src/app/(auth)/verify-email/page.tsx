@@ -7,9 +7,9 @@ export const metadata: Metadata = { title: 'Confirm your email' };
 export default async function VerifyEmailPage({
   searchParams,
 }: {
-  searchParams: Promise<{ email?: string }>;
+  searchParams: Promise<{ email?: string; error?: string }>;
 }) {
-  const { email } = await searchParams;
+  const { email, error } = await searchParams;
 
   return (
     <div className="pt-6">
@@ -21,6 +21,18 @@ export default async function VerifyEmailPage({
         {email && <span className="font-semibold text-white">{email}</span>}. Open it and your
         account is ready — you will land straight back here signed in.
       </p>
+
+      {/* Set by /auth/callback when a link came back without actually
+          confirming the address — better said here, next to the button that
+          sends a new one, than swallowed. */}
+      {error && (
+        <p
+          role="alert"
+          className="mt-6 rounded-2xl border border-fay/40 bg-fay/10 px-4 py-3 text-sm text-fay-soft"
+        >
+          {error}
+        </p>
+      )}
 
       <div className="card mt-8 p-5 text-sm text-white/60">
         <p className="label">Didn&rsquo;t receive the email?</p>

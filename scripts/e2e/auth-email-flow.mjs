@@ -81,8 +81,9 @@ async function run(label, viewport, isMobile) {
     first?.link,
   );
   check(
-    'the link carries a one-time code for Supabase to exchange',
-    Boolean(first) && new URL(first.link).searchParams.has('code'),
+    'the link carries a one-time token hash for Supabase to verify',
+    Boolean(first) && new URL(first.link).searchParams.has('token_hash'),
+    first?.link,
   );
 
   // --- resend ---
@@ -369,7 +370,10 @@ function checkTemplates() {
       continue;
     }
     check(`${slug}: built and branded`, html.includes('FayTarra') && html.includes('#FF3D9A'));
-    check(`${slug}: carries Supabase's own action variable`, /\{\{ \.(ConfirmationURL|Token) \}\}/.test(html));
+    check(
+      `${slug}: carries Supabase's own action variable`,
+      /\{\{ \.(TokenHash|Token) \}\}/.test(html),
+    );
     check(`${slug}: no localhost`, !/localhost|127\.0\.0\.1/.test(html));
     check(`${slug}: no script and no remote images`, !/<script|<img/i.test(html));
     check(`${slug}: has a plain-text alternative`, readFileSync(`supabase/templates/${slug}.txt`, 'utf8').length > 120);
