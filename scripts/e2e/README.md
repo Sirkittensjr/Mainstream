@@ -116,6 +116,41 @@ cleared.
 node scripts/e2e/signup-form-state.mjs
 ```
 
+### 6. Verification and password recovery — `auth-email-flow.mjs`
+
+The branded emails, "send verification email again", and the whole
+forgot-password journey. The GoTrue stub behaves like GoTrue here: it refuses a
+resend that comes too soon (429 `over_email_send_rate_limit`) and refuses one
+for an address that is already confirmed, which is how the app's claim to have
+sent an email gets checked against whether one was actually sent.
+
+```bash
+STUB_PORT=54321 STUB_RESEND_COOLDOWN_MS=2000 node scripts/e2e/gotrue-stub.mjs &
+AUTH_EMAIL_COOLDOWN_SECONDS=5 npm start &
+AUTH_EMAIL_COOLDOWN_SECONDS=5 node scripts/e2e/auth-email-flow.mjs
+```
+
+`AUTH_EMAIL_COOLDOWN_SECONDS` shortens the app's own per-address cooldown (30s
+in production) so the run does not sit through it twice; both the app and the
+harness need the same value.
+
+Covers, at desktop and phone width: a verification email being generated with a
+one-time code on the configured origin; resend producing a genuinely new email
+and saying so; the countdown; the server refusing a resend submitted past the
+disabled button, and saying why rather than claiming success; an already
+confirmed address being told so instead of being mailed; the link confirming
+the account and signing in; "Forgot password?" answering identically for an
+address with and without an account; the reset page rejecting a short or
+mismatched password; the show/hide toggle; the reset landing on the login page
+with confirmation; the old password no longer working and the new one working;
+and a used reset link refusing to be replayed. It also checks the built
+templates in `supabase/templates/` for branding, Supabase's own variables, no
+localhost, no scripts or remote images, and a plain-text alternative.
+
+Where the emails themselves are configured — the dashboard templates, the
+Site URL that keeps links off localhost, custom SMTP and the DNS records — is
+`supabase/templates/README.md`.
+
 ### 6. Messaging, usernames, Discover and ratings — `features-flow.mjs`
 
 Starts from a **completely empty database** — no seed, no demo accounts — and

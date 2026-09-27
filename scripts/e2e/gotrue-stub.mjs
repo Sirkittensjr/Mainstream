@@ -124,6 +124,13 @@ function session(user) {
   };
 }
 
+/**
+ * GoTrue's own per-address resend cooldown, which the app must not paper over.
+ * Short by default so a test does not have to sit through 60 seconds.
+ */
+const RESEND_COOLDOWN_MS = Number(process.env.STUB_RESEND_COOLDOWN_MS ?? 2000);
+const resendAt = new Map();
+
 function issueCode(user, challenge, type, redirectTo) {
   const code = randomUUID();
   codes.set(code, { userId: user.id, challenge, type });
@@ -269,7 +276,28 @@ const server = createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && path === '/resend') {
-    const user = users.get(String(body.email || '').toLowerCase());
+    const address = String(body.email || '').toLowerCase();
+
+    // GoTrue rate-limits resends per address and says so. The app is supposed
+    // to report that refusal rather than claim an email went out, so the stub
+    // has to be able to produce it.
+    const last = resendAt.get(address);
+    if (last !== undefined && Date.now() - last < RESEND_COOLDOWN_MS) {
+      const wait = Math.ceil((RESEND_COOLDOWN_MS - (Date.now() - last)) / 1000);
+      return fail(
+        res,
+        429,
+        'over_email_send_rate_limit',
+        `For security purposes, you can only request this after ${wait} seconds.`,
+      );
+    }
+
+    const user = users.get(address);
+    if (user && user.email_confirmed_at) {
+      return fail(res, 422, 'email_address_already_confirmed', 'Email address already confirmed');
+    }
+
+    resendAt.set(address, Date.now());
     if (user) issueCode(user, body.code_challenge, 'signup', url.searchParams.get('redirect_to'));
     return send(res, 200, {});
   }

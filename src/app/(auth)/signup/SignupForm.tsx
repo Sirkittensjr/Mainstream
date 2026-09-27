@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState, useEffect, useRef, useState } from 'react';
+import { AvatarError, prepareAvatar } from '@/lib/media/avatar-image';
 import { CATEGORIES, type Category } from '@/lib/types';
 import { signupAction, type AuthState } from '../actions';
 
@@ -29,12 +30,57 @@ export function SignupForm() {
   const [location, setLocation] = useState('');
   const [selected, setSelected] = useState<Category[]>([]);
 
-  // A chosen file cannot be restored from a string, so the File itself is kept
-  // and put back on the input after React has reset the form.
+  /**
+   * The SHRUNK picture, never the one that was picked.
+   *
+   * Signup is a Server Action, and a Server Action body stops at 1MB — so a
+   * photo straight off a phone arrives as `Body exceeded 1 MB limit` before
+   * any of this code runs. The picker below therefore carries no `name` and
+   * submits nothing; what the form sends is the few hundred kilobytes that
+   * `prepareAvatar` writes, held on a hidden input of its own.
+   *
+   * A File cannot be restored from a string either, so keeping it here is also
+   * what survives React resetting the form after a failed submit.
+   */
   const [avatar, setAvatar] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  const [avatarNote, setAvatarNote] = useState<string | null>(null);
   const avatarInput = useRef<HTMLInputElement>(null);
 
+  async function pickAvatar(file: File | undefined) {
+    if (preview) URL.revokeObjectURL(preview);
+    if (!file) {
+      setAvatar(null);
+      setPreview(null);
+      setAvatarNote(null);
+      return;
+    }
+
+    setPreparing(true);
+    setAvatar(null);
+    setPreview(null);
+    setAvatarNote(null);
+    try {
+      const small = await prepareAvatar(file);
+      setAvatar(small);
+      setPreview(URL.createObjectURL(small));
+    } catch (failure) {
+      // Never a reason to block the signup: the account is made without a
+      // picture, and one can be added in settings a minute later.
+      setAvatarNote(
+        failure instanceof AvatarError
+          ? `${failure.message} You can add a photo in settings after signing up.`
+          : 'That picture could not be prepared. You can add one in settings after signing up.',
+      );
+    } finally {
+      setPreparing(false);
+    }
+  }
+
+  // The prepared file is put on the hidden input here rather than at pick
+  // time, because this also has to run again after React resets the form on a
+  // failed submit — otherwise the second attempt would silently lose the photo.
   useEffect(() => {
     const input = avatarInput.current;
     if (!input || !avatar || input.files?.length) return;
@@ -45,6 +91,7 @@ export function SignupForm() {
     } catch {
       // Older browsers refuse this. The preview still shows, and the account is
       // created without the picture rather than the signup failing.
+      setAvatarNote('This browser could not attach the photo — you can add one in settings.');
     }
   }, [avatar, state]);
 
@@ -200,23 +247,22 @@ export function SignupForm() {
             {preview ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={preview} alt="" className="h-full w-full object-cover" />
+            ) : preparing ? (
+              '…'
             ) : (
               'Photo'
             )}
           </label>
+
+          {/* The picker itself submits nothing — see the note on `avatar`. */}
           <input
-            ref={avatarInput}
             id="avatar"
-            name="avatar"
             type="file"
             accept="image/*"
             className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0] ?? null;
-              setAvatar(file);
-              setPreview(file ? URL.createObjectURL(file) : null);
-            }}
+            onChange={(event) => void pickAvatar(event.target.files?.[0])}
           />
+          <input ref={avatarInput} name="avatar" type="file" className="hidden" tabIndex={-1} />
           <div className="flex-1">
             <label className="sr-only" htmlFor="display_name">
               Display name
@@ -234,9 +280,17 @@ export function SignupForm() {
               className={`w-full ${ring('display_name')}`}
             />
             {fieldError('display_name')}
-            <p className="mt-1.5 text-xs text-white/30">
-              Optional photo — you get a generated one until you add it.
-            </p>
+            {avatarNote ? (
+              <p role="status" className="mt-1.5 text-xs text-fay-soft">
+                {avatarNote}
+              </p>
+            ) : (
+              <p className="mt-1.5 text-xs text-white/30">
+                {preparing
+                  ? 'Resizing your photo…'
+                  : 'Optional photo — you get a generated one until you add it.'}
+              </p>
+            )}
           </div>
         </div>
 
@@ -266,8 +320,14 @@ export function SignupForm() {
         </p>
       )}
 
-      <button type="submit" disabled={pending} className="btn-primary w-full py-4 text-base">
-        {pending ? 'Creating your profile…' : 'Create my account'}
+      {/* Held back while a photo is being resized, so a fast submit cannot
+          race the picture and send the account without it. */}
+      <button
+        type="submit"
+        disabled={pending || preparing}
+        className="btn-primary w-full py-4 text-base"
+      >
+        {pending ? 'Creating your profile…' : preparing ? 'Preparing your photo…' : 'Create my account'}
       </button>
     </form>
   );

@@ -11,7 +11,7 @@ export default function ForgotPasswordPage() {
         Forgot your password?
       </h1>
       <p className="mt-2 text-white/50">
-        Tell us your email and we will send a link to set a new one.
+        Enter the email address associated with your FayTarra account.
       </p>
 
       <ForgotPasswordForm />

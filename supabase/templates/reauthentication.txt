@@ -1,0 +1,14 @@
+CONFIRM IT IS YOU
+
+Enter this code to confirm the change you asked for on your FayTarra account:
+
+    {{ .Token }}
+
+The code expires after a short time. FayTarra will never ask you for it by
+email, message or phone.
+
+If you did not ask for this, ignore this email and change your password.
+
+--
+FayTarra — faytarra.com
+Automated message. Replies are not monitored.

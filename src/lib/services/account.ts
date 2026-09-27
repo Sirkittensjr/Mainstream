@@ -5,6 +5,7 @@ import { DAY } from '@/lib/time';
 import { AUTH_NOT_CONFIGURED, authConfigured } from '@/lib/supabase/config';
 import { createAdminAuthClient, createAuthClient } from '@/lib/supabase/server';
 import { CATEGORIES, type Category, type User } from '@/lib/types';
+import { checkEmailSendLimit, EMAIL_COOLDOWN_SECONDS } from './email-limit';
 import { getUserByUsername } from './users';
 
 export const USERNAME_RULES = 'letters, numbers and underscores, 3–20 characters';
@@ -393,17 +394,81 @@ export async function signIn(email: string, password: string): Promise<SignInRes
   return { ok: true, value: profile };
 }
 
-/** Sends the confirmation mail again. Reports success either way. */
-export async function resendConfirmation(email: string): Promise<Result<true>> {
+/**
+ * How long a caller should wait before asking for another email.
+ *
+ * Carried back to the form so the button can count down instead of guessing.
+ */
+export interface EmailSendOutcome {
+  cooldownSeconds: number;
+}
+
+/**
+ * Reads the number of seconds out of GoTrue's rate-limit message.
+ *
+ * "For security purposes, you can only request this after 47 seconds." — the
+ * figure is the useful part, and showing it beats a vague "try later".
+ */
+function secondsFrom(message: string, fallback: number): number {
+  const found = /after (\d+) seconds?/i.exec(message);
+  const parsed = found ? Number(found[1]) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 3600) : fallback;
+}
+
+/**
+ * Sends the confirmation mail again, through Supabase's own resend.
+ *
+ * This used to discard the result and report success unconditionally, which is
+ * why "send again" appeared to work while no second email ever arrived: a
+ * refusal from GoTrue — rate limited, already confirmed, address rejected —
+ * looked identical to a send. The result is now read, and a refusal is
+ * reported as one.
+ *
+ * Supabase still owns the whole mechanism: it mints the token, it renders the
+ * "Confirm signup" template, it sends. Nothing here creates a token.
+ */
+export async function resendConfirmation(email: string): Promise<Result<EmailSendOutcome>> {
   if (!authConfigured()) return { ok: false, error: AUTH_NOT_CONFIGURED };
   const supabase = await createAuthClient();
   if (!supabase) return { ok: false, error: AUTH_NOT_CONFIGURED };
-  await supabase.auth.resend({
+
+  const address = email.trim().toLowerCase();
+
+  const gate = checkEmailSendLimit(address);
+  if (!gate.ok) return { ok: false, error: gate.error };
+
+  const { error } = await supabase.auth.resend({
     type: 'signup',
-    email: email.trim().toLowerCase(),
+    email: address,
     options: { emailRedirectTo: `${siteUrl()}/auth/callback?next=/home` },
   });
-  return { ok: true, value: true };
+
+  if (error) {
+    const message = error.message ?? '';
+    const lowered = message.toLowerCase();
+
+    if (error.status === 429 || lowered.includes('rate limit') || lowered.includes('security purposes')) {
+      const wait = secondsFrom(message, EMAIL_COOLDOWN_SECONDS);
+      return {
+        ok: false,
+        error: `Too many requests. Try again in ${wait} second${wait === 1 ? '' : 's'}.`,
+      };
+    }
+    if (lowered.includes('already') && lowered.includes('confirm')) {
+      return { ok: false, error: 'That address is already confirmed — you can sign in.' };
+    }
+    if (lowered.includes('invalid') && lowered.includes('email')) {
+      return { ok: false, error: 'That does not look like a valid email address.', field: 'email' };
+    }
+    // Anything else really is a failure to send, and saying "sent" would be a
+    // lie that costs somebody their account.
+    return {
+      ok: false,
+      error: 'We could not send that email just now. Try again in a moment.',
+    };
+  }
+
+  return { ok: true, value: { cooldownSeconds: EMAIL_COOLDOWN_SECONDS } };
 }
 
 export async function signOut(): Promise<void> {
@@ -411,24 +476,102 @@ export async function signOut(): Promise<void> {
   await supabase?.auth.signOut();
 }
 
-/** Sends the reset link. Always reports success, so it cannot enumerate emails. */
-export async function requestPasswordReset(email: string): Promise<Result<true>> {
+/**
+ * Sends the password reset link.
+ *
+ * An address with no account gets the same answer as one with an account —
+ * GoTrue returns success either way, and this reports success either way — so
+ * the form cannot be used to find out who has an account here.
+ *
+ * That silence is deliberately narrow. A transport failure or a rate limit is
+ * NOT about whether the address exists, so those are reported: telling
+ * somebody "check your inbox" when Supabase refused the request leaves them
+ * waiting for mail that was never sent.
+ */
+export async function requestPasswordReset(email: string): Promise<Result<EmailSendOutcome>> {
   if (!authConfigured()) return { ok: false, error: AUTH_NOT_CONFIGURED };
   const supabase = await createAuthClient();
   if (!supabase) return { ok: false, error: AUTH_NOT_CONFIGURED };
-  await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+
+  const address = email.trim().toLowerCase();
+
+  const gate = checkEmailSendLimit(address);
+  if (!gate.ok) return { ok: false, error: gate.error };
+
+  const { error } = await supabase.auth.resetPasswordForEmail(address, {
     redirectTo: `${siteUrl()}/auth/callback?next=/reset-password`,
   });
-  return { ok: true, value: true };
+
+  if (error) {
+    const message = error.message ?? '';
+    const lowered = message.toLowerCase();
+    if (error.status === 429 || lowered.includes('rate limit') || lowered.includes('security purposes')) {
+      const wait = secondsFrom(message, EMAIL_COOLDOWN_SECONDS);
+      return {
+        ok: false,
+        error: `Too many requests. Try again in ${wait} second${wait === 1 ? '' : 's'}.`,
+      };
+    }
+    // A 4xx about the address itself is answered with the same generic
+    // success as a hit, so nothing here distinguishes the two cases.
+    if (error.status && error.status >= 500) {
+      return { ok: false, error: 'We could not send that email just now. Try again in a moment.' };
+    }
+  }
+
+  return { ok: true, value: { cooldownSeconds: EMAIL_COOLDOWN_SECONDS } };
 }
 
-/** Sets a new password for the person currently holding a recovery session. */
+/**
+ * Sets a new password for the person currently holding a recovery session.
+ *
+ * The session comes from the emailed link going through /auth/callback, and
+ * Supabase is what turns that one-time code into a session — there is no
+ * FayTarra reset token, and this code never sees a hash.
+ *
+ * Every other session is then ended. A reset is very often somebody taking an
+ * account back, and leaving whoever else was signed in still signed in would
+ * defeat the point of the reset.
+ */
 export async function updatePassword(password: string): Promise<Result<true>> {
-  if (password.length < 8) return { ok: false, error: 'Password must be at least 8 characters.' };
+  if (password.length < 8) {
+    return { ok: false, error: 'Password must be at least 8 characters.', field: 'password' };
+  }
   const supabase = await createAuthClient();
   if (!supabase) return { ok: false, error: AUTH_NOT_CONFIGURED };
+
   const { error } = await supabase.auth.updateUser({ password });
-  return error ? { ok: false, error: error.message } : { ok: true, value: true };
+
+  if (error) {
+    const message = error.message ?? '';
+    const lowered = message.toLowerCase();
+    if (lowered.includes('should be different') || lowered.includes('same as')) {
+      return {
+        ok: false,
+        error: 'That is the password you already have. Choose a different one.',
+        field: 'password',
+      };
+    }
+    // Supabase's own password policy, which the dashboard controls: its
+    // wording tells people what to fix and reveals nothing about the account.
+    if (lowered.includes('password')) return { ok: false, error: message, field: 'password' };
+    if (lowered.includes('session') || lowered.includes('jwt') || error.status === 401) {
+      return { ok: false, error: 'That reset link has expired. Ask for a new one.' };
+    }
+    return { ok: false, error: 'We could not change the password. Try the link again.' };
+  }
+
+  // Signs out everywhere, this browser included, so the new password is what
+  // gets somebody back in. Never allowed to fail the reset: the password IS
+  // already changed by this point, and saying otherwise would send them round
+  // the loop again for nothing.
+  try {
+    await supabase.auth.signOut({ scope: 'global' });
+  } catch {
+    // Best effort.
+  }
+
+  return { ok: true, value: true };
 }
 
 /** Deletes the profile, its content, and the Supabase Auth account. */
@@ -474,5 +617,29 @@ export function siteUrl(): string {
     return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
   }
   if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+
+  // A production deployment that reaches this line would put
+  // `http://localhost:3000` inside a link emailed to a real person, which is
+  // the classic "the confirmation link goes to localhost" bug. Say so loudly
+  // where somebody reading the logs will see it.
+  if (process.env.NODE_ENV === 'production') {
+    console.warn(
+      '[faytarra] No NEXT_PUBLIC_SITE_URL or SITE_URL is set, so email links ' +
+        'would point at localhost. Set it to https://faytarra.com.',
+    );
+  }
   return 'http://localhost:3000';
+}
+
+/**
+ * Whether email links can currently be built for a real recipient.
+ *
+ * Note this is only half the story, and the smaller half: Supabase builds
+ * `{{ .ConfirmationURL }}` from the project's own **Site URL**, and falls back
+ * to it whenever the `redirectTo` we pass is not on the dashboard's allow
+ * list. So a Supabase project still configured with localhost sends localhost
+ * links no matter what this app sends. See supabase/templates/README.md.
+ */
+export function emailLinksLookProduction(): boolean {
+  return !/localhost|127\.0\.0\.1/.test(siteUrl());
 }

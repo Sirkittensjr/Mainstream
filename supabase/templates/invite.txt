@@ -1,0 +1,14 @@
+YOU ARE INVITED TO FAYTARRA
+
+You have been invited to create an account on FayTarra.
+
+Accept the invitation here:
+
+{{ .ConfirmationURL }}
+
+This invitation link can be used once and expires after a short time.
+If you were not expecting this, you can safely ignore this email.
+
+--
+FayTarra — faytarra.com
+Automated message. Replies are not monitored.
