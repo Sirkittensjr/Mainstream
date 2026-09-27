@@ -28,6 +28,8 @@ import {
 } from '@/lib/video/clips';
 import { grabFrame, probeLocalVideo } from '@/lib/video/capture';
 import {
+  COVER_ACCEPT,
+  MAX_COVER_BYTES,
   MAX_VIDEO_BYTES,
   MAX_VIDEO_SECONDS,
   VIDEO_ACCEPT,
@@ -85,6 +87,19 @@ export function VideoStudio() {
   const [finished, setFinished] = useState<Finished | null>(null);
   const [thumbnailAt, setThumbnailAt] = useState(0);
   const [thumbnail, setThumbnail] = useState<string | null>(null);
+
+  /**
+   * A picture the creator supplied instead of a frame.
+   *
+   * Held as a File until Post, never uploaded on pick. That is what makes
+   * "replace it" and "change your mind" free: nothing has been stored yet, so
+   * there is nothing to orphan. The only upload happens on publish, and the
+   * one failure path after that — the post itself failing — discards it
+   * alongside the video.
+   */
+  const [customCover, setCustomCover] = useState<File | null>(null);
+  const [customCoverUrl, setCustomCoverUrl] = useState<string | null>(null);
+  const [coverError, setCoverError] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [caption, setCaption] = useState('');
   const [category, setCategory] = useState<Category>('Life');
@@ -93,6 +108,40 @@ export function VideoStudio() {
   const [posting, setPosting] = useState(false);
 
   const cancelled = useRef<AbortController | null>(null);
+
+  /** What the post will actually be covered with, for the preview. */
+  const coverPreview = customCoverUrl ?? thumbnail;
+
+  function chooseCover(file: File | undefined) {
+    if (!file) return;
+    setCoverError(null);
+
+    if (!file.type.startsWith('image/')) {
+      setCoverError('Choose an image — JPG, PNG, WEBP or GIF.');
+      return;
+    }
+    if (file.size > MAX_COVER_BYTES) {
+      setCoverError(
+        `That image is ${formatMegabytes(file.size)}. Covers can be up to ${formatMegabytes(MAX_COVER_BYTES)}.`,
+      );
+      return;
+    }
+
+    setCustomCover(file);
+    setCustomCoverUrl((previous) => {
+      if (previous) URL.revokeObjectURL(previous);
+      return trackUrl(URL.createObjectURL(file));
+    });
+  }
+
+  function clearCover() {
+    setCoverError(null);
+    setCustomCover(null);
+    setCustomCoverUrl((previous) => {
+      if (previous) URL.revokeObjectURL(previous);
+      return null;
+    });
+  }
 
   const trackUrl = useCallback((url: string) => {
     objectUrls.current.push(url);
@@ -109,7 +158,8 @@ export function VideoStudio() {
   // The cover frame, kept in step with the scrubber. A nicety: a post with
   // no poster still works, it just costs the Videos feed a download.
   useEffect(() => {
-    if (!previewUrl) return;
+    // A supplied image is the cover, so there is no frame to keep in step.
+    if (!previewUrl || customCover) return;
     let cancelledHere = false;
     void (async () => {
       try {
@@ -292,16 +342,26 @@ export function VideoStudio() {
       uploaded = await build(controller.signal);
       if (!uploaded) return;
 
-      // The poster is grabbed from the local copy and uploaded separately: it
-      // is a few KB, and a video post without one costs everybody who scrolls
-      // past it in the Videos feed.
+      // The cover is stored as its own file and only referenced by the post,
+      // so it never touches the video: replacing one leaves the other alone.
+      //
+      // A custom picture wins over the scrubbed frame when there is one. When
+      // there is not, a frame is grabbed anyway — a video post with no cover
+      // costs everybody who scrolls past it in the Videos feed a download.
       let poster: string | undefined;
       try {
-        const frame = await grabFrame(uploaded.previewUrl, thumbnailAt, { maxEdge: 720 });
-        const image = await uploadMedia(frame, 'image/jpeg', { signal: controller.signal });
+        const cover = customCover
+          ? { body: customCover as Blob, type: contentTypeFor(customCover) }
+          : {
+              body: await grabFrame(uploaded.previewUrl, thumbnailAt, { maxEdge: 720 }),
+              type: 'image/jpeg',
+            };
+        const image = await uploadMedia(cover.body, cover.type, { signal: controller.signal });
         poster = image.url;
-      } catch {
-        // A failed thumbnail must not cost somebody their post.
+      } catch (failure) {
+        // A cover that will not upload must never cost somebody their post —
+        // the video is the thing they made. It goes up without one.
+        if ((failure as DOMException)?.name === 'AbortError') throw failure;
       }
 
       setProgress({ label: 'Posting…', ratio: 1 });
@@ -318,8 +378,10 @@ export function VideoStudio() {
       });
       if (result?.error) {
         // The video is in storage and no post points at it. Take it back out
-        // rather than leaving it there for nobody.
+        // rather than leaving it there for nobody — and the cover with it,
+        // which is the only way an uploaded cover can be left unreferenced.
         await discardMedia(uploaded.media.url);
+        if (poster) await discardMedia(poster);
         setFinished(null);
         setError(result.error);
         return;
@@ -605,35 +667,100 @@ export function VideoStudio() {
         </button>
       </div>
 
+      {/* ------------------------------------------------------------ cover */}
       {previewUrl && (
-        <details className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-          <summary className="cursor-pointer text-sm font-semibold text-white/70">
-            Cover frame
-          </summary>
+        <section
+          aria-labelledby="cover-heading"
+          className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"
+        >
+          <h2 id="cover-heading" className="text-sm font-semibold text-white/70">
+            Choose cover
+          </h2>
           <p className="mt-1 text-xs text-white/40">
-            The frame people see before they press play. The start of the video by default.
+            What people see before they press play. The start of the video unless you pick
+            something else.
           </p>
-          <div className="mt-3 flex items-center gap-3">
-            {thumbnail && (
+
+          <div className="mt-3 flex items-start gap-3">
+            {/* One preview, whichever kind of cover is winning. */}
+            {coverPreview ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={thumbnail}
-                alt="The frame chosen for this post"
-                className="h-16 w-16 shrink-0 rounded-xl bg-black object-contain"
+                src={coverPreview}
+                alt={customCoverUrl ? 'The image chosen as this cover' : 'The frame chosen as this cover'}
+                data-cover-preview={customCoverUrl ? 'custom' : 'frame'}
+                className="h-20 w-20 shrink-0 rounded-xl bg-black object-contain"
               />
+            ) : (
+              <div className="h-20 w-20 shrink-0 rounded-xl bg-white/[0.04]" />
             )}
-            <input
-              id="thumbnail"
-              type="range"
-              min={0}
-              max={Math.max(0.1, total - 0.1)}
-              step={0.1}
-              value={thumbnailAt}
-              onChange={(event) => setThumbnailAt(Number(event.target.value))}
-              className="h-11 w-full accent-fay"
-            />
+
+            <div className="min-w-0 flex-1">
+              {customCover ? (
+                <>
+                  <p className="truncate text-xs text-white/60">
+                    Using your own image — {formatMegabytes(customCover.size)}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <label
+                      htmlFor="cover-file"
+                      className="btn-quiet cursor-pointer px-3 py-2 text-xs"
+                    >
+                      Replace
+                    </label>
+                    <button type="button" onClick={clearCover} className="btn-quiet px-3 py-2 text-xs">
+                      Use a frame instead
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <label htmlFor="thumbnail" className="text-xs text-white/40">
+                    Drag to pick a frame
+                  </label>
+                  {/* Full width and 44px tall so a thumb can work it. */}
+                  <input
+                    id="thumbnail"
+                    type="range"
+                    min={0}
+                    max={Math.max(0.1, total - 0.1)}
+                    step={0.1}
+                    value={thumbnailAt}
+                    aria-label="Cover frame position"
+                    aria-valuetext={`${formatPreciseSeconds(thumbnailAt)} of ${formatSeconds(total)}`}
+                    onChange={(event) => setThumbnailAt(Number(event.target.value))}
+                    className="mt-1 h-11 w-full accent-fay"
+                  />
+                  <label
+                    htmlFor="cover-file"
+                    className="btn-quiet inline-block cursor-pointer px-3 py-2 text-xs"
+                  >
+                    Upload thumbnail
+                  </label>
+                </>
+              )}
+
+              {/* Nothing is uploaded on pick — see the note on `customCover`. */}
+              <input
+                id="cover-file"
+                type="file"
+                accept={COVER_ACCEPT}
+                className="hidden"
+                onChange={(event) => {
+                  chooseCover(event.target.files?.[0]);
+                  // Cleared so picking the SAME file again still fires.
+                  event.target.value = '';
+                }}
+              />
+
+              {coverError && (
+                <p role="alert" className="mt-2 text-xs text-fay-soft">
+                  {coverError}
+                </p>
+              )}
+            </div>
           </div>
-        </details>
+        </section>
       )}
 
       <div>
