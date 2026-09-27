@@ -68,12 +68,46 @@ async function createAccount(browser, email, handle, interest) {
   return { context, page, email, handle };
 }
 
-/** Ask for /admin directly and report where you ended up and what you saw. */
+/**
+ * Ask for /admin directly and report where you ended up and what you saw.
+ *
+ * The dashboard is detected by the tab links only it renders, NOT by its
+ * heading: the admin verification screen's own copy contains the words "admin
+ * dashboard", so a text search matches it too and would let every check here
+ * pass while the dashboard stayed shut — or, worse, while it was open.
+ */
 async function tryAdmin(page) {
   await page.goto('/admin', { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle');
   const body = await page.locator('body').innerText();
-  return { url: page.url(), onAdmin: /Admin dashboard/i.test(body), body };
+  const onAdmin = await page.evaluate(
+    () => document.querySelector('a[href*="/admin?tab=reports"]') !== null,
+  );
+  return { url: page.url(), onAdmin, body };
+}
+
+/** The six digits the stub wrote to the outbox for this address. */
+function latestCode(email) {
+  const rows = readFileSync(OUTBOX, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  return [...rows].reverse().find((m) => m.type === 'otp' && m.to === email)?.code;
+}
+
+/** Complete the emailed-code step, which /admin now requires. */
+async function completeStepUp(page, email) {
+  await page.goto('/admin/verify', { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle');
+  const send = page.locator('button', { hasText: /Email me a code|Send another code/ });
+  if (await send.count()) {
+    await send.first().click();
+    await page.waitForTimeout(2500);
+  }
+  const code = latestCode(email);
+  if (!code) return false;
+  await page.fill('#admin-code', code);
+  await page.locator('form button[type=submit]').last().click();
+  await page.waitForLoadState('networkidle');
+  await page.waitForTimeout(1800);
+  return true;
 }
 
 async function run() {
@@ -147,9 +181,19 @@ async function run() {
   section('THE ADMIN ACCOUNT');
   const admin = await createAccount(browser, ADMIN_EMAIL, `fayadmin${stamp}`.slice(0, 20), 'Tech');
 
+  // The dashboard now needs the emailed code as well as the role.
+  const beforeCode = await tryAdmin(admin.page);
+  check(
+    'even an admin cannot open /admin before the code step',
+    !beforeCode.onAdmin && /admin\/verify/.test(beforeCode.url),
+    beforeCode.url,
+  );
+
+  check('the admin can complete the code step', await completeStepUp(admin.page, ADMIN_EMAIL));
+
   const adminTry = await tryAdmin(admin.page);
-  check('the admin account reaches /admin', adminTry.onAdmin, adminTry.url);
-  check('and stays on /admin', /\/admin/.test(adminTry.url), adminTry.url);
+  check('and then reaches /admin', adminTry.onAdmin, adminTry.url);
+  check('and stays on /admin', /\/admin/.test(adminTry.url) && !/verify/.test(adminTry.url), adminTry.url);
 
   // Not even for the admin: being one is decided on the server, per request.
   const adminMe = await admin.page.evaluate(async () => (await fetch('/api/v1/me')).json());
@@ -176,7 +220,7 @@ async function run() {
     const body = await user.page.locator('body').innerText();
     check(
       `a normal account cannot reach ${path}`,
-      !/Admin dashboard/i.test(body) && !/\/admin/.test(new URL(user.page.url()).pathname),
+      !/Reports|Integrity/i.test(body) && !/\/admin/.test(new URL(user.page.url()).pathname),
       user.page.url(),
     );
   }

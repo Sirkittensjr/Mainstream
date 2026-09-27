@@ -8,6 +8,7 @@ import { sanitiseAvatarUrl, sanitiseMedia } from '@/lib/media';
 import { PROFILE_DEFAULT, isProfileColorKey } from '@/lib/profile-theme';
 import { checkLimit } from '@/lib/services/rate-limit';
 import { getViewer, requireAdmin, requireViewer } from '@/lib/session';
+import { clearAdminVerification } from '@/lib/services/admin-step-up';
 import {
   addComment,
   createPost,
@@ -414,6 +415,10 @@ export async function deleteAccountAction(confirmation: string) {
 export async function logoutAction() {
   // Supabase clears its own cookies and revokes the refresh token server-side.
   await signOut();
+  // The admin second-factor proof is ours, not Supabase's, so it has to be
+  // dropped here. Signing out must not leave a browser one password away from
+  // the dashboard.
+  await clearAdminVerification();
   // Without this the client router can serve a cached layout from before the
   // sign-out, so the navigation carries on showing the account menu until a
   // hard reload. Busting the whole tree is the point: every page's nav is

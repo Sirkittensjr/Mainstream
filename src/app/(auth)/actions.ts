@@ -13,6 +13,7 @@ import {
   updatePassword,
   type SignUpField,
 } from '@/lib/services/account';
+import { sendAdminCode } from '@/lib/services/admin-step-up';
 import { getUserByUsername, updateProfile } from '@/lib/services/users';
 import { CATEGORIES, type Category } from '@/lib/types';
 
@@ -121,7 +122,21 @@ export async function loginAction(_prev: AuthState, formData: FormData): Promise
   }
 
   const next = String(formData.get('next') || '/home');
-  redirect(next.startsWith('/') && !next.startsWith('//') ? next : '/home');
+  const target = next.startsWith('/') && !next.startsWith('//') ? next : '/home';
+
+  // An administrator has a second step. The password alone is a normal
+  // FayTarra session — it opens the feed, not the dashboard — so the code goes
+  // out now and they land on the screen that asks for it.
+  //
+  // A send that fails is not a reason to stop: the screen has a button, and
+  // being unable to email a code must not lock an admin out of the site
+  // itself.
+  if (result.value?.role === 'admin') {
+    await sendAdminCode(result.value).catch(() => undefined);
+    redirect(`/admin/verify?next=${encodeURIComponent(target)}`);
+  }
+
+  redirect(target);
 }
 
 export async function resendConfirmationAction(
