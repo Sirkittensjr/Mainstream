@@ -86,7 +86,7 @@ async function tryAdmin(page) {
   return { url: page.url(), onAdmin, body };
 }
 
-/** The six digits the stub wrote to the outbox for this address. */
+/** The code the stub wrote to the outbox for this address. */
 function latestCode(email) {
   const rows = readFileSync(OUTBOX, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
   return [...rows].reverse().find((m) => m.type === 'otp' && m.to === email)?.code;

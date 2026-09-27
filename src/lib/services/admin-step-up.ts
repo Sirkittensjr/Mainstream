@@ -26,7 +26,7 @@ import type { ID, User } from '@/lib/types';
  *   - re-requesting replaces the stored token, so the previous code stops
  *     working the moment a new one is sent.
  *
- * Nothing here ever sees the code except the six digits the admin types back
+ * Nothing here ever sees the code except the digits the admin types back
  * in, which are compared by Supabase rather than by this file.
  *
  * WHAT THIS FILE DOES OWN: the proof that the step was completed, as a short
@@ -136,7 +136,7 @@ export async function sendAdminCode(admin: User): Promise<StepUpResult> {
 export type VerifyResult = { ok: true } | { ok: false; error: string; exhausted?: boolean };
 
 /**
- * Checks the six digits against Supabase and, if they are right, records that
+ * Checks the digits against Supabase and, if they are right, records that
  * this browser has completed the step.
  *
  * The code is handed straight to Supabase. It is never compared here, never
@@ -167,7 +167,7 @@ export async function verifyAdminCode(admin: User, code: string): Promise<Verify
 
   /**
    * `signInWithOtp` issues what GoTrue calls a magic-link token, and the same
-   * six digits are what `{{ .Token }}` renders. Which name `verifyOtp` wants
+   * digits are what `{{ .Token }}` renders. Which name `verifyOtp` wants
    * for it — 'email' or 'magiclink' — has moved between GoTrue versions, and
    * the wrong name simply misses the lookup: the token is NOT consumed by a
    * failed verify, so trying the other name costs nothing and removes a

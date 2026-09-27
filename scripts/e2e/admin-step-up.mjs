@@ -1,5 +1,5 @@
 /**
- * The administrator's second step: a six-digit code, emailed, before /admin.
+ * The administrator's second step: an emailed code, before /admin opens.
  *
  * The code is Supabase's, not FayTarra's — signInWithOtp issues it, verifyOtp
  * checks it — so the things being tested here are the ones FayTarra decides:
@@ -200,7 +200,7 @@ async function run() {
   // the documented recovery and what keeps this run independent of whatever a
   // previous run left in the server's memory.
   const fresh = (await requestFreshCode(admin.page, ADMIN_EMAIL)) ?? code;
-  const wrong = String((Number(fresh) + 1) % 1000000).padStart(6, '0');
+  const wrong = String((Number(fresh) + 1) % 100000000).padStart(8, '0');
   const afterWrong = await enterCode(admin.page, wrong);
   check('a wrong code does not open the dashboard', !/\/admin$/.test(afterWrong), afterWrong);
   const wrongMessage = await admin.page.locator('[role=alert]').first().innerText().catch(() => '');
@@ -264,7 +264,7 @@ async function run() {
   await signInWithFreshCode(brutePage, ADMIN_EMAIL);
   let lockedMessage = '';
   for (let attempt = 0; attempt < 7; attempt += 1) {
-    await enterCode(brutePage, String(100000 + attempt));
+    await enterCode(brutePage, String(10000000 + attempt));
     lockedMessage = await brutePage.locator('[role=alert]').first().innerText().catch(() => '');
     if (/too many/i.test(lockedMessage)) break;
   }
@@ -305,7 +305,7 @@ async function run() {
   section('THE ADMIN EMAIL IS A CODE, THE OTHERS ARE UNCHANGED');
   const magic = readFileSync('supabase/templates/magic-link.html', 'utf8');
   check('the admin template names itself in its source', magic.includes('faytarra-template: magic-link (code)'));
-  check('it carries the six-digit token', magic.includes('{{ .Token }}'));
+  check('it carries the token Supabase generates', magic.includes('{{ .Token }}'));
   check('it contains no sign-in link', !/auth\/callback|TokenHash/.test(magic));
   check(
     'and is not the old sign-in-link body',
@@ -333,10 +333,10 @@ async function run() {
     );
   }
 
-  // ============ THE CODE IS SIX DIGITS, AND ONLY SIX ============
-  section('EXACTLY SIX DIGITS');
+  // ============ THE CODE IS EIGHT DIGITS, AND ONLY EIGHT ============
+  section('EXACTLY EIGHT DIGITS');
   const anyCode = latestCode(ADMIN_EMAIL);
-  check('the codes this project issues are six digits', /^\d{6}$/.test(anyCode ?? ''), anyCode);
+  check('the codes this project issues are eight digits', /^\d{8}$/.test(anyCode ?? ''), anyCode);
 
   const sixCtx = await browser.newContext({ baseURL: BASE, viewport: { width: 1280, height: 900 } });
   const sixPage = await sixCtx.newPage();
@@ -346,29 +346,32 @@ async function run() {
   await sixPage.goto('/admin/verify', { waitUntil: 'domcontentloaded' });
   await sixPage.waitForLoadState('networkidle');
   check(
-    'the screen asks for a 6-digit code',
-    /6-digit code/i.test(await sixPage.locator('label[for="admin-code"]').innerText()),
+    'the screen asks for an 8-digit code',
+    /8-digit code/i.test(await sixPage.locator('label[for="admin-code"]').innerText()),
     (await sixPage.locator('label[for="admin-code"]').innerText()).trim(),
   );
   check(
-    'and its placeholder is six zeroes',
-    (await sixPage.getAttribute('#admin-code', 'placeholder')) === '000000',
+    'and its placeholder is eight zeroes',
+    (await sixPage.getAttribute('#admin-code', 'placeholder')) === '00000000',
   );
 
-  // An eight-digit code must be refused OUTRIGHT — never trimmed to its first
-  // six and spent as a guess — and refusing it must not cost an attempt.
-  const eight = '56338428';
-  await sixPage.fill('#admin-code', eight);
+  // The whole eight digits must survive being typed in — nothing may shorten
+  // them on the way to Supabase, which compares the entire token.
+  const full = '56338428';
+  await sixPage.fill('#admin-code', full);
   const typed = await sixPage.inputValue('#admin-code');
-  check('an eight-digit code can be typed in full, not silently cut to six', typed === eight, typed);
+  check('all eight digits can be typed, none dropped by the field', typed === full, typed);
 
+  // A SIX-digit code is now the wrong shape, and must be refused for its
+  // length without costing a verification attempt.
+  await sixPage.fill('#admin-code', '482915');
   await sixPage.locator('form button[type=submit]').last().click();
   await sixPage.waitForLoadState('networkidle');
   await wait(1800);
   const lengthMessage = await sixPage.locator('[role=alert]').first().innerText().catch(() => '');
   check(
-    'an eight-digit code is refused for its LENGTH',
-    /6 digits/i.test(lengthMessage) && /has 8/i.test(lengthMessage),
+    'a six-digit code is refused for its LENGTH',
+    /8 digits/i.test(lengthMessage),
     lengthMessage.trim(),
   );
   check(
@@ -377,24 +380,36 @@ async function run() {
     lengthMessage.trim(),
   );
   const stillShut = await openAdmin(sixPage);
-  check('eight digits open nothing', !stillShut.onDashboard, stillShut.url);
+  check('six digits open nothing', !stillShut.onDashboard, stillShut.url);
 
-  // The real six-digit code still works immediately afterwards, which proves
+  // The real eight-digit code still works immediately afterwards, which proves
   // the refusal above spent neither the code nor an attempt.
-  const goodSix = latestCode(ADMIN_EMAIL);
-  const afterSix = await enterCode(sixPage, goodSix);
+  const goodCode = latestCode(ADMIN_EMAIL);
+  check('the code from the email is eight digits', /^\d{8}$/.test(goodCode ?? ''), goodCode);
+  const afterGood = await enterCode(sixPage, goodCode);
   check(
-    'the six-digit code still works right after — no attempt was burned',
-    !/verify/.test(afterSix),
-    afterSix,
+    'the eight-digit code from the email opens the dashboard — no attempt burned',
+    !/verify/.test(afterGood),
+    afterGood,
   );
   await sixCtx.close();
 
   // ==================== A NORMAL ACCOUNT ====================
   section('A NORMAL ACCOUNT CANNOT TOUCH ANY OF IT');
   const userLanded = await signIn(user.page, user.email);
-  check('a normal sign-in is unchanged — no code, no verification screen', !/admin/.test(userLanded), userLanded);
-  check('and no code was emailed to them', codesFor(user.email).length === 0);
+  const userAlert = await user.page.locator('[role=alert]').first().innerText().catch(() => '');
+  // Strict: they must actually get IN. Asserting only that the URL lacks
+  // "admin" passes just as happily when the sign-in failed outright.
+  check(
+    'a normal sign-in still works and goes straight to the feed',
+    /\/home/.test(userLanded),
+    `${userLanded} ${userAlert.trim()}`,
+  );
+  check(
+    'with no code and no verification screen',
+    !/admin/.test(userLanded) && codesFor(user.email).length === 0,
+    userLanded,
+  );
 
   await user.page.goto('/admin/verify', { waitUntil: 'domcontentloaded' });
   await user.page.waitForLoadState('networkidle');

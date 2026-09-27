@@ -146,10 +146,10 @@ export interface EmailContent {
   /**
    * A one-time code, shown as the thing the reader is meant to copy.
    *
-   * Separate from `body` because it must not look like a sentence: six digits
-   * set in the same 16px prose as the line above them are read past, not read
-   * off. This renders them large, spaced, and monospaced so 0 and O cannot be
-   * confused, in a panel of their own.
+   * Separate from `body` because it must not look like a sentence: a code
+   * set in the same 16px prose as the line above it is read past, not read
+   * off. This renders it large, spaced, and monospaced so 0 and O cannot be
+   * confused, in a panel of its own.
    */
   code?: string;
   /** Small print under the button — what the link does, and the "ignore this" line. */

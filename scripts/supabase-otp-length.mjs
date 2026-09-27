@@ -24,6 +24,8 @@
  * error paths below.
  */
 
+import { readFileSync } from 'node:fs';
+
 const TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
 const REF = process.env.SUPABASE_PROJECT_REF;
 const API = 'https://api.supabase.com';
@@ -81,14 +83,24 @@ try {
   describe(before);
 
   if (wanted === null) {
-    const length = Number(before.mailer_otp_length);
-    console.log(
-      length === 6
-        ? '\n  ✓ Six digits, which is what FayTarra admin verification expects.'
-        : `\n  ✗ FayTarra admin verification expects 6 digits, not ${length || 'this'}.` +
-          `\n    Fix it with:  node scripts/supabase-otp-length.mjs --set 6`,
+    // What the app expects, read from the one constant that defines it, so
+    // this cannot drift away from the screen it is reporting on.
+    const source = readFileSync(
+      new URL('../src/lib/services/admin-code.ts', import.meta.url),
+      'utf8',
     );
-    process.exit(length === 6 ? 0 : 1);
+    const expected = Number(/ADMIN_CODE_DIGITS = (\d+)/.exec(source)?.[1]);
+    const length = Number(before.mailer_otp_length);
+
+    console.log(`\n  FayTarra expects ${expected} (ADMIN_CODE_DIGITS in src/lib/services/admin-code.ts)`);
+    console.log(
+      length === expected
+        ? `\n  ✓ They agree. The admin screen will accept the code Supabase mails.`
+        : `\n  ✗ They disagree: Supabase mails ${length || 'an unknown number of'} digits,` +
+          `\n    the screen wants ${expected}. Change ADMIN_CODE_DIGITS to match the project,` +
+          `\n    or the project to match it — but they must agree.`,
+    );
+    process.exit(length === expected ? 0 : 1);
   }
 
   console.log(`\nSetting mailer_otp_length to ${wanted}…`);
