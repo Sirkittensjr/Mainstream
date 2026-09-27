@@ -2,6 +2,7 @@ import 'server-only';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { cookies } from 'next/headers';
 import { createAuthClient } from '@/lib/supabase/server';
+import { checkCodeShape } from './admin-code';
 import { ADMIN_CODE_COOLDOWN_SECONDS, checkAdminCodeLimit } from './email-limit';
 import type { ID, User } from '@/lib/types';
 
@@ -45,6 +46,8 @@ export const ADMIN_VERIFIED_SECONDS = 8 * 60 * 60;
 
 /** How many wrong codes before the admin has to request a fresh one. */
 export const MAX_CODE_ATTEMPTS = 5;
+
+
 
 /**
  * The key the proof cookie is signed with.
@@ -142,8 +145,13 @@ export type VerifyResult = { ok: true } | { ok: false; error: string; exhausted?
 export async function verifyAdminCode(admin: User, code: string): Promise<VerifyResult> {
   if (admin.role !== 'admin') return { ok: false, error: 'That account is not an administrator.' };
 
-  const digits = code.replace(/\D/g, '');
-  if (digits.length !== 6) return { ok: false, error: 'Enter the six digits from the email.' };
+  // Checked BEFORE the attempt budget is touched. A code of the wrong length
+  // was never a guess at the right one, so it must not cost an attempt — which
+  // matters most when the project's OTP length has drifted and every code in
+  // the inbox is the wrong size.
+  const shape = checkCodeShape(code);
+  if (!shape.ok) return { ok: false, error: shape.error };
+  const digits = shape.digits;
 
   const used = attempts.get(admin.id) ?? 0;
   if (used >= MAX_CODE_ATTEMPTS) {

@@ -92,22 +92,42 @@ function latestCode(email) {
   return [...rows].reverse().find((m) => m.type === 'otp' && m.to === email)?.code;
 }
 
-/** Complete the emailed-code step, which /admin now requires. */
-async function completeStepUp(page, email) {
-  await page.goto('/admin/verify', { waitUntil: 'domcontentloaded' });
-  await page.waitForLoadState('networkidle');
-  const send = page.locator('button', { hasText: /Email me a code|Send another code/ });
-  if (await send.count()) {
-    await send.first().click();
-    await page.waitForTimeout(2500);
+/** How many codes the outbox holds for this address. */
+function codeCount(email) {
+  const rows = readFileSync(OUTBOX, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  return rows.filter((m) => m.type === 'otp' && m.to === email).length;
+}
+
+/**
+ * Complete the emailed-code step, which /admin now requires.
+ *
+ * Presses send until a genuinely NEW code lands. A single click proves
+ * nothing: the per-address cooldown is real, so the send may be held, and
+ * reading the outbox anyway hands back a code that has already been spent.
+ */
+async function completeStepUp(page, email, tries = 6) {
+  const before = codeCount(email);
+  let code = null;
+
+  for (let attempt = 0; attempt < tries && !code; attempt += 1) {
+    await page.goto('/admin/verify', { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('networkidle');
+    const send = page.locator('button', { hasText: /Email me a code|Send another code/ });
+    if (await send.count()) {
+      await send.first().click();
+      await page.waitForTimeout(2500);
+    }
+    if (codeCount(email) > before) code = latestCode(email);
+    else await page.waitForTimeout(4000);
   }
-  const code = latestCode(email);
   if (!code) return false;
+
   await page.fill('#admin-code', code);
   await page.locator('form button[type=submit]').last().click();
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(1800);
-  return true;
+  // Success is leaving the verification screen, not merely having typed.
+  return !/admin\/verify/.test(page.url());
 }
 
 async function run() {

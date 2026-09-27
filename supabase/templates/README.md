@@ -45,6 +45,27 @@ sends `multipart/alternative`. They are kept in step either way.
 FayTarra does not use magic links or invites. They are branded anyway so that
 no path can fall back to Supabase's unbranded default.
 
+### ⚠️ The admin code must be 6 digits — set Email OTP Length
+
+**Authentication → Providers → Email** (newer dashboards: *Authentication →
+Sign In / Providers → Email*) has an **Email OTP Length** field. Supabase
+allows 6 to 10; set it to **6**. Self-hosted, the same setting is
+`GOTRUE_MAILER_OTP_LENGTH=6`.
+
+This is the only thing that decides how long the code is. GoTrue generates it
+and renders it into `{{ .Token }}`, so a project set to 8 mails eight digits
+and nothing in this repository can change that.
+
+FayTarra will not pretend otherwise. An eight-digit code is refused with
+"FayTarra admin codes are 6 digits. That one has 8." — **not** trimmed to its
+first six. Truncating would throw away two digits of entropy, a hundredth of
+the search space, which is the opposite of what a second factor is for. The
+refusal costs no verification attempt, so a mismatched project setting cannot
+lock the admin out; it just will not let them in until the length agrees.
+
+It also changes nothing for normal users: signup, password reset and email
+change all use links, not codes.
+
 ### ⚠️ If the admin code email arrives as a "sign-in link"
 
 Then the dashboard still holds an older **Magic Link** body. Nothing in the

@@ -333,6 +333,63 @@ async function run() {
     );
   }
 
+  // ============ THE CODE IS SIX DIGITS, AND ONLY SIX ============
+  section('EXACTLY SIX DIGITS');
+  const anyCode = latestCode(ADMIN_EMAIL);
+  check('the codes this project issues are six digits', /^\d{6}$/.test(anyCode ?? ''), anyCode);
+
+  const sixCtx = await browser.newContext({ baseURL: BASE, viewport: { width: 1280, height: 900 } });
+  const sixPage = await sixCtx.newPage();
+  await signInWithFreshCode(sixPage, ADMIN_EMAIL);
+
+  // The field is sized for six.
+  await sixPage.goto('/admin/verify', { waitUntil: 'domcontentloaded' });
+  await sixPage.waitForLoadState('networkidle');
+  check(
+    'the screen asks for a 6-digit code',
+    /6-digit code/i.test(await sixPage.locator('label[for="admin-code"]').innerText()),
+    (await sixPage.locator('label[for="admin-code"]').innerText()).trim(),
+  );
+  check(
+    'and its placeholder is six zeroes',
+    (await sixPage.getAttribute('#admin-code', 'placeholder')) === '000000',
+  );
+
+  // An eight-digit code must be refused OUTRIGHT — never trimmed to its first
+  // six and spent as a guess — and refusing it must not cost an attempt.
+  const eight = '56338428';
+  await sixPage.fill('#admin-code', eight);
+  const typed = await sixPage.inputValue('#admin-code');
+  check('an eight-digit code can be typed in full, not silently cut to six', typed === eight, typed);
+
+  await sixPage.locator('form button[type=submit]').last().click();
+  await sixPage.waitForLoadState('networkidle');
+  await wait(1800);
+  const lengthMessage = await sixPage.locator('[role=alert]').first().innerText().catch(() => '');
+  check(
+    'an eight-digit code is refused for its LENGTH',
+    /6 digits/i.test(lengthMessage) && /has 8/i.test(lengthMessage),
+    lengthMessage.trim(),
+  );
+  check(
+    'and is not reported as merely a wrong code',
+    !/attempt/i.test(lengthMessage),
+    lengthMessage.trim(),
+  );
+  const stillShut = await openAdmin(sixPage);
+  check('eight digits open nothing', !stillShut.onDashboard, stillShut.url);
+
+  // The real six-digit code still works immediately afterwards, which proves
+  // the refusal above spent neither the code nor an attempt.
+  const goodSix = latestCode(ADMIN_EMAIL);
+  const afterSix = await enterCode(sixPage, goodSix);
+  check(
+    'the six-digit code still works right after — no attempt was burned',
+    !/verify/.test(afterSix),
+    afterSix,
+  );
+  await sixCtx.close();
+
   // ==================== A NORMAL ACCOUNT ====================
   section('A NORMAL ACCOUNT CANNOT TOUCH ANY OF IT');
   const userLanded = await signIn(user.page, user.email);
