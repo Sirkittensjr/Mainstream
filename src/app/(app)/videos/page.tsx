@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { isAdminRole } from '@/lib/admin-badge';
 import { EmptyState } from '@/components/EmptyState';
 import { VideoFeed } from '@/components/video/VideoFeed';
 import { VIDEO_PAGE, videoFeed } from '@/lib/services/feed';
@@ -48,6 +49,7 @@ export default async function VideosPage({
               username: viewer.username,
               displayName: viewer.display_name,
               avatarUrl: viewer.avatar_url,
+              isAdmin: isAdminRole(viewer.role),
             }
           : null
       }

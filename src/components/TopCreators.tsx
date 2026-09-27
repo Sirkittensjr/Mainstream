@@ -1,4 +1,6 @@
 import Link from 'next/link';
+import { AdminBadge } from '@/components/AdminBadge';
+import { isAdminRole } from '@/lib/admin-badge';
 import { Avatar } from './Avatar';
 import { TopCreatorsEditor } from './TopCreatorsEditor';
 import type { TopCreatorSlot } from '@/lib/services/top-creators';
@@ -187,7 +189,10 @@ function Creator({ position, person }: { position: number; person: PublicUser })
         className="relative w-full truncate px-1 text-[12.5px] font-semibold leading-tight group-hover:underline sm:text-[13px]"
         style={{ color: '#FFFFFF' }}
       >
-        {person.display_name}
+        <span className="inline-flex max-w-full items-center gap-1">
+          <span className="truncate">{person.display_name}</span>
+          {isAdminRole(person.role) && <AdminBadge />}
+        </span>
       </span>
       <span
         className="relative w-full truncate px-1 text-[11px] leading-tight"

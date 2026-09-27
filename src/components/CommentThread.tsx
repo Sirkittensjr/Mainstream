@@ -5,6 +5,7 @@ import { useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { commentAction, deleteCommentAction } from '@/app/actions';
 import { timeAgo } from '@/lib/time';
+import { AdminBadge } from './AdminBadge';
 import { Avatar } from './Avatar';
 
 export interface CommentItem {
@@ -12,7 +13,7 @@ export interface CommentItem {
   body: string;
   createdAt: string;
   mine: boolean;
-  author: { username: string; displayName: string; avatarUrl: string | null };
+  author: { username: string; displayName: string; avatarUrl: string | null; isAdmin?: boolean };
   replies: CommentItem[];
 }
 
@@ -111,12 +112,15 @@ function CommentRow({
       />
       <div className="min-w-0 flex-1">
         <p className="flex flex-wrap items-baseline gap-x-2">
-          <Link
-            href={`/u/${comment.author.username}`}
-            className="text-sm font-semibold hover:underline"
-          >
-            {comment.author.displayName}
-          </Link>
+          <span className="inline-flex min-w-0 items-center gap-1.5">
+            <Link
+              href={`/u/${comment.author.username}`}
+              className="truncate text-sm font-semibold hover:underline"
+            >
+              {comment.author.displayName}
+            </Link>
+            {comment.author.isAdmin && <AdminBadge />}
+          </span>
           <span className="text-xs text-white/30">{timeAgo(comment.createdAt)}</span>
         </p>
         <p className="mt-0.5 whitespace-pre-wrap text-[15px] leading-relaxed text-white/80">

@@ -127,6 +127,29 @@ cleared.
 node scripts/e2e/signup-form-state.mjs
 ```
 
+### 3c. The official admin badge — `admin-badge.mjs`
+
+The badge is granted by one thing, `role = 'admin'` in the database. These
+checks cover the two ways that goes wrong: an admin not carrying it somewhere
+they are shown, and somebody who is not an admin managing to wear one.
+
+```bash
+ADMIN_EMAILS=admin@faytarra.com npm start &
+node scripts/e2e/admin-badge.mjs
+```
+
+Covers, at desktop and phone width: the badge on the admin's profile name,
+their post card, their comment on somebody else's post, search results, a
+following list and a notification; an ordinary account carrying none anywhere;
+and — the important one — an ordinary account renaming itself "FayTarra Admin"
+and pasting `<span data-admin-badge>` into its bio, then getting back text
+rather than a badge. It also checks /api/v1/me exposes `isAdmin` and never
+`role`.
+
+**Counting badges is scoped.** A profile can legitimately show one lower down,
+on a Top 3 card naming an admin the person follows, so checks about whose NAME
+is badged look inside the `h1` rather than counting the page.
+
 ### 3b. The admin's second step — `admin-step-up.mjs`
 
 An administrator signs in with a password like anybody else, then has to type a

@@ -1,7 +1,9 @@
 import Link from 'next/link';
 import { Avatar } from '@/components/Avatar';
 import { EmptyState } from '@/components/EmptyState';
+import { AdminBadge } from '@/components/AdminBadge';
 import { FollowButton } from '@/components/FollowButton';
+import { isAdminRole } from '@/lib/admin-badge';
 import type { PersonSummary } from '@/lib/services/users';
 
 /**
@@ -44,7 +46,10 @@ export function PeopleList({
               href={false}
             />
             <span className="min-w-0 flex-1">
-              <span className="block truncate font-semibold">{user.display_name}</span>
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate font-semibold">{user.display_name}</span>
+                {isAdminRole(user.role) && <AdminBadge />}
+              </span>
               <span className="block truncate text-sm text-white/40">@{user.username}</span>
             </span>
           </Link>

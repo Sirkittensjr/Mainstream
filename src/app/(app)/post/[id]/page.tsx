@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { isAdminRole } from '@/lib/admin-badge';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { CommentThread, type CommentItem } from '@/components/CommentThread';
@@ -70,6 +71,7 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
       username: comment.author.username,
       displayName: comment.author.display_name,
       avatarUrl: comment.author.avatar_url,
+      isAdmin: isAdminRole(comment.author.role),
     },
     replies: comment.replies.map(toItem),
   });
