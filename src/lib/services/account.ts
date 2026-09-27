@@ -5,6 +5,7 @@ import { DAY } from '@/lib/time';
 import { AUTH_NOT_CONFIGURED, authConfigured } from '@/lib/supabase/config';
 import { createAdminAuthClient, createAuthClient } from '@/lib/supabase/server';
 import { CATEGORIES, type Category, type User } from '@/lib/types';
+import { RESERVED_NAME_ERROR, isReservedDisplayName } from '@/lib/reserved-names';
 import { checkEmailSendLimit, EMAIL_COOLDOWN_SECONDS } from './email-limit';
 import { getUserByUsername } from './users';
 
@@ -183,6 +184,11 @@ export async function signUp(input: SignUpInput): Promise<Result<SignUpOutcome>>
   }
   if (!input.display_name.trim()) {
     return { ok: false, error: 'Add a display name.', field: 'display_name' };
+  }
+  // Only an official account may be called one. At signup the role does not
+  // exist yet, so the same rule that decides it — the address — decides this.
+  if (isReservedDisplayName(input.display_name) && !isAdminEmail(email)) {
+    return { ok: false, error: RESERVED_NAME_ERROR, field: 'display_name' };
   }
   if (input.interests.length === 0) {
     return { ok: false, error: 'Pick at least one thing you are into.', field: 'interests' };

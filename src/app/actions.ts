@@ -9,6 +9,8 @@ import { PROFILE_DEFAULT, isProfileColorKey } from '@/lib/profile-theme';
 import { checkLimit } from '@/lib/services/rate-limit';
 import { getViewer, requireAdmin, requireViewer } from '@/lib/session';
 import { clearAdminVerification } from '@/lib/services/admin-step-up';
+import { RESERVED_NAME_ERROR, isReservedDisplayName } from '@/lib/reserved-names';
+import { isAdminRole } from '@/lib/admin-badge';
 import {
   addComment,
   createPost,
@@ -340,6 +342,12 @@ export async function updateProfileAction(_prev: unknown, formData: FormData) {
     .slice(0, 6);
   const displayName = String(formData.get('display_name') || '').trim().slice(0, 40);
   if (!displayName) return { ok: false as const, error: 'Add a display name.' };
+
+  // Reserved names are for official accounts. Checked against the role the
+  // DATABASE holds for this session, never against anything the form sent.
+  if (isReservedDisplayName(displayName) && !isAdminRole(viewer.role)) {
+    return { ok: false as const, error: RESERVED_NAME_ERROR };
+  }
 
   await updateProfile(viewer.id, {
     display_name: displayName,

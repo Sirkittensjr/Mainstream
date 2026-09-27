@@ -215,7 +215,11 @@ async function run(label, viewport) {
   // controls. What comes out must be text, not a badge.
   await user.page.goto('/settings', { waitUntil: 'domcontentloaded' });
   await user.page.waitForLoadState('networkidle');
-  await user.page.fill('#display_name', 'FayTarra Admin');
+  // A name that is ALLOWED, so this save goes through and the bio lands — the
+  // reserved name is refused outright now, and is proved so in its own section
+  // below. What is under test here is whether text and markup can fake a
+  // badge, not whether the name is taken.
+  await user.page.fill('#display_name', 'FayTarra Admin Fan');
   await user.page.fill('#bio', '🛡️ FayTarra Admin — official <span data-admin-badge="true"></span>');
   // By its label: /settings has TWO submit buttons and the other one is
   // "Log out", which is a memorable way to fail the rest of a test run.
@@ -225,13 +229,14 @@ async function run(label, viewport) {
   await admin.page.goto(`/u/${user.handle}`, { waitUntil: 'domcontentloaded' });
   await admin.page.waitForLoadState('networkidle');
   check(
-    'naming yourself "FayTarra Admin" does not award a badge',
+    'a name mentioning FayTarra Admin does not award a badge',
     !(await headingBadge(admin.page)),
   );
   const shown = await admin.page.locator('body').innerText();
   check(
     'the name is still shown — it is just text, not a credential',
-    shown.includes('FayTarra Admin'),
+    shown.includes('FayTarra Admin Fan'),
+    shown.split('\n').find((line) => /FayTarra Admin/.test(line))?.trim() ?? 'not found',
   );
   // The bio held `<span data-admin-badge="true"></span>`. It must come back as
   // visible TEXT — escaped — rather than as an element the badge counter finds.
@@ -247,6 +252,68 @@ async function run(label, viewport) {
     'and it did not become a real badge on their name',
     !(await headingBadge(admin.page)),
   );
+
+  // ============ AND CANNOT TAKE THE NAME EITHER ============
+  section('THE NAME IS RESERVED TOO');
+
+  // The rename above should have been REFUSED, not merely left unbadged.
+  await user.page.goto('/settings', { waitUntil: 'domcontentloaded' });
+  await user.page.waitForLoadState('networkidle');
+  check(
+    'the ordinary account never got the reserved name',
+    (await user.page.inputValue('#display_name')) !== 'FayTarra Admin',
+    await user.page.inputValue('#display_name'),
+  );
+
+  for (const attempt of ['FayTarra Admin', 'faytarra admin', '  FayTarra  Admin  ', 'FayTarra-Admin', 'F\u0430yTarra Admin']) {
+    await user.page.goto('/settings', { waitUntil: 'domcontentloaded' });
+    await user.page.waitForLoadState('networkidle');
+    await user.page.fill('#display_name', attempt);
+    await user.page.locator('button', { hasText: /^Save profile$/ }).first().click();
+    await wait(2000);
+    const said = await user.page.locator('body').innerText();
+    check(
+      `refused: ${JSON.stringify(attempt)}`,
+      /reserved for official FayTarra accounts/i.test(said),
+      said.split('\n').find((line) => /reserved/i.test(line))?.trim() ?? 'no message',
+    );
+  }
+
+  // A name that merely contains the word must still be fine.
+  await user.page.goto('/settings', { waitUntil: 'domcontentloaded' });
+  await user.page.waitForLoadState('networkidle');
+  await user.page.fill('#display_name', 'FayTarra Fan Club');
+  await user.page.locator('button', { hasText: /^Save profile$/ }).first().click();
+  await wait(2000);
+  check(
+    'an ordinary name that mentions FayTarra still saves',
+    (await user.page.inputValue('#display_name')) === 'FayTarra Fan Club',
+    await user.page.inputValue('#display_name'),
+  );
+
+  // The admin may use it, because it is theirs.
+  await admin.page.goto('/settings', { waitUntil: 'domcontentloaded' });
+  await admin.page.waitForLoadState('networkidle');
+  const adminNameBefore = await admin.page.inputValue('#display_name');
+  await admin.page.fill('#display_name', 'FayTarra Admin');
+  await admin.page.locator('button', { hasText: /^Save profile$/ }).first().click();
+  await wait(2000);
+  check(
+    'an administrator CAN use the reserved name',
+    (await admin.page.inputValue('#display_name')) === 'FayTarra Admin',
+    await admin.page.inputValue('#display_name'),
+  );
+
+  await admin.page.goto(`/u/${admin.handle}`, { waitUntil: 'domcontentloaded' });
+  await admin.page.waitForLoadState('networkidle');
+  check('and still carries the badge with it', await headingBadge(admin.page));
+
+  // Put it back, so a rerun starts from where this one did.
+  await admin.page.goto('/settings', { waitUntil: 'domcontentloaded' });
+  await admin.page.waitForLoadState('networkidle');
+  await admin.page.fill('#display_name', adminNameBefore);
+  await admin.page.locator('button', { hasText: /^Save profile$/ }).first().click();
+  await wait(1500);
 
   // The API must not hand the browser a role to play with.
   const me = await user.page.evaluate(async () => (await fetch('/api/v1/me')).json());
