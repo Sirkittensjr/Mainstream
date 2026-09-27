@@ -157,11 +157,31 @@ export async function verifyAdminCode(admin: User, code: string): Promise<Verify
   const supabase = await createAuthClient();
   if (!supabase) return { ok: false, error: 'Sign-in is not configured.' };
 
-  const { data, error } = await supabase.auth.verifyOtp({
+  /**
+   * `signInWithOtp` issues what GoTrue calls a magic-link token, and the same
+   * six digits are what `{{ .Token }}` renders. Which name `verifyOtp` wants
+   * for it — 'email' or 'magiclink' — has moved between GoTrue versions, and
+   * the wrong name simply misses the lookup: the token is NOT consumed by a
+   * failed verify, so trying the other name costs nothing and removes a
+   * version dependency that would otherwise look exactly like a wrong code.
+   *
+   * Only this one pair is ever tried. No other type is substituted.
+   */
+  let result = await supabase.auth.verifyOtp({
     email: admin.email,
     token: digits,
     type: 'email',
   });
+
+  if (result.error && !result.data.user) {
+    result = await supabase.auth.verifyOtp({
+      email: admin.email,
+      token: digits,
+      type: 'magiclink',
+    });
+  }
+
+  const { data, error } = result;
 
   if (error || !data.user) {
     const left = MAX_CODE_ATTEMPTS - (used + 1);

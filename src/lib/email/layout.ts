@@ -117,7 +117,24 @@ function button(label: string, href: string): string {
               </table>`;
 }
 
+/**
+ * A marker naming the template, in the HTML source.
+ *
+ * These files are pasted into the Supabase dashboard by hand, which means the
+ * dashboard and this repository can drift and nothing notices — an old
+ * template keeps being sent, correctly, for as long as nobody re-pastes. That
+ * is not hypothetical: the admin step-up shipped as a sign-in link because the
+ * dashboard still held the previous Magic Link body.
+ *
+ * View source on a received email, or look at the top of the dashboard's
+ * editor, and this line says which template is actually in use.
+ */
+const marker = (slug: string, kind: 'code' | 'link') =>
+  `<!-- faytarra-template: ${slug} (${kind}) — regenerate with: npm run email:build -->`;
+
 export interface EmailContent {
+  /** Names this template in the rendered source. */
+  slug: string;
   /** The subject line Supabase should send it with. */
   subject: string;
   /** The one-line summary the inbox shows next to the subject. */
@@ -152,6 +169,7 @@ export function renderHtml(content: EmailContent): string {
     `<p style="margin:0 0 16px;font-family:${FONT};font-size:${size}px;line-height:${Math.round(size * 1.6)}px;color:${color};">${text}</p>`;
 
   return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+${marker(content.slug, content.action ? 'link' : 'code')}
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en">
 <head>
   <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />

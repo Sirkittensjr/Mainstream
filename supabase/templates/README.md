@@ -45,6 +45,29 @@ sends `multipart/alternative`. They are kept in step either way.
 FayTarra does not use magic links or invites. They are branded anyway so that
 no path can fall back to Supabase's unbranded default.
 
+### ⚠️ If the admin code email arrives as a "sign-in link"
+
+Then the dashboard still holds an older **Magic Link** body. Nothing in the
+app can fix that: Supabase renders email templates from its own dashboard, so
+whatever is pasted there is what gets sent, for as long as nobody re-pastes.
+
+Paste `magic-link.html` again and set its subject to
+`Your FayTarra admin verification code`.
+
+**To tell which version is in there**, look at the second line of the body in
+the dashboard editor, or at the source of a received email:
+
+```html
+<!-- faytarra-template: magic-link (code) — regenerate with: npm run email:build -->
+```
+
+`(code)` is the admin verification code. Anything else, or no marker at all,
+is an older template. Every generated file carries one.
+
+The admin step-up is the only thing that uses Magic Link — FayTarra signs
+everybody else in with a password — so this template can be replaced without
+affecting any other flow.
+
 ### What is in them
 
 Supabase's own variables, untouched: `{{ .TokenHash }}` and `{{ .SiteURL }}`

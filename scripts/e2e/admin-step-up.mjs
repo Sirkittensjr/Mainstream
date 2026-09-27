@@ -301,6 +301,38 @@ async function run() {
   );
   await burstCtx.close();
 
+  // ============ THE EMAIL ITSELF, AND THE OTHER TEMPLATES ============
+  section('THE ADMIN EMAIL IS A CODE, THE OTHERS ARE UNCHANGED');
+  const magic = readFileSync('supabase/templates/magic-link.html', 'utf8');
+  check('the admin template names itself in its source', magic.includes('faytarra-template: magic-link (code)'));
+  check('it carries the six-digit token', magic.includes('{{ .Token }}'));
+  check('it contains no sign-in link', !/auth\/callback|TokenHash/.test(magic));
+  check(
+    'and is not the old sign-in-link body',
+    !/Sign in to FayTarra/.test(magic),
+    'old template would say "Sign in to FayTarra"',
+  );
+  const subjects = JSON.parse(readFileSync('supabase/templates/subjects.json', 'utf8'));
+  check(
+    'its subject is about a code, not a link',
+    /admin verification code/i.test(subjects['Magic Link']),
+    subjects['Magic Link'],
+  );
+
+  // The normal flows must be untouched by any of this.
+  for (const [slug, dashboard] of [
+    ['confirm-signup', 'Confirm signup'],
+    ['reset-password', 'Reset password'],
+    ['change-email', 'Change email address'],
+  ]) {
+    const html = readFileSync(`supabase/templates/${slug}.html`, 'utf8');
+    check(
+      `${slug} is still a LINK email, unaffected`,
+      html.includes('{{ .TokenHash }}') && /auth\/callback/.test(html) && !html.includes('{{ .Token }}'),
+      subjects[dashboard],
+    );
+  }
+
   // ==================== A NORMAL ACCOUNT ====================
   section('A NORMAL ACCOUNT CANNOT TOUCH ANY OF IT');
   const userLanded = await signIn(user.page, user.email);
