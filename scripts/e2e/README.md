@@ -40,6 +40,17 @@ exist without an auth user, that deleting the auth user cascades the profile
 and its posts away, and that RLS is on everywhere. Steps 3, 4, 5 and 7 are
 *expected* to print an error — that is the check passing.
 
+`admin-checks.sql` proves the admin role is enforced by the DATABASE, not by
+the application: migration 0008 promotes exactly one account and is safe to
+re-run, and a signed-in person holding the anon key cannot make themselves an
+admin, demote the admin, promote anyone else, or read the admin's email — while
+still being able to edit their own bio in the same session. The lines marked
+"must fail" are expected to print an error; that is the check passing.
+
+```bash
+psql -d faytarra_test -f scripts/e2e/admin-checks.sql
+```
+
 ## 2. The app side — `gotrue-stub.mjs` + `auth-flow.mjs` + `social-flow.mjs`
 
 `gotrue-stub.mjs` speaks GoTrue's HTTP protocol (signup, password grant, PKCE
@@ -115,6 +126,25 @@ cleared.
 ```bash
 node scripts/e2e/signup-form-state.mjs
 ```
+
+### 3a. Who may open /admin — `admin-access.mjs`
+
+The route guard, asked for directly rather than looked for in the navigation —
+hiding a link is not a lock, so every check types the URL.
+
+```bash
+ADMIN_EMAILS=admin@faytarra.com npm start &
+node scripts/e2e/admin-access.mjs
+```
+
+Signed out lands on /login with `next=/admin`; a normal account is turned away
+from /admin and from every deep tab, with none of the dashboard leaking into
+the response and no Admin link offered; the admin account gets through. It also
+checks that nothing in settings lets somebody set their own role, and that
+/api/v1/me never exposes a role field to anybody — admin included.
+
+`ADMIN_EMAILS` is how the role is applied on sign-in locally; in production
+migration 0008 sets the same column.
 
 ### 4a. Video covers — `video-cover-flow.mjs`
 
