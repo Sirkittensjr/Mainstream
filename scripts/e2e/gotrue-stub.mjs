@@ -143,6 +143,16 @@ const otps = new Map();
 const OTP_TTL_MS = Number(process.env.STUB_OTP_TTL_MS ?? 600000);
 
 /**
+ * How many digits the code has.
+ *
+ * GoTrue's own MAILER_OTP_LENGTH, which Supabase exposes as "Email OTP
+ * Length" and allows to be set anywhere from 6 to 10. It is configurable here
+ * for the same reason it matters in production: a project set to 8 mails eight
+ * digits, and the app has to refuse them rather than trim them to fit.
+ */
+const OTP_DIGITS = Math.min(10, Math.max(6, Number(process.env.STUB_OTP_DIGITS ?? 6)));
+
+/**
  * Token hashes, the stateless half of the flow.
  *
  * A hash is tied to a user and a type and nothing else — no browser, no
@@ -282,7 +292,7 @@ const server = createServer(async (req, res) => {
     resendAt.set(`otp:${address}`, Date.now());
 
     // A new code replaces whatever was outstanding.
-    const code = String(randomInt(0, 1000000)).padStart(6, '0');
+    const code = String(randomInt(0, 10 ** OTP_DIGITS)).padStart(OTP_DIGITS, '0');
     otps.set(address, { code, userId: user.id, expiresAt: Date.now() + OTP_TTL_MS });
 
     // The outbox stands in for the inbox. In production this is the six digits

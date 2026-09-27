@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState, useEffect, useRef, useState } from 'react';
+import { ADMIN_CODE_DIGITS } from '@/lib/services/admin-code';
 import {
   sendAdminCodeAction,
   verifyAdminCodeAction,
@@ -74,7 +75,7 @@ export function AdminVerifyForm() {
 
       <form action={formAction} className="space-y-3">
         <label className="label" htmlFor="admin-code">
-          Six-digit code
+          {ADMIN_CODE_DIGITS}-digit code
         </label>
         <input
           id="admin-code"
@@ -82,9 +83,13 @@ export function AdminVerifyForm() {
           inputMode="numeric"
           autoComplete="one-time-code"
           pattern="[0-9]*"
-          maxLength={6}
+          // Deliberately a little longer than the code itself. Only six digits
+          // ever verify, but a longer one pasted in reaches the server and is
+          // answered with "codes are 6 digits" instead of being silently cut
+          // down and spent as a wrong guess.
+          maxLength={ADMIN_CODE_DIGITS + 4}
           required
-          placeholder="000000"
+          placeholder={'0'.repeat(ADMIN_CODE_DIGITS)}
           aria-invalid={Boolean(state.error)}
           aria-describedby={message ? 'admin-code-message' : undefined}
           className="w-full text-center text-2xl tracking-[0.5em]"
