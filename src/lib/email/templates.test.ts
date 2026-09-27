@@ -143,12 +143,58 @@ test('a button is drawn for Outlook as well as everything else', () => {
   }
 });
 
+/**
+ * The regression guard for the admin step-up shipping as a sign-in link.
+ *
+ * Each template's kind is asserted from this table rather than from what the
+ * template happens to contain — inferring is what let a code template turn
+ * into a link template and still pass.
+ */
+test('each template is the KIND it is supposed to be', () => {
+  const mustBe: Record<string, 'code' | 'link'> = {
+    'confirm-signup': 'link',
+    'reset-password': 'link',
+    'change-email': 'link',
+    invite: 'link',
+    'magic-link': 'code',
+    reauthentication: 'code',
+  };
+
+  for (const { email, html } of rendered) {
+    const expected = mustBe[email.slug];
+    assert.ok(expected, `${email.slug}: no rule — add one`);
+
+    if (expected === 'code') {
+      assert.equal(email.action, null, `${email.slug} must not have an action link`);
+      assert.match(html, /\{\{ \.Token \}\}/, `${email.slug} must carry the code`);
+      assert.doesNotMatch(html, /auth\/callback|TokenHash/, `${email.slug} must not link anywhere`);
+    } else {
+      assert.ok(email.action, `${email.slug} must have an action link`);
+      assert.match(html, /\{\{ \.TokenHash \}\}/, email.slug);
+    }
+  }
+});
+
+test('every rendered template names itself in its source', () => {
+  for (const { email, html } of rendered) {
+    assert.ok(
+      html.includes(`faytarra-template: ${email.slug}`),
+      `${email.slug}: no marker, so a stale paste cannot be spotted`,
+    );
+    assert.ok(html.includes(email.action ? '(link)' : '(code)'), email.slug);
+  }
+});
+
 test('the admin code email is a code, never a link somebody could forward', () => {
   const magic = rendered.find((entry) => entry.email.slug === 'magic-link')!;
   assert.equal(magic.email.action, null, 'the admin code email must have no action link');
   assert.doesNotMatch(magic.html, /auth\/callback/, 'no sign-in link in the code email');
   assert.match(magic.html, /\{\{ \.Token \}\}/);
   assert.match(magic.email.subject, /admin/i);
+  // The wording the admin is actually looking for in their inbox.
+  assert.match(magic.email.heading, /verification code/i);
+  assert.doesNotMatch(magic.email.subject, /sign.?in link/i, 'this is the old template');
+  assert.doesNotMatch(magic.html, />Sign in<|Sign in to FayTarra/, 'this is the old template');
 });
 
 test('every message has a plain-text alternative', () => {
