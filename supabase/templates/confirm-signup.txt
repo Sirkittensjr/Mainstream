@@ -1,0 +1,17 @@
+WELCOME TO FAYTARRA
+
+Thanks for joining FayTarra.
+
+Please verify your email address to finish creating your account:
+
+{{ .ConfirmationURL }}
+
+This verification link confirms that this email address belongs to your
+FayTarra account. It can be used once, and it expires after a short time.
+
+If you did not create a FayTarra account, you can safely ignore this email
+— no account will be activated.
+
+--
+FayTarra — faytarra.com
+Automated message. Replies are not monitored.

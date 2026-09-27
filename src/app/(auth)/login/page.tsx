@@ -11,9 +11,9 @@ export const metadata: Metadata = { title: 'Sign in' };
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string; error?: string }>;
+  searchParams: Promise<{ next?: string; error?: string; reset?: string }>;
 }) {
-  const { next, error } = await searchParams;
+  const { next, error, reset } = await searchParams;
   // Sample credentials only mean something once the seeded accounts exist in
   // Supabase Auth, which is what `npm run seed` creates.
   const showDemo = supabaseConfigured() && process.env.FAYTARRA_SHOW_DEMO_LOGIN === '1';
@@ -35,6 +35,20 @@ export default async function LoginPage({
         Welcome back.
       </h1>
       <p className="mt-2 text-white/50">Pick up where you left off.</p>
+
+      {/* Where a finished password reset lands. The reset ends every session,
+          so this page — not the reset form — is what survives to say so. */}
+      {reset === 'done' && (
+        <div
+          role="status"
+          className="mt-6 rounded-2xl border border-mint/40 bg-mint/10 px-4 py-3 text-sm text-mint"
+        >
+          <p className="font-semibold">Your password has been updated.</p>
+          <p className="mt-1 text-mint/80">
+            You have been signed out everywhere. Log in with your new password.
+          </p>
+        </div>
+      )}
 
       <LoginForm next={next ?? '/home'} error={error} />
 

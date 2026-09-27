@@ -16,11 +16,21 @@ import {
 import { getUserByUsername, updateProfile } from '@/lib/services/users';
 import { CATEGORIES, type Category } from '@/lib/types';
 
+/** One shared shape for "is this even an email address". */
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
 export interface AuthState {
   error?: string;
   /** Which control the error belongs to, so the form can show it in place. */
   field?: SignUpField;
   notice?: string;
+  /**
+   * Seconds the form should hold the button for before another send is worth
+   * attempting. Only set when an email actually went out.
+   */
+  cooldown?: number;
+  /** Bumped on every submit, so a form can react to a repeat of the same answer. */
+  at?: number;
 }
 
 export async function signupAction(_prev: AuthState, formData: FormData): Promise<AuthState> {
@@ -118,33 +128,68 @@ export async function resendConfirmationAction(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
-  const email = String(formData.get('email') || '');
-  if (!email.includes('@')) return { error: 'Enter the email address you signed up with.' };
+  const email = String(formData.get('email') || '').trim();
+  if (!EMAIL_RE.test(email)) {
+    return { error: 'Enter the email address you signed up with.', field: 'email', at: Date.now() };
+  }
+
   const result = await resendConfirmation(email);
-  if (!result.ok) return { error: result.error };
-  return { notice: 'Sent. Give it a minute and check your spam folder too.' };
+  if (!result.ok) return { error: result.error, field: result.field, at: Date.now() };
+
+  return {
+    notice: 'Verification email sent. Check your inbox.',
+    cooldown: result.value.cooldownSeconds,
+    at: Date.now(),
+  };
 }
 
 export async function forgotPasswordAction(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
-  const email = String(formData.get('email') || '');
-  if (!email.includes('@')) return { error: 'Enter the email address on your account.' };
+  const email = String(formData.get('email') || '').trim();
+  if (!EMAIL_RE.test(email)) {
+    return { error: 'Enter a valid email address.', field: 'email', at: Date.now() };
+  }
+
   const result = await requestPasswordReset(email);
-  if (!result.ok) return { error: result.error };
-  return { notice: 'If that address has an account, a reset link is on its way.' };
+  if (!result.ok) return { error: result.error, at: Date.now() };
+
+  // Deliberately the same sentence whether or not that address has an account.
+  return {
+    notice:
+      'If an account exists for that email address, we have sent a password reset link. ' +
+      'Give it a minute, and check your spam folder too.',
+    cooldown: result.value.cooldownSeconds,
+    at: Date.now(),
+  };
 }
 
+/**
+ * Sets the new password, for somebody holding a live recovery session.
+ *
+ * On success it lands on the login page rather than reporting in place. The
+ * last thing `updatePassword` does is end every session, this browser's
+ * included, so a success message rendered here would be wiped the moment the
+ * page re-rendered without a session — and the thing to do next really is to
+ * sign in with the new password, which is what proves it took.
+ */
 export async function resetPasswordAction(
   _prev: AuthState,
   formData: FormData,
 ): Promise<AuthState> {
   const password = String(formData.get('password') || '');
-  if (password !== String(formData.get('confirm') || '')) {
-    return { error: 'Those passwords do not match.' };
+  const confirm = String(formData.get('confirm') || '');
+
+  if (password.length < 8) {
+    return { error: 'Password must be at least 8 characters.', field: 'password', at: Date.now() };
   }
+  if (password !== confirm) {
+    return { error: 'Those passwords do not match.', field: 'password', at: Date.now() };
+  }
+
   const result = await updatePassword(password);
-  if (!result.ok) return { error: result.error };
-  redirect('/home?tab=recommended');
+  if (!result.ok) return { error: result.error, field: result.field, at: Date.now() };
+
+  redirect('/login?reset=done');
 }

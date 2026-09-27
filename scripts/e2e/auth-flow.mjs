@@ -208,11 +208,25 @@ const run = async () => {
   const NEW_PASSWORD = 'a brand new password';
   await resetPage.fill('#password', NEW_PASSWORD);
   await resetPage.fill('#confirm', NEW_PASSWORD);
+  // A finished reset ends every session — the reset is often somebody taking
+  // an account back — so it lands on the login page rather than straight into
+  // the app, and says so there.
   await Promise.all([
-    resetPage.waitForURL(/\/home/, { timeout: 20000 }),
+    resetPage.waitForURL(/\/login/, { timeout: 20000 }),
     resetPage.locator('form button[type=submit]').click(),
   ]);
-  check('setting a new password works', resetPage.url().includes('/home'), resetPage.url());
+  check('setting a new password works', resetPage.url().includes('reset=done'), resetPage.url());
+  check(
+    'and the change is confirmed on the login page',
+    /password has been updated/i.test(await resetPage.locator('[role=status]').first().innerText()),
+  );
+  await resetPage.goto('/settings', { waitUntil: 'domcontentloaded' });
+  await resetPage.waitForLoadState('networkidle');
+  check(
+    'the recovery session was ended, not left signed in',
+    resetPage.url().includes('/login'),
+    resetPage.url(),
+  );
   await reset.close();
 
   const after = await browser.newContext({ baseURL: BASE });

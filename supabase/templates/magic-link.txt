@@ -1,0 +1,14 @@
+SIGN IN TO FAYTARRA
+
+Use the link below to sign in to your FayTarra account:
+
+{{ .ConfirmationURL }}
+
+This link signs in whoever opens it, once, and expires after a short time.
+Do not forward it to anybody.
+
+If you did not ask to sign in, you can safely ignore this email.
+
+--
+FayTarra — faytarra.com
+Automated message. Replies are not monitored.

@@ -15,3 +15,4 @@ next-env.d.ts
 
 # Local development database + uploaded media (local driver only)
 .data
+supabase/templates/preview.html

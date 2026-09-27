@@ -1,0 +1,17 @@
+CONFIRM YOUR NEW EMAIL ADDRESS
+
+A request was made to change the email address on your FayTarra account
+from {{ .Email }} to {{ .NewEmail }}.
+
+Confirm the change here. Until you do, your account keeps its current address:
+
+{{ .ConfirmationURL }}
+
+This link can be used once and expires after a short time.
+
+If you did not ask to change your email address, ignore this email and
+consider changing your password — someone may know it.
+
+--
+FayTarra — faytarra.com
+Automated message. Replies are not monitored.

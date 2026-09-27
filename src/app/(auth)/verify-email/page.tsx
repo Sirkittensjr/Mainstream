@@ -23,9 +23,10 @@ export default async function VerifyEmailPage({
       </p>
 
       <div className="card mt-8 p-5 text-sm text-white/60">
-        <p className="label">Not arrived?</p>
+        <p className="label">Didn&rsquo;t receive the email?</p>
         <p className="mt-2">
-          Give it a minute, then check your spam folder. You can also send it again.
+          Give it a minute, then check your spam folder. If it still has not arrived, we can send
+          another one.
         </p>
         <ResendForm email={email ?? ''} />
       </div>

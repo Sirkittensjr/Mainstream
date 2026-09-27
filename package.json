@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "seed": "tsx scripts/seed.ts",
-    "reset": "rm -rf .data && npm run seed"
+    "reset": "rm -rf .data && npm run seed",
+    "email:build": "node --import tsx scripts/build-email-templates.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
