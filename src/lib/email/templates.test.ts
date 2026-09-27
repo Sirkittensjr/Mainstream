@@ -21,18 +21,59 @@ test("Supabase's own variables survive rendering", () => {
       assert.match(email.text, /\{\{ \.Token \}\}/, email.slug);
       continue;
     }
-    assert.match(html, /\{\{ \.ConfirmationURL \}\}/, email.slug);
-    assert.match(email.text, /\{\{ \.ConfirmationURL \}\}/, email.slug);
+    assert.match(html, /\{\{ \.TokenHash \}\}/, email.slug);
+    assert.match(html, /\{\{ \.SiteURL \}\}/, email.slug);
+    assert.match(email.text, /\{\{ \.TokenHash \}\}/, email.slug);
   }
   const change = rendered.find((entry) => entry.email.slug === 'change-email')!;
   assert.match(change.html, /\{\{ \.Email \}\}/);
   assert.match(change.html, /\{\{ \.NewEmail \}\}/);
 });
 
-test('the action link is only ever the Supabase variable, never a URL we built', () => {
+/**
+ * The regression guard for the confirmation loop.
+ *
+ * A `{{ .ConfirmationURL }}` link comes back carrying a PKCE code, and
+ * exchanging that code needs the verifier cookie from the browser that signed
+ * up — so the link fails when the email is opened anywhere else. The token
+ * hash has no such tie.
+ */
+test('every action link is the stateless token_hash form, not a PKCE code link', () => {
   for (const { email } of rendered) {
     if (!email.action) continue;
-    assert.equal(email.action.href, '{{ .ConfirmationURL }}', email.slug);
+    assert.doesNotMatch(email.action.href, /ConfirmationURL/, `${email.slug}: still a PKCE link`);
+    assert.match(email.action.href, /^\{\{ \.SiteURL \}\}\/auth\/callback\?/, email.slug);
+    assert.match(email.action.href, /token_hash=\{\{ \.TokenHash \}\}/, email.slug);
+    assert.match(email.action.href, /[?&]type=[a-z_]+/, email.slug);
+  }
+});
+
+test('each link declares the type that Supabase needs to verify it', () => {
+  const expected: Record<string, string> = {
+    'confirm-signup': 'signup',
+    'reset-password': 'recovery',
+    'change-email': 'email_change',
+    'magic-link': 'magiclink',
+    invite: 'invite',
+  };
+  for (const { email } of rendered) {
+    if (!email.action) continue;
+    assert.ok(
+      email.action.href.includes(`type=${expected[email.slug]}`),
+      `${email.slug}: expected type=${expected[email.slug]}, got ${email.action.href}`,
+    );
+  }
+});
+
+test('query separators are encoded in HTML so a sanitiser cannot drop the type', () => {
+  for (const { email, html } of rendered) {
+    if (!email.action) continue;
+    const found = /href="(\{\{ \.SiteURL \}\}[^"]*)"/.exec(html);
+    assert.ok(found, `${email.slug}: no action href`);
+    assert.ok(found![1].includes('&amp;type='), `${email.slug}: raw ampersand in href`);
+    assert.doesNotMatch(found![1], /[^m]&type=/, email.slug);
+    // The plain-text copy is not HTML and must carry the real separator.
+    assert.ok(email.text.includes('&type='), `${email.slug}: text link is HTML-encoded`);
   }
 });
 

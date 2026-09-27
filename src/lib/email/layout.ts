@@ -135,6 +135,17 @@ export interface EmailContent {
 const escape = (value: string) =>
   value.replace(/&(?![a-zA-Z#0-9]+;)/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+/**
+ * A URL on its way into an href, or into visible text.
+ *
+ * The query string separators have to be written `&amp;` in HTML. A browser
+ * forgives a raw `&` in an attribute; a strict email sanitiser rewriting the
+ * document does not have to, and a link that loses `&type=signup` on the way
+ * to the inbox is a confirmation link that cannot confirm anything. The Go
+ * template placeholders pass through untouched — they contain no ampersands.
+ */
+const href = (value: string) => value.replace(/&(?![a-zA-Z#0-9]+;)/g, '&amp;');
+
 /** Renders one message to a complete HTML document. */
 export function renderHtml(content: EmailContent): string {
   const paragraph = (text: string, color: string, size: number) =>
@@ -182,7 +193,7 @@ export function renderHtml(content: EmailContent): string {
               ${content.body.map((text) => paragraph(escape(text), BRAND.body, 16)).join('\n              ')}
 ${content.action ? `
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
-                <tr><td align="center" style="padding:14px 0 10px;">${button(escape(content.action.label), content.action.href)}
+                <tr><td align="center" style="padding:14px 0 10px;">${button(escape(content.action.label), href(content.action.href))}
                 </td></tr>
               </table>
 
@@ -190,7 +201,7 @@ ${content.action ? `
                    reader who wants to see where a link goes should be able to. -->
               <p style="margin:18px 0 0;font-family:${FONT};font-size:13px;line-height:20px;color:${BRAND.faint};">
                 Button not working? Copy and paste this link into your browser:<br />
-                <a href="${content.action.href}" style="color:${BRAND.faySoft};text-decoration:underline;word-break:break-all;">${content.action.href}</a>
+                <a href="${href(content.action.href)}" style="color:${BRAND.faySoft};text-decoration:underline;word-break:break-all;">${href(content.action.href)}</a>
               </p>` : ''}
 ${content.footnotes.length ? `
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">

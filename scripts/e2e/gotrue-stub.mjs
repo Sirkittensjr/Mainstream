@@ -131,12 +131,58 @@ function session(user) {
 const RESEND_COOLDOWN_MS = Number(process.env.STUB_RESEND_COOLDOWN_MS ?? 2000);
 const resendAt = new Map();
 
+/**
+ * Token hashes, the stateless half of the flow.
+ *
+ * A hash is tied to a user and a type and nothing else — no browser, no
+ * cookie — which is exactly why FayTarra's templates link with one.
+ */
+const hashes = new Map();
+
+const SITE = process.env.STUB_SITE_URL || 'http://localhost:3000';
+
+/** The path a real confirmation link lands on, per template type. */
+const LANDING = {
+  signup: '/home',
+  recovery: '/reset-password',
+  email_change: '/settings',
+  magiclink: '/home',
+  invite: '/home',
+};
+
+/**
+ * Issues both shapes of link for one email, and writes the outbox entry.
+ *
+ * `link` is what FayTarra's own templates send — {{ .SiteURL }}/auth/callback
+ * with a token hash. `pkceLink` is Supabase's default {{ .ConfirmationURL }}
+ * shape, kept so the harness can still exercise the older links that are
+ * sitting in real inboxes.
+ */
 function issueCode(user, challenge, type, redirectTo) {
   const code = randomUUID();
   codes.set(code, { userId: user.id, challenge, type });
-  const url = new URL(redirectTo || 'http://localhost:3000/auth/callback');
-  url.searchParams.set('code', code);
-  appendFileSync(OUTBOX, `${JSON.stringify({ to: user.email, type, link: url.toString() })}\n`);
+
+  const tokenHash = randomUUID().replace(/-/g, '');
+  hashes.set(tokenHash, { userId: user.id, type });
+
+  const pkce = new URL(redirectTo || `${SITE}/auth/callback`);
+  pkce.searchParams.set('code', code);
+
+  const link = new URL(`${SITE}/auth/callback`);
+  link.searchParams.set('token_hash', tokenHash);
+  link.searchParams.set('type', type);
+  link.searchParams.set('next', LANDING[type] ?? '/home');
+
+  appendFileSync(
+    OUTBOX,
+    `${JSON.stringify({
+      to: user.email,
+      type,
+      link: link.toString(),
+      pkceLink: pkce.toString(),
+      tokenHash,
+    })}\n`,
+  );
   return code;
 }
 
@@ -197,6 +243,26 @@ const server = createServer(async (req, res) => {
     // Confirmation on, as in a default Supabase project: no session yet.
     issueCode(user, body.code_challenge, 'signup', url.searchParams.get('redirect_to'));
     return send(res, 200, publicUser(user));
+  }
+
+  // --- verifyOtp: the token-hash link ---------------------------------------
+  if (req.method === 'POST' && path === '/verify') {
+    const entry = hashes.get(String(body.token_hash || ''));
+    if (!entry || entry.type !== String(body.type || '')) {
+      return fail(res, 403, 'otp_expired', 'Email link is invalid or has expired');
+    }
+    // Single use, the way a real one is.
+    hashes.delete(body.token_hash);
+
+    const user = [...users.values()].find((candidate) => candidate.id === entry.userId);
+    if (!user) return fail(res, 404, 'user_not_found', 'User not found');
+
+    // This is the call that confirms the address, and it needs nothing from
+    // the browser that signed up.
+    if (entry.type === 'signup' || entry.type === 'invite' || entry.type === 'email_change') {
+      user.email_confirmed_at = user.email_confirmed_at || new Date().toISOString();
+    }
+    return send(res, 200, session(user));
   }
 
   // --- tokens --------------------------------------------------------------
