@@ -5,6 +5,7 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@supabase/supabase-js';
 import { db } from '@/lib/db';
 import { supabaseAnonKey, supabaseUrl } from '@/lib/supabase/config';
+import { hasAdminVerification } from '@/lib/services/admin-step-up';
 import { createAuthClient } from '@/lib/supabase/server';
 import type { User } from '@/lib/types';
 
@@ -53,7 +54,36 @@ export async function requireViewer(next = '/home'): Promise<User> {
   return viewer;
 }
 
+/**
+ * The gate on /admin and on every admin action.
+ *
+ * Two things have to be true, and the second is new: the account carries
+ * `role = 'admin'` in the database, AND this browser has completed the emailed
+ * code step. Being an admin is not the same as being an admin RIGHT NOW on
+ * THIS machine, which is the whole point of a second factor.
+ *
+ * Both are checked here rather than at the page, so every caller — the
+ * dashboard, each of its tabs, and each admin server action — is covered by
+ * the same two questions. A signed-in admin who has not verified is sent to do
+ * so; nothing of the dashboard is rendered first.
+ *
+ * `requireAdminAccount` is the one deliberate exception, below.
+ */
 export async function requireAdmin(): Promise<User> {
+  const viewer = await requireAdminAccount();
+  if (!(await hasAdminVerification(viewer.id))) redirect('/admin/verify');
+  return viewer;
+}
+
+/**
+ * An admin account, WITHOUT the code step.
+ *
+ * Only the verification screen itself may use this — it is the one place that
+ * has to know who the admin is before they have proved it, so that it can send
+ * a code to their address and check what they type back. It grants access to
+ * nothing else.
+ */
+export async function requireAdminAccount(): Promise<User> {
   const viewer = await requireViewer('/admin');
   if (viewer.role !== 'admin') redirect('/home');
   return viewer;

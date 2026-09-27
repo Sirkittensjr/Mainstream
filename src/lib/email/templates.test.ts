@@ -15,8 +15,9 @@ test('every Supabase template FayTarra uses has a body', () => {
 
 test("Supabase's own variables survive rendering", () => {
   for (const { email, html } of rendered) {
-    if (email.slug === 'reauthentication') {
-      // The one that carries a code instead of a link.
+    // A template with no button carries a CODE rather than a link: the admin
+    // step-up and reauthentication both ask for six digits.
+    if (!email.action) {
       assert.match(html, /\{\{ \.Token \}\}/, email.slug);
       assert.match(email.text, /\{\{ \.Token \}\}/, email.slug);
       continue;
@@ -142,7 +143,15 @@ test('a button is drawn for Outlook as well as everything else', () => {
   }
 });
 
-test('every message has a plain-text alternative that carries the link', () => {
+test('the admin code email is a code, never a link somebody could forward', () => {
+  const magic = rendered.find((entry) => entry.email.slug === 'magic-link')!;
+  assert.equal(magic.email.action, null, 'the admin code email must have no action link');
+  assert.doesNotMatch(magic.html, /auth\/callback/, 'no sign-in link in the code email');
+  assert.match(magic.html, /\{\{ \.Token \}\}/);
+  assert.match(magic.email.subject, /admin/i);
+});
+
+test('every message has a plain-text alternative', () => {
   for (const { email } of rendered) {
     assert.ok(email.text.trim().length > 120, email.slug);
     assert.doesNotMatch(email.text, /<[a-z]/i, `${email.slug}: HTML leaked into the text part`);

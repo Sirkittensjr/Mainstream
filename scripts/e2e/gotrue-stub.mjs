@@ -9,7 +9,7 @@
  * Emails are appended to outbox.jsonl instead of being sent.
  */
 import { createServer } from 'node:http';
-import { createHmac, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, randomInt, createHash, timingSafeEqual } from 'node:crypto';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 
 const PORT = Number(process.env.STUB_PORT || 54321);
@@ -132,6 +132,17 @@ const RESEND_COOLDOWN_MS = Number(process.env.STUB_RESEND_COOLDOWN_MS ?? 2000);
 const resendAt = new Map();
 
 /**
+ * Six-digit email OTPs, the way GoTrue issues them for signInWithOtp.
+ *
+ * Keyed by address. Issuing a new one REPLACES the old, and verifying one
+ * deletes it — which is what makes a code single use and makes re-requesting
+ * invalidate the previous one. `STUB_OTP_TTL_MS` shortens the lifetime so an
+ * expiry can be tested without waiting ten minutes.
+ */
+const otps = new Map();
+const OTP_TTL_MS = Number(process.env.STUB_OTP_TTL_MS ?? 600000);
+
+/**
  * Token hashes, the stateless half of the flow.
  *
  * A hash is tied to a user and a type and nothing else — no browser, no
@@ -245,8 +256,65 @@ const server = createServer(async (req, res) => {
     return send(res, 200, publicUser(user));
   }
 
+  // --- signInWithOtp: a six-digit code by email ------------------------------
+  if (req.method === 'POST' && path === '/otp') {
+    const address = String(body.email || '').toLowerCase();
+    const user = users.get(address);
+
+    // shouldCreateUser: false must never create anything.
+    if (!user) {
+      if (body.create_user === false) {
+        return fail(res, 422, 'otp_disabled', 'Signups not allowed for otp');
+      }
+      return send(res, 200, {});
+    }
+
+    const last = resendAt.get(`otp:${address}`);
+    if (last !== undefined && Date.now() - last < RESEND_COOLDOWN_MS) {
+      const wait = Math.ceil((RESEND_COOLDOWN_MS - (Date.now() - last)) / 1000);
+      return fail(
+        res,
+        429,
+        'over_email_send_rate_limit',
+        `For security purposes, you can only request this after ${wait} seconds.`,
+      );
+    }
+    resendAt.set(`otp:${address}`, Date.now());
+
+    // A new code replaces whatever was outstanding.
+    const code = String(randomInt(0, 1000000)).padStart(6, '0');
+    otps.set(address, { code, userId: user.id, expiresAt: Date.now() + OTP_TTL_MS });
+
+    // The outbox stands in for the inbox. In production this is the six digits
+    // Supabase renders into the Magic Link template as {{ .Token }}.
+    appendFileSync(
+      OUTBOX,
+      `${JSON.stringify({ to: user.email, type: 'otp', code })}\n`,
+    );
+    return send(res, 200, {});
+  }
+
   // --- verifyOtp: the token-hash link ---------------------------------------
   if (req.method === 'POST' && path === '/verify') {
+    // Six digits plus an address: the email OTP path.
+    if (body.token && body.email && !body.token_hash) {
+      const address = String(body.email).toLowerCase();
+      const issued = otps.get(address);
+      if (!issued || issued.expiresAt <= Date.now()) {
+        otps.delete(address);
+        return fail(res, 403, 'otp_expired', 'Token has expired or is invalid');
+      }
+      if (String(body.token) !== issued.code) {
+        return fail(res, 403, 'otp_expired', 'Token has expired or is invalid');
+      }
+      // Single use: the code is spent whether or not anything else goes wrong.
+      otps.delete(address);
+      const holder = [...users.values()].find((candidate) => candidate.id === issued.userId);
+      if (!holder) return fail(res, 404, 'user_not_found', 'User not found');
+      holder.email_confirmed_at = holder.email_confirmed_at || new Date().toISOString();
+      return send(res, 200, session(holder));
+    }
+
     const entry = hashes.get(String(body.token_hash || ''));
     if (!entry || entry.type !== String(body.type || '')) {
       return fail(res, 403, 'otp_expired', 'Email link is invalid or has expired');
@@ -366,6 +434,15 @@ const server = createServer(async (req, res) => {
     resendAt.set(address, Date.now());
     if (user) issueCode(user, body.code_challenge, 'signup', url.searchParams.get('redirect_to'));
     return send(res, 200, {});
+  }
+
+  // Test seam: age the outstanding code out, so an expiry can be checked
+  // without the whole run racing a short lifetime.
+  if (req.method === 'POST' && path === '/__expire-otp') {
+    const address = String(body.email || '').toLowerCase();
+    const issued = otps.get(address);
+    if (issued) issued.expiresAt = Date.now() - 1000;
+    return send(res, 200, { expired: Boolean(issued) });
   }
 
   if (path === '/settings') {

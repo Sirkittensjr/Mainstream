@@ -77,4 +77,56 @@ export function checkEmailSendLimit(email: string, now: number = Date.now()): Em
 /** Test seam: forget every recorded send. */
 export function resetEmailSendLimits(): void {
   emailWindows.clear();
+  adminWindows.clear();
+}
+
+/**
+ * The admin second-factor code has its own budget, deliberately.
+ *
+ * The generic limit above is sized for the things a stranger can trigger —
+ * confirmations and password resets — where six an hour is generous. A
+ * verification code is different: only an administrator can ask for one, they
+ * ask for it because they are trying to work, and locking them out of their
+ * own dashboard for an hour because they signed in on a second device is a
+ * worse outcome than the marginal abuse it prevents. The cooldown between
+ * codes is what makes a brute force expensive; the hourly ceiling is only
+ * there to stop a runaway.
+ */
+function adminCooldown(): number {
+  const raw = Number(process.env.ADMIN_CODE_COOLDOWN_SECONDS);
+  return Number.isFinite(raw) && raw >= 0 ? Math.min(raw, 3600) : 30;
+}
+
+export const ADMIN_CODE_COOLDOWN_SECONDS = adminCooldown();
+const ADMIN_CODES_PER_HOUR = 10;
+
+const adminWindows = new Map<string, number[]>();
+
+export function checkAdminCodeLimit(email: string, now: number = Date.now()): EmailLimitResult {
+  const key = email.trim().toLowerCase();
+  const hourAgo = now - 3_600_000;
+  const recent = (adminWindows.get(key) ?? []).filter((at) => at > hourAgo);
+
+  const last = recent[recent.length - 1];
+  if (last !== undefined && now - last < ADMIN_CODE_COOLDOWN_SECONDS * 1000) {
+    const retryAfter = Math.ceil((ADMIN_CODE_COOLDOWN_SECONDS * 1000 - (now - last)) / 1000);
+    return {
+      ok: false,
+      retryAfter,
+      error: `Please wait ${retryAfter} second${retryAfter === 1 ? '' : 's'} before asking for another code.`,
+    };
+  }
+
+  if (recent.length >= ADMIN_CODES_PER_HOUR) {
+    const retryAfter = Math.ceil((recent[0] + 3_600_000 - now) / 1000);
+    return {
+      ok: false,
+      retryAfter,
+      error: 'That is a lot of codes in a short time. Try again in a little while.',
+    };
+  }
+
+  recent.push(now);
+  adminWindows.set(key, recent);
+  return { ok: true };
 }

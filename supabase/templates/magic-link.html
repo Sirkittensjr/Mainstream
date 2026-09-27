@@ -7,14 +7,14 @@
   <!-- Stops iOS and Outlook.com re-tinting a design that is already dark. -->
   <meta name="color-scheme" content="dark" />
   <meta name="supported-color-schemes" content="dark" />
-  <title>Your FayTarra sign-in link</title>
+  <title>Your FayTarra admin verification code</title>
   <!--[if mso]>
   <style>body,table,td,a,p{font-family:Arial,Helvetica,sans-serif !important;}</style>
   <![endif]-->
 </head>
 <body style="margin:0;padding:0;width:100%;background-color:#06060A;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
   <!-- The inbox preview line, hidden in the message itself. -->
-  <div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">Sign in to FayTarra with this one-time link.</div>
+  <div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">Your six-digit code for the FayTarra admin dashboard.</div>
 
   <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" bgcolor="#06060A" style="background-color:#06060A;margin:0;padding:0;">
     <tr>
@@ -61,41 +61,16 @@
           <!-- Card -->
           <tr>
             <td bgcolor="#101019" style="background-color:#101019;border:1px solid #232331;border-radius:20px;padding:36px 28px;">
-              <h1 style="margin:0 0 18px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;font-size:27px;line-height:33px;font-weight:bold;letter-spacing:-0.5px;color:#FFFFFF;">Sign in to FayTarra</h1>
-              <p style="margin:0 0 16px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;font-size:16px;line-height:26px;color:#B9B9C6;">Use the link below to sign in to your FayTarra account.</p>
+              <h1 style="margin:0 0 18px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;font-size:27px;line-height:33px;font-weight:bold;letter-spacing:-0.5px;color:#FFFFFF;">Your admin verification code</h1>
+              <p style="margin:0 0 16px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;font-size:16px;line-height:26px;color:#B9B9C6;">Enter this code on FayTarra to open the admin dashboard:</p>
+              <p style="margin:0 0 16px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;font-size:16px;line-height:26px;color:#B9B9C6;">{{ .Token }}</p>
 
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
-                <tr><td align="center" style="padding:14px 0 10px;">
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto;">
-                <tr>
-                  <td align="center" bgcolor="#FF3D9A" style="background-color:#FF3D9A;border-radius:999px;">
-                    <!--[if mso]>
-                    <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&amp;type=magiclink&amp;next=/home" style="height:52px;v-text-anchor:middle;width:300px;" arcsize="50%" stroke="f" fillcolor="#FF3D9A">
-                      <w:anchorlock/>
-                      <center style="color:#FFFFFF;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;font-size:16px;font-weight:bold;">Sign in to FayTarra</center>
-                    </v:roundrect>
-                    <![endif]-->
-                    <!--[if !mso]><!-- -->
-                    <a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&amp;type=magiclink&amp;next=/home" style="display:inline-block;padding:16px 38px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;font-size:16px;line-height:20px;font-weight:bold;color:#FFFFFF;text-decoration:none;border-radius:999px;background-color:#FF3D9A;">Sign in to FayTarra</a>
-                    <!--<![endif]-->
-                  </td>
-                </tr>
-              </table>
-                </td></tr>
-              </table>
-
-              <!-- The same link as text: some clients strip buttons, and a
-                   reader who wants to see where a link goes should be able to. -->
-              <p style="margin:18px 0 0;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;font-size:13px;line-height:20px;color:#77778A;">
-                Button not working? Copy and paste this link into your browser:<br />
-                <a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&amp;type=magiclink&amp;next=/home" style="color:#FF7DBE;text-decoration:underline;word-break:break-all;">{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&amp;type=magiclink&amp;next=/home</a>
-              </p>
 
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
                 <tr><td style="padding:24px 0 0;border-top:1px solid #232331;"></td></tr>
               </table>
-              <p style="margin:0 0 16px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;font-size:13px;line-height:21px;color:#77778A;">This link signs in whoever opens it, once, and expires after a short time. Do not forward it to anybody.</p>
-              <p style="margin:0 0 16px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;font-size:13px;line-height:21px;color:#77778A;">If you did not ask to sign in, you can safely ignore this email.</p>
+              <p style="margin:0 0 16px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;font-size:13px;line-height:21px;color:#77778A;">The code expires shortly, works once, and asking for a new one cancels this one. FayTarra will never ask you for it by email, message or phone — only on the verification screen you opened yourself.</p>
+              <p style="margin:0 0 16px;font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;font-size:13px;line-height:21px;color:#77778A;">If you did not just sign in as an administrator, this code is not yours to use: change the admin password immediately, because somebody else knows it.</p>
             </td>
           </tr>
 

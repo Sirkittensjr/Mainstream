@@ -170,33 +170,45 @@ export const EMAILS: AuthEmail[] = [
 
   {
     /**
-     * FayTarra signs people in with a password, so nothing in the app asks for
-     * a magic link. It is branded anyway: the alternative is that some path we
-     * have not thought of sends Supabase's unbranded default, which is exactly
-     * the thing this work is meant to stop.
+     * The administrator's second-step code.
+     *
+     * This is Supabase's "Magic Link" template, which is what `signInWithOtp`
+     * renders. FayTarra signs everybody in with a password and asks for a
+     * one-time code in exactly one place — opening the admin dashboard — so
+     * this template has one job, and `{{ .Token }}` is the six digits.
+     *
+     * Deliberately NOT a link. A link in an inbox is one forward or one
+     * shoulder away from being used by somebody else; six digits typed into a
+     * screen the admin already has open are not.
      */
     slug: 'magic-link',
     dashboardTemplate: 'Magic Link',
-    subject: 'Your FayTarra sign-in link',
-    preheader: 'Sign in to FayTarra with this one-time link.',
-    heading: 'Sign in to FayTarra',
-    body: ['Use the link below to sign in to your FayTarra account.'],
-    action: { label: 'Sign in to FayTarra', href: actionUrl('magiclink', '/home') },
+    subject: 'Your FayTarra admin verification code',
+    preheader: 'Your six-digit code for the FayTarra admin dashboard.',
+    heading: 'Your admin verification code',
+    body: [
+      'Enter this code on FayTarra to open the admin dashboard:',
+      '{{ .Token }}',
+    ],
+    action: null,
     footnotes: [
-      'This link signs in whoever opens it, once, and expires after a short time. Do not forward it to anybody.',
-      'If you did not ask to sign in, you can safely ignore this email.',
+      'The code expires shortly, works once, and asking for a new one cancels this one. FayTarra will never ask you for it by email, message or phone — only on the verification screen you opened yourself.',
+      'If you did not just sign in as an administrator, this code is not yours to use: change the admin password immediately, because somebody else knows it.',
     ],
     text: [
-      'SIGN IN TO FAYTARRA',
+      'YOUR ADMIN VERIFICATION CODE',
       '',
-      'Use the link below to sign in to your FayTarra account:',
+      'Enter this code on FayTarra to open the admin dashboard:',
       '',
-      actionUrl('magiclink', '/home'),
+      '    {{ .Token }}',
       '',
-      'This link signs in whoever opens it, once, and expires after a short time.',
-      'Do not forward it to anybody.',
+      'The code expires shortly, works once, and asking for a new one cancels',
+      'this one. FayTarra will never ask you for it by email, message or phone —',
+      'only on the verification screen you opened yourself.',
       '',
-      'If you did not ask to sign in, you can safely ignore this email.',
+      'If you did not just sign in as an administrator, this code is not yours',
+      'to use: change the admin password immediately, because somebody else',
+      'knows it.',
       '',
       '--',
       'FayTarra — faytarra.com',

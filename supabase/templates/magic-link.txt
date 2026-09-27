@@ -1,13 +1,16 @@
-SIGN IN TO FAYTARRA
+YOUR ADMIN VERIFICATION CODE
 
-Use the link below to sign in to your FayTarra account:
+Enter this code on FayTarra to open the admin dashboard:
 
-{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=magiclink&next=/home
+    {{ .Token }}
 
-This link signs in whoever opens it, once, and expires after a short time.
-Do not forward it to anybody.
+The code expires shortly, works once, and asking for a new one cancels
+this one. FayTarra will never ask you for it by email, message or phone —
+only on the verification screen you opened yourself.
 
-If you did not ask to sign in, you can safely ignore this email.
+If you did not just sign in as an administrator, this code is not yours
+to use: change the admin password immediately, because somebody else
+knows it.
 
 --
 FayTarra — faytarra.com

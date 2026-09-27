@@ -127,6 +127,42 @@ cleared.
 node scripts/e2e/signup-form-state.mjs
 ```
 
+### 3b. The admin's second step — `admin-step-up.mjs`
+
+An administrator signs in with a password like anybody else, then has to type a
+six-digit code emailed to the admin address before /admin opens. The code is
+Supabase's — `signInWithOtp` issues it, `verifyOtp` checks it — so what these
+checks cover is what FayTarra decides: that the dashboard stays shut until the
+code is entered, and that a wrong, stale, reused or superseded code does not
+open it.
+
+```bash
+STUB_PORT=54321 STUB_RESEND_COOLDOWN_MS=500 node scripts/e2e/gotrue-stub.mjs &
+ADMIN_EMAILS=admin@faytarra.com ADMIN_CODE_COOLDOWN_SECONDS=3 \
+  ADMIN_SESSION_SECRET=test-secret npm start &
+node scripts/e2e/admin-step-up.mjs
+```
+
+The stub issues real six-digit codes and writes them to the outbox, which
+stands in for the inbox; `POST /auth/v1/__expire-otp` ages the outstanding one
+so expiry is deterministic rather than a race against a short lifetime.
+
+Covers: login emails a code and lands on the verification screen; the code
+appears nowhere on the page, in its source, or in the URL, and the address is
+masked; /admin and every deep tab stay shut until the code is entered; a wrong
+code is refused and counts down the attempts; the right one opens the
+dashboard; a used, superseded or expired code does not; a run of wrong codes is
+cut off; rapid requests do not send a code each; a normal account gets no code,
+cannot open the verification screen, and cannot open /admin even holding the
+admin's proof cookie; and signing out drops the proof so the code is asked for
+again.
+
+**A note on detecting the dashboard.** These harnesses look for the tab links
+only the dashboard renders, never for the words "admin dashboard" — the
+verification screen's own copy contains that phrase, so a text match passes on
+the wrong page. `admin-access.mjs` was written that way at first and passed
+while proving nothing.
+
 ### 3a. Who may open /admin — `admin-access.mjs`
 
 The route guard, asked for directly rather than looked for in the navigation —
