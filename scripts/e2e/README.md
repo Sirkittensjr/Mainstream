@@ -116,6 +116,24 @@ cleared.
 node scripts/e2e/signup-form-state.mjs
 ```
 
+### 5a. Opening a tab clears its badge — `mark-read-on-open.mjs`
+
+Notifications and Messages both mark themselves read because the page was
+OPENED, with no button to press. These are the checks for the three ways that
+goes wrong: a badge that will not clear without a reload, a read state that
+does not survive a refresh (marked only in the browser), and something that
+arrives afterwards failing to count as new again.
+
+```bash
+node scripts/e2e/mark-read-on-open.mjs
+```
+
+Two real accounts at desktop and phone width. Every count is confirmed twice —
+once as the number painted in the navigation, and once from `/api/unread`, so
+a badge that merely looks right cannot pass. It also checks that a third
+account's unread state is untouched, and that nobody is told their own sent
+messages are unread.
+
 ### 6a. The confirmation loop — `verification-login.mjs`
 
 The regression guard for "I confirmed my email and it still asks me to confirm

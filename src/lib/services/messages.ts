@@ -267,6 +267,34 @@ export async function markThreadRead(viewerId: ID, otherId: ID): Promise<number>
 }
 
 /**
+ * Marks everything in the inbox as read, and says how many that was.
+ *
+ * What `markThreadRead` does for one conversation, across all of them — for
+ * opening the inbox itself, where every unread thread is now in front of you.
+ *
+ * The same rule holds and for the same reason: only rows where the viewer is
+ * the RECIPIENT are touched. `recipient_id` is pinned to the session, never to
+ * anything the request carried, so this cannot reach another person's inbox —
+ * and your own messages are never in the set, because you are never the
+ * recipient of your own row. Nothing about who may message whom is consulted
+ * or changed here; this only moves a read receipt.
+ *
+ * Returns 0 without writing anything when there is nothing unread, so opening
+ * an inbox that is already clear costs one query and no writes.
+ */
+export async function markAllMessagesRead(viewerId: ID): Promise<number> {
+  const store = db();
+  const unread = await read({ where: { recipient_id: viewerId, read_at: null } });
+  if (unread.length === 0) return 0;
+
+  const now = new Date().toISOString();
+  await Promise.all(
+    unread.map((message) => store.update('messages', message.id, { read_at: now })),
+  );
+  return unread.length;
+}
+
+/**
  * Unread message count for the navigation badge.
  *
  * Read one past the cap the badge can show, so "99+" is the only thing an

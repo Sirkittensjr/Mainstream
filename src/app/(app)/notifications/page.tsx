@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { Avatar } from '@/components/Avatar';
 import { EmptyState } from '@/components/EmptyState';
 import { PageTopBar } from '@/components/PageTopBar';
+import { MarkReadOnOpen } from '@/components/MarkReadOnOpen';
 import { markNotificationsReadAction } from '@/app/actions';
 import { listNotifications, type NotificationView } from '@/lib/services/notifications';
 import { requireViewer } from '@/lib/session';
@@ -29,21 +30,18 @@ export default async function NotificationsPage() {
   return (
     <>
       <PageTopBar title="Notifications" />
+
+      {/* Opening this page IS the read receipt — there is no button to press.
+          It runs on mount rather than in this render, so hovering the nav link
+          and prefetching the route cannot clear somebody's badge. */}
+      <MarkReadOnOpen unread={unread} action={markNotificationsReadAction} />
+
       <div className="mx-auto max-w-2xl px-4 pt-4 lg:pt-8">
-        <div className="mb-5 flex items-end justify-between">
-          <div>
-            <h1 className="font-display text-3xl font-extrabold tracking-tight">Notifications</h1>
-            <p className="mt-1 text-white/45">
-              {unread > 0 ? `${unread} new` : 'You are all caught up'}
-            </p>
-          </div>
-          {unread > 0 && (
-            <form action={markNotificationsReadAction}>
-              <button type="submit" className="btn-ghost px-4 py-2 text-sm">
-                Mark all read
-              </button>
-            </form>
-          )}
+        <div className="mb-5">
+          <h1 className="font-display text-3xl font-extrabold tracking-tight">Notifications</h1>
+          <p className="mt-1 text-white/45">
+            {unread > 0 ? `${unread} new` : 'You are all caught up'}
+          </p>
         </div>
 
         {notifications.length === 0 ? (
