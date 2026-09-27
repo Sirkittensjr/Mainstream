@@ -143,6 +143,15 @@ export interface EmailContent {
   /** Paragraphs above the button. */
   body: string[];
   action: { label: string; href: string } | null;
+  /**
+   * A one-time code, shown as the thing the reader is meant to copy.
+   *
+   * Separate from `body` because it must not look like a sentence: six digits
+   * set in the same 16px prose as the line above them are read past, not read
+   * off. This renders them large, spaced, and monospaced so 0 and O cannot be
+   * confused, in a panel of their own.
+   */
+  code?: string;
   /** Small print under the button — what the link does, and the "ignore this" line. */
   footnotes: string[];
   /** Plain-text alternative, whole. */
@@ -209,6 +218,14 @@ ${marker(content.slug, content.action ? 'link' : 'code')}
             <td bgcolor="${BRAND.panel}" style="background-color:${BRAND.panel};border:1px solid ${BRAND.line};border-radius:20px;padding:36px 28px;">
               <h1 style="margin:0 0 18px;font-family:${FONT};font-size:27px;line-height:33px;font-weight:bold;letter-spacing:-0.5px;color:${BRAND.white};">${escape(content.heading)}</h1>
               ${content.body.map((text) => paragraph(escape(text), BRAND.body, 16)).join('\n              ')}
+${content.code ? `
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 20px;">
+                <tr>
+                  <td align="center" bgcolor="${BRAND.ink}" style="background-color:${BRAND.ink};border:1px solid ${BRAND.line};border-radius:14px;padding:22px 12px;">
+                    <div style="font-family:'SF Mono',SFMono-Regular,ui-monospace,Menlo,Consolas,'Courier New',monospace;font-size:38px;line-height:46px;font-weight:bold;letter-spacing:10px;color:${BRAND.white};white-space:nowrap;">${escape(content.code)}</div>
+                  </td>
+                </tr>
+              </table>` : ''}
 ${content.action ? `
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
                 <tr><td align="center" style="padding:14px 0 10px;">${button(escape(content.action.label), href(content.action.href))}

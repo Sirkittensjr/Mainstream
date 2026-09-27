@@ -186,10 +186,8 @@ export const EMAILS: AuthEmail[] = [
     subject: 'Your FayTarra admin verification code',
     preheader: 'Your six-digit code for the FayTarra admin dashboard.',
     heading: 'Your admin verification code',
-    body: [
-      'Enter this code on FayTarra to open the admin dashboard:',
-      '{{ .Token }}',
-    ],
+    body: ['Enter this code on FayTarra to open the admin dashboard:'],
+    code: '{{ .Token }}',
     action: null,
     footnotes: [
       'The code expires shortly, works once, and asking for a new one cancels this one. FayTarra will never ask you for it by email, message or phone — only on the verification screen you opened yourself.',
@@ -256,10 +254,8 @@ export const EMAILS: AuthEmail[] = [
     subject: 'Your FayTarra confirmation code',
     preheader: 'Enter this code to confirm it is you.',
     heading: 'Confirm it is you',
-    body: [
-      'Enter this code to confirm the change you asked for on your FayTarra account:',
-      '{{ .Token }}',
-    ],
+    body: ['Enter this code to confirm the change you asked for on your FayTarra account:'],
+    code: '{{ .Token }}',
     action: null,
     footnotes: [
       'The code expires after a short time. FayTarra will never ask you for it by email, message or phone.',
