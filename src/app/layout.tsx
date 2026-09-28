@@ -32,6 +32,17 @@ export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
+  /**
+   * The on-screen keyboard shrinks the layout instead of sliding over it.
+   *
+   * Without this, Android Chrome leaves the layout viewport at full height and
+   * the keyboard covers the bottom of it — so on the caption screens (a video's
+   * title and description, a comment, a message) the field being typed into can
+   * end up underneath the keyboard, with nothing to scroll because the page
+   * still believes it fits. Resizing the content means the field stays visible
+   * and `100dvh` means what it says while typing.
+   */
+  interactiveWidget: 'resizes-content',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

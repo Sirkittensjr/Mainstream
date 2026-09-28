@@ -12,6 +12,47 @@ export interface LocalVideoFacts {
   height: number;
 }
 
+/**
+ * Makes a video element report a real duration.
+ *
+ * A file written by MediaRecorder carries no duration in its header, so the
+ * browser reports `Infinity` until it is asked to seek past the end — doing that
+ * makes it read to the end and correct itself. Until it does, the element is not
+ * only missing a number: it will not reliably play or seek either, which is why
+ * anything that shows a recording back has to do this first and not just
+ * anything that measures one.
+ *
+ * Resolves true once the duration is real, false if this browser never corrects
+ * it. Never rejects and never throws — a player that cannot report its length is
+ * still a player.
+ */
+export function settleDuration(video: HTMLVideoElement, timeoutMs = 4000): Promise<boolean> {
+  if (Number.isFinite(video.duration) && video.duration > 0) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      video.removeEventListener('durationchange', onChange);
+      window.clearTimeout(timer);
+      resolve(ok);
+    };
+    const onChange = () => {
+      if (!Number.isFinite(video.duration)) return;
+      // Back to the start: the seek below leaves it parked at the end.
+      video.currentTime = 0;
+      finish(true);
+    };
+    video.addEventListener('durationchange', onChange);
+    const timer = window.setTimeout(() => finish(false), timeoutMs);
+    try {
+      video.currentTime = 1e101;
+    } catch {
+      finish(false);
+    }
+  });
+}
+
 /** A hidden <video> holding this source, once its metadata has arrived. */
 export function loadVideo(src: string): Promise<HTMLVideoElement> {
   return new Promise((resolve, reject) => {
@@ -26,26 +67,7 @@ export function loadVideo(src: string): Promise<HTMLVideoElement> {
     video.addEventListener(
       'loadedmetadata',
       () => {
-        if (Number.isFinite(video.duration) && video.duration > 0) {
-          resolve(video);
-          return;
-        }
-        // A file written by MediaRecorder has no duration in its header, so
-        // the browser reports Infinity until it is asked to seek past the end.
-        // Doing that makes it read to the end and correct itself.
-        const settle = () => {
-          if (!Number.isFinite(video.duration)) return;
-          video.removeEventListener('durationchange', settle);
-          video.currentTime = 0;
-          resolve(video);
-        };
-        video.addEventListener('durationchange', settle);
-        video.currentTime = 1e101;
-        // Some browsers never correct it. Rather than hang, take what we have.
-        window.setTimeout(() => {
-          video.removeEventListener('durationchange', settle);
-          if (!Number.isFinite(video.duration)) fail();
-        }, 4000);
+        void settleDuration(video).then((ok) => (ok ? resolve(video) : fail()));
       },
       { once: true },
     );

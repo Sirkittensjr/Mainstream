@@ -5,6 +5,7 @@ import {
   MAX_VIDEO_BYTES,
   MAX_VIDEO_SECONDS,
   MAX_VIDEO_SECONDS_ENFORCED,
+  UPLOADABLE,
   formatMegabytes,
 } from './limits';
 import type { VideoProbe } from './probe';
@@ -14,16 +15,10 @@ import type { VideoProbe } from './probe';
  * accept uploads cannot drift apart on what they allow.
  */
 
-/** What may be uploaded at all, keyed by the type sniffed from the bytes. */
-export const UPLOADABLE: SniffedType[] = [
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'image/gif',
-  'video/mp4',
-  'video/webm',
-  'video/quicktime',
-];
+// Moved to limits.ts, which both sides may import — the browser needs it to
+// label a camera recording with a type the routes will accept. Re-exported so
+// the routes' imports are unchanged and there is still only one list.
+export { UPLOADABLE };
 
 export const isVideoType = (type: SniffedType): boolean => type.startsWith('video/');
 

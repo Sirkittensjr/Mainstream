@@ -160,7 +160,17 @@ const run = async () => {
   await openStudio(A.page);
   const empty = await A.page.locator('body').innerText();
   check('the first screen says what fits', /2 minutes and 250MB/.test(empty), empty.split('\n').find((l) => /minutes and/.test(l)));
-  check('it offers Select video', (await A.page.locator('button', { hasText: 'Select video' }).count()) === 1);
+  // Renamed from "Select video" when recording became the phone-first action:
+  // the pair now reads "Record a video" / "Choose a file". The file path itself
+  // is unchanged, which is what the rest of this suite goes on to prove.
+  check(
+    'it offers a way to choose a file',
+    (await A.page.locator('button', { hasText: 'Choose a file' }).count()) === 1,
+  );
+  check(
+    'and a way to record one',
+    (await A.page.locator('button', { hasText: 'Record a video' }).count()) === 1,
+  );
 
   await A.page.locator('input[type=file]').setInputFiles(fixture('portrait.webm'));
   await A.page.waitForSelector('#video-title', { timeout: 20000 });

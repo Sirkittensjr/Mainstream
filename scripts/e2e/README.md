@@ -291,6 +291,66 @@ videos feed is `visiblePosts` filtered to posts with video media, so it is the
 same code path. The only thing the media changes is the noun in the author's
 notification, hence text fixtures here rather than a recorded clip.
 
+### 4c. Recording on a phone — `mobile-record-flow.mjs`
+
+The camera flow at phone size, from the + in the bottom navigation to the video
+being in somebody else's feed. Chromium's fake camera and microphone stand in for
+the lens, so getUserMedia, the permission prompt, MediaRecorder, the audio track,
+the upload and the post are all real code paths.
+
+```bash
+node scripts/e2e/mobile-record-flow.mjs
+```
+
+Runs at iPhone-13 viewport on a Chromium engine (the descriptor's WebKit user
+agent is dropped — a WebKit UA on a Chromium engine is a lie the app might
+behave differently for, and what is being tested here is the viewport and touch
+input).
+
+Covers: Create reachable from the bottom navigation and fitting the screen, with
+the Post tab still beside Video; Record offered first on a phone and the file
+picker still offered; the camera opening; the 2-minute budget shown; front/rear
+switching keeping the camera open; every control at least 44px and the record
+button clear of the bottom edge; recording, stopping, **watching the take back
+with play and pause**, the camera being released while it plays, re-recording,
+and only the kept take surviving; the cover scrubber working on a recording and a
+custom thumbnail still being offered; the caption fields; the content warning;
+the post; and the video reaching the Videos feed and the normal feed **as seen by
+a second account**. It finishes by checking the desktop file upload is still
+offered and still first at desktop width.
+
+**Two of these checks are worth knowing about.**
+
+The first is `an untouched recording was NOT re-encoded in the browser`. The
+render pass announces itself as "Preparing your video…", and for a recording
+nobody edited it must never run — re-encoding costs a real-time pass, two more
+minutes on a two-minute video, to arrive back at bytes the upload routes already
+accept. The check watches for that label throughout the post.
+
+The second is that **both feeds are checked from somebody else's account**.
+Neither feed recommends you your own posts — `videoFeed` filters on
+`post.author_id !== viewerId` deliberately — so looking as the author is a
+question with no right answer, and a check that can only fail is not a check.
+
+**On TUS.** Against the local driver `/api/upload/sign` answers `post`, so the
+resumable branch does not run and the suite says so rather than claiming
+otherwise. To exercise it, run the same suite through the Supabase stubs
+(section 15) — `sign` then answers `resumable` and the checks assert the TUS
+endpoint was used:
+
+```bash
+STUB_PORT=54321 node scripts/e2e/gotrue-stub.mjs &
+STORAGE_PORT=54500 node scripts/e2e/storage-stub.mjs &
+PORT=55300 GOTRUE_PORT=54321 STORAGE_PORT=54500 node scripts/e2e/postgrest-stub.mjs &
+SUPABASE_URL=http://127.0.0.1:55300 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:55300 \
+  SUPABASE_ANON_KEY=stub SUPABASE_SERVICE_ROLE_KEY=stub-secret npm start &
+node scripts/e2e/mobile-record-flow.mjs
+```
+
+**State matters for the video suites.** `videos-flow.mjs` asserts an exact number
+of slides, so reseed (`npm run reset`) before it — video posts left behind by
+another suite make it fail on a count, not on a fault.
+
 ### 4a. Video covers — `video-cover-flow.mjs`
 
 The picture that stands in for a video before anybody plays it: a frame picked
@@ -430,6 +490,18 @@ rotating, muting, combining, choosing a thumbnail, captioning, posting, and
 watching the result from a second account on desktop and at phone width. It
 finishes by proving that text posts, photo posts, likes, comments, ratings and
 Discover still work exactly as before.
+
+Recording here goes through the review step — a take is watched back before it
+is kept — so this suite keeps each one with "Film another", which is the
+multi-clip path it is exercising. For the phone-first camera flow, see
+`mobile-record-flow.mjs` above.
+
+Its Discover check is filtered to the category the video was posted in, on
+purpose: the unfiltered /discover is the top 30 of everything recent ranked by
+likes, comments and views, so a minutes-old post with one comment sits around
+90th of ~94 in the seeded dataset and cannot appear there however correct
+everything else is. The unfiltered check was asserting the shape of the sample
+data.
 
 There is no ffmpeg in this container and none is needed. The fixtures are made
 the same way the feature makes video — canvas plus `MediaRecorder` — so they

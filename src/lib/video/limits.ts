@@ -1,3 +1,5 @@
+import type { SniffedType } from '@/lib/file-type';
+
 /**
  * The limits on FayTarra video, in one place.
  *
@@ -52,6 +54,24 @@ export const MAX_CLIPS = 12;
 
 /** What the file picker offers, and what the sniffer will accept. */
 export const VIDEO_ACCEPT = 'video/mp4,video/quicktime,video/webm,video/*';
+
+/**
+ * What may be uploaded at all, keyed by the type sniffed from the bytes.
+ *
+ * Here rather than in the server-only uploads.ts because both sides need it:
+ * the server to decide what it will store, and the browser to label a camera
+ * recording with a type that will not be refused. uploads.ts re-exports it, so
+ * there is still one list.
+ */
+export const UPLOADABLE: SniffedType[] = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+];
 
 export function formatSeconds(seconds: number): string {
   const whole = Math.max(0, Math.round(seconds));

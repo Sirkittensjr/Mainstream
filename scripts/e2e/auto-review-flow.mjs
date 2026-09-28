@@ -177,7 +177,7 @@ async function stepUp(admin) {
  */
 async function visibleInFeed(actor, postId, caption) {
   for (const url of [
-    '/home?feed=recommended',
+    '/home?tab=recommended',
     '/discover',
     `/search?q=${encodeURIComponent(caption)}`,
   ]) {

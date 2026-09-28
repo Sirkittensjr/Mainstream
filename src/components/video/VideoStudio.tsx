@@ -37,6 +37,7 @@ import {
   formatPreciseSeconds,
   formatSeconds,
 } from '@/lib/video/limits';
+import { recordedFile } from '@/lib/video/recording';
 import { canRender, renderClips } from '@/lib/video/render';
 import { UploadError, contentTypeFor, discardMedia, uploadMedia } from '@/lib/video/upload-client';
 import { ClipEditor } from './ClipEditor';
@@ -415,8 +416,15 @@ export function VideoStudio() {
       <VideoRecorder
         remainingSeconds={left}
         onClose={() => setRecording(false)}
-        onRecorded={({ blob, seconds }) => {
-          void addSource(blob, `Recording ${clips.length + 1}`);
+        onRecorded={({ blob, mimeType, seconds }) => {
+          // Wrapped as a File, which is what keeps an untouched recording OUT
+          // of the render pass: `needsRender` reads `clip.file` as "we still
+          // have the original bytes", and without one a two-minute recording
+          // was re-encoded in real time before it could be uploaded. See
+          // lib/video/recording.ts.
+          const index = clips.length + 1;
+          const file = recordedFile(blob, mimeType, index);
+          void addSource(file, `Recording ${index}`, file);
           if (seconds >= left - 0.5) setRecording(false);
         }}
       />
@@ -584,24 +592,29 @@ export function VideoStudio() {
             Up to {MAX_VIDEO_SECONDS / 60} minutes and {formatMegabytes(MAX_VIDEO_BYTES)}. MP4, MOV
             or WEBM — straight off your phone is fine.
           </p>
+          {/* Recording comes first on a phone and second on a desktop, by
+              `order` rather than by rendering different things: the camera is what
+              somebody holding a phone came here for. Both buttons are always
+              present and neither is a different code path, so the desktop file
+              upload is exactly where it was. */}
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            <button
-              type="button"
-              onClick={() => fileInput.current?.click()}
-              disabled={Boolean(busy)}
-              className="btn-primary min-h-[56px] py-4"
-            >
-              <PlusIcon width={18} height={18} /> Select video
-            </button>
             <button
               type="button"
               onClick={() => {
                 setError(null);
                 setRecording(true);
               }}
-              className="btn-ghost min-h-[56px] py-4"
+              className="btn-primary order-1 min-h-[56px] py-4 sm:order-2"
             >
-              <RecordIcon width={18} height={18} /> Record
+              <RecordIcon width={18} height={18} /> Record a video
+            </button>
+            <button
+              type="button"
+              onClick={() => fileInput.current?.click()}
+              disabled={Boolean(busy)}
+              className="btn-ghost order-2 min-h-[56px] py-4 sm:order-1"
+            >
+              <PlusIcon width={18} height={18} /> Choose a file
             </button>
           </div>
         </div>
