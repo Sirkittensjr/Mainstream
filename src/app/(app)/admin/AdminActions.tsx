@@ -3,6 +3,10 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  adminClearReportsAction,
+  adminHoldReviewedAction,
+  adminRemoveReviewedAction,
+  adminRestoreReviewedAction,
   adminSetTrustAction,
   adminRemoveCommentAction,
   adminRemovePostAction,
@@ -177,5 +181,98 @@ export function TrustActions({ userId, trusted }: { userId: string; trusted: boo
     >
       {trusted ? 'Revoke rating weight' : 'Restore rating weight'}
     </button>
+  );
+}
+
+/**
+ * The four decisions available on something under automatic review.
+ *
+ * None of them is available to anybody who is not an administrator, and not
+ * because these buttons are hidden: every handler calls a server action that
+ * re-checks the role against the database before it touches a row. A user
+ * calling the action directly gets the same refusal as a user who never saw
+ * the page.
+ */
+export function ReviewActions({
+  postId,
+  state,
+  window: reviewWindow,
+}: {
+  postId: string;
+  /** Where the review came from, so the copy can say so. */
+  state: 'temporary_review' | 'admin_hold';
+  /** The window in words, resolved on the server so this cannot disagree with it. */
+  window: string;
+}) {
+  const held = state === 'admin_hold';
+  const { pending, run } = useAction();
+  const [reason, setReason] = useState('Breaks the community guidelines');
+  const [clearFirst, setClearFirst] = useState(true);
+
+  return (
+    <div className="mt-4 space-y-2 border-t border-white/[0.08] pt-4">
+      <input
+        value={reason}
+        onChange={(event) => setReason(event.target.value)}
+        placeholder="Reason, if you remove it"
+        className="w-full py-2 text-sm"
+      />
+      <label className="flex items-center gap-2 text-xs text-white/50">
+        <input
+          type="checkbox"
+          checked={clearFirst}
+          onChange={(event) => setClearFirst(event.target.checked)}
+          className="h-4 w-4 accent-fay"
+        />
+        Clear the reports that triggered this, so restoring does not re-hide it
+      </label>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={pending}
+          className={`${BUTTON} border-mint/40 text-mint hover:bg-mint/10`}
+          onClick={() =>
+            run(async () => {
+              if (clearFirst) await adminClearReportsAction('post', postId);
+              await adminRestoreReviewedAction(postId);
+            })
+          }
+        >
+          Restore now
+        </button>
+        <button
+          type="button"
+          disabled={pending}
+          className={`${BUTTON} border-fay/40 text-fay hover:bg-fay/10`}
+          onClick={() => run(() => adminRemoveReviewedAction(postId, reason))}
+        >
+          Remove permanently
+        </button>
+        {!held && (
+          <button
+            type="button"
+            disabled={pending}
+            className={`${BUTTON} border-solar/40 text-solar hover:bg-solar/10`}
+            onClick={() => run(() => adminHoldReviewedAction(postId))}
+          >
+            Hold past {reviewWindow}
+          </button>
+        )}
+        <button
+          type="button"
+          disabled={pending}
+          className={`${BUTTON} text-white/50 hover:bg-white/10`}
+          onClick={() => run(() => adminClearReportsAction('post', postId))}
+        >
+          Clear reports only
+        </button>
+      </div>
+      <p className="text-[11px] text-white/30">
+        {state === 'admin_hold'
+          ? 'Held by an administrator. It will not come back on its own.'
+          : `Doing nothing is also an option: it comes back by itself when the ${reviewWindow} run out.`}{' '}
+        Removing a post does not suspend its author.
+      </p>
+    </div>
   );
 }

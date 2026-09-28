@@ -16,7 +16,14 @@ psql -v ON_ERROR_STOP=1 -d faytarra_test -f supabase/schema.sql
 psql -d faytarra_test -f scripts/e2e/schema-checks.sql
 psql -d faytarra_test -f scripts/e2e/rls-checks.sql
 psql -d faytarra_test -f scripts/e2e/dm-checks.sql
+psql -d faytarra_test -f scripts/e2e/admin-checks.sql
+psql -d faytarra_test -f scripts/e2e/auto-review-checks.sql
 ```
+
+The shim's `storage.buckets` carries `file_size_limit` and `allowed_mime_types`
+because `schema.sql` sets them. Without those columns `schema.sql` aborts partway
+through under `ON_ERROR_STOP=1`, which silently skips everything after it — the
+grants and the RLS block included, which is most of what these files test.
 
 `rls-checks.sql` is the one to re-run after touching grants or policies. It
 proves that somebody holding only the anon key cannot read an email address,
@@ -47,8 +54,20 @@ admin, demote the admin, promote anyone else, or read the admin's email — whil
 still being able to edit their own bio in the same session. The lines marked
 "must fail" are expected to print an error; that is the check passing.
 
+`auto-review-checks.sql` proves the automatic ten-report review is enforced by
+the DATABASE and not only by the app: one account cannot report the same thing
+twice (a unique index, not a code path), `review_state` cannot be set to
+anything the app does not mean, neither API role can read *or write* the
+moderation log, and a signed-in person cannot restore a hidden post, forge a
+report count, clear the reports counting toward the threshold, mark one reviewed
+or delete one to get back under it. The lines marked "must fail" are expected to
+print an error; the five `UPDATE 0` / `DELETE 0` lines in section 4 are the
+check passing too — row level security makes them no-ops rather than errors,
+and section 5 reads everything back to prove nothing moved. It cleans up after
+itself, so it is re-runnable.
+
 ```bash
-psql -d faytarra_test -f scripts/e2e/admin-checks.sql
+psql -d faytarra_test -f scripts/e2e/auto-review-checks.sql
 ```
 
 ## 2. The app side — `gotrue-stub.mjs` + `auth-flow.mjs` + `social-flow.mjs`
@@ -208,6 +227,69 @@ checks that nothing in settings lets somebody set their own role, and that
 
 `ADMIN_EMAILS` is how the role is applied on sign-in locally; in production
 migration 0008 sets the same column.
+
+### 3d. The automatic ten-report review — `auto-review-flow.mjs`
+
+Ten different accounts reporting the same post hide it while somebody looks —
+for at most 24 hours, and never as a verdict.
+
+```bash
+ADMIN_EMAILS=admin@faytarra.com ADMIN_SESSION_SECRET=test-secret \
+  FAY_REVIEW_WINDOW_MINUTES=2 npm start &
+FAY_REVIEW_WINDOW_MINUTES=2 node scripts/e2e/auto-review-flow.mjs
+```
+
+`FAY_REVIEW_WINDOW_MINUTES` shortens the window so the expiry can be watched
+happening instead of waited out for a day. It may only ever **shorten** it:
+`clampWindow` in `src/lib/auto-review-rules.ts` caps it at the documented 24
+hours, and the unit tests in `auto-review-rules.test.ts` cover the default and
+the clamp. Pass the same value to the app and to the harness — the harness uses
+it to know what wording to expect and how long to wait, and skips the expiry
+section (saying so) if the window is longer than five minutes.
+
+Two minutes, not one: filing ten reports through the dialog takes most of a
+minute, and a one-minute window can lapse before the check that the post is
+*gone* has run — which reads as a product failure and is not one.
+
+Twelve accounts get created, so give it a few minutes.
+
+Covers, in order of how badly it would matter if it were wrong:
+
+- **One account is not ten.** Twelve reports from one person is one report row
+  and no hide; nine different accounts is no hide; the tenth hides it.
+- **Hidden means hidden.** Gone from the feeds, from Discover, from search,
+  from the author's public profile as others see it, from `/post/<id>` and from
+  `/api/v1/posts/<id>` — the author and an administrator still see it, because
+  the author was told it exists and an admin cannot review what they cannot see.
+- **Only an administrator can act.** `/admin` and its tabs are asked for
+  directly, not looked for in the navigation; no restore, remove, hold or clear
+  control is served to anybody else; the author cannot un-hide their own post;
+  every write method on the post API is refused, so there is no count to forge.
+- **Nothing is deleted.** Clearing the threshold leaves all ten report rows with
+  their reasons and reporters, marked `cleared_at`, and leaves the automatic hide
+  in `moderation_events`. Ten *fresh* reports hide it again, which is the proof
+  that clearing reset the count rather than switched it off.
+- **It is temporary.** The window runs out with no sweep, no cron and no admin,
+  and the post is in a feed again. Looking at the queue afterwards records it as
+  an *expiry* with no actor, not as a decision.
+- **Nobody learns who reported them.** No reporter handle or id appears in the
+  admin queue's text or its markup, or in either notification the author gets —
+  while what reporters wrote is still shown to the admin.
+- **A removal is not a ban.** After Remove permanently the author's status is
+  still `active`, and they get a notification saying it was removed.
+- **Hold** stops the clock without expiring, and the post stays hidden.
+- **A moderator can see there is something waiting** — the overview counts it
+  and the Reports tab carries its own badge, separate from the report count,
+  because a hide with a clock on it is more urgent than a queued report.
+
+The author's messages are **notifications**, not direct messages: the harness
+checks no `messages` row was created, because the mutual-follow rule that
+governs DMs is not being bent so that FayTarra can talk to somebody.
+
+**Videos need nothing of their own.** A video on FayTarra *is* a post, and the
+videos feed is `visiblePosts` filtered to posts with video media, so it is the
+same code path. The only thing the media changes is the noun in the author's
+notification, hence text fixtures here rather than a recorded clip.
 
 ### 4a. Video covers — `video-cover-flow.mjs`
 

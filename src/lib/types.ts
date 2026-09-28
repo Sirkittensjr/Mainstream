@@ -129,6 +129,17 @@ export interface Post {
   content_warning?: boolean;
   removed: boolean;
   removed_reason: string | null;
+  /**
+   * Automatic temporary review. Null normally; 'temporary_review' while the
+   * 24-hour clock runs; 'admin_hold' while an admin is looking, which no clock
+   * undoes. Deliberately separate from `removed`: that is a decision, this is
+   * a pause.
+   */
+  review_state?: 'temporary_review' | 'admin_hold' | null;
+  review_started_at?: ISODate | null;
+  review_expires_at?: ISODate | null;
+  /** How many distinct accounts had reported it when the review started. */
+  review_reports?: number;
   created_at: ISODate;
 }
 
@@ -190,6 +201,8 @@ export interface Rating {
 }
 
 export type NotificationType =
+  /** From FayTarra itself — moderation decisions. No actor, never a reply. */
+  | 'system'
   | 'follow'
   | 'like'
   | 'comment'
@@ -227,6 +240,23 @@ export interface Message {
 export type ReportTarget = 'post' | 'user' | 'comment';
 export type ReportStatus = 'open' | 'resolved' | 'dismissed';
 
+/**
+ * One line of the moderation record.
+ *
+ * Written, never updated: what happened, who did it, and when. `actor_id` is
+ * null when FayTarra itself acted — the automatic hide, and the expiry.
+ */
+export interface ModerationEvent {
+  id: ID;
+  target_type: ReportTarget;
+  target_id: ID;
+  action: string;
+  actor_id: ID | null;
+  unique_reports: number;
+  detail: string;
+  created_at: ISODate;
+}
+
 export interface Report {
   id: ID;
   reporter_id: ID;
@@ -237,4 +267,9 @@ export interface Report {
   status: ReportStatus;
   resolution: string | null;
   created_at: ISODate;
+  /**
+   * When an admin cleared the active threshold this report counted toward.
+   * Null means it still counts; set means it is history.
+   */
+  cleared_at?: ISODate | null;
 }

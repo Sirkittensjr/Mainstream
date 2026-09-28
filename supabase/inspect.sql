@@ -37,7 +37,7 @@ checks as (
            when (select n from faytarra_tables) = 0
              then 'EMPTY PROJECT -> run schema.sql only. Do not run the migrations.'
            when (select n from faytarra_tables) = 9
-             then 'ALL PRESENT -> run migrations 0001 then 0002. Do NOT run schema.sql.'
+             then 'ALL PRESENT -> run the migrations in order, per migrations/README.md. Do NOT run schema.sql.'
            else 'PARTIAL -> stop and ask before running anything.'
          end as verdict
 

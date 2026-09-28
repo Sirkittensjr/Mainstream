@@ -42,6 +42,7 @@ async function probeDatabase(): Promise<{ reachable: boolean; error?: string }> 
 const TABLES: TableName[] = [
   'users', 'posts', 'likes', 'comments', 'follows',
   'blocks', 'ratings', 'notifications', 'reports', 'messages',
+  'moderation_events',
 ];
 
 /** Columns a migration adds to an existing table, and the migration that adds them. */
@@ -51,9 +52,14 @@ const ADDED_COLUMNS: { table: TableName; column: string; migration: string }[] =
   { table: 'users', column: 'profile_box', migration: '0005' },
   { table: 'users', column: 'top_creators', migration: '0006' },
   { table: 'posts', column: 'content_warning', migration: '0007' },
+  { table: 'posts', column: 'review_state', migration: '0009' },
+  { table: 'reports', column: 'cleared_at', migration: '0009' },
 ];
 
-const MIGRATION_FOR_TABLE: Partial<Record<TableName, string>> = { messages: '0003' };
+const MIGRATION_FOR_TABLE: Partial<Record<TableName, string>> = {
+  messages: '0003',
+  moderation_events: '0009',
+};
 
 async function probeSchema(): Promise<{
   missingTables: string[];

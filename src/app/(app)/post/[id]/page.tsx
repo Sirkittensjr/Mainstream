@@ -8,6 +8,7 @@ import { PageTopBar } from '@/components/PageTopBar';
 import { PostCard } from '@/components/PostCard';
 import { RatingPill, ReactionBar } from '@/components/RatingPill';
 import { formatVotes, topReactions } from '@/lib/ratings';
+import { underReview } from '@/lib/auto-review-rules';
 import { getPost, hydratePosts, listComments, registerView } from '@/lib/services/posts';
 import { getUser, hiddenUserIds } from '@/lib/services/users';
 import { getViewer } from '@/lib/session';
@@ -23,6 +24,18 @@ export async function generateMetadata({
   const { id } = await params;
   const post = await getPost(id);
   if (!post) return { title: 'Post' };
+
+  // A post hidden from the page must not be described in its <head> either.
+  // The body of the page below refuses to show the caption; a meta description
+  // carrying it would hand the same text to anybody who views source, to a
+  // link preview and to a crawler — which is most of what hiding it was for.
+  // The same was already true of a REMOVED post, which is why this covers both.
+  const viewer = await getViewer();
+  const privileged = viewer?.id === post.author_id || viewer?.role === 'admin';
+  if (!privileged && (underReview(post) || post.removed)) {
+    return { title: post.removed ? 'Post removed' : 'Post under review' };
+  }
+
   const author = await getUser(post.author_id);
   return {
     title: `${author?.display_name ?? 'Post'} on FayTarra`,
@@ -48,6 +61,28 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
             community rules
           </Link>
           .
+        </p>
+      </div>
+    );
+  }
+
+  // Temporarily hidden while it is reviewed. Feeds already leave it out; a
+  // direct link has to as well, or "hidden" means "hidden unless you have the
+  // URL", which is what a brigade would pass around. The author still sees
+  // their own post — they were told it is under review, so it would be
+  // gaslighting to then pretend it is gone — and an admin has to see it to
+  // review it at all.
+  const isAuthor = viewer?.id === post.author_id;
+  if (underReview(post) && !isAuthor && viewer?.role !== 'admin') {
+    return (
+      <div className="mx-auto max-w-2xl px-4 py-16 text-center">
+        <h1 className="font-display text-2xl font-bold">This post is being reviewed</h1>
+        <p className="mt-2 text-white/50">
+          It is temporarily hidden while the FayTarra team checks it against the{' '}
+          <Link href="/rules" className="underline">
+            community rules
+          </Link>
+          . Nothing has been decided.
         </p>
       </div>
     );

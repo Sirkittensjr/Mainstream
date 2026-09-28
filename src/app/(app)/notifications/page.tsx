@@ -16,6 +16,8 @@ export const metadata: Metadata = { title: 'Notifications' };
 export const dynamic = 'force-dynamic';
 
 const ICONS: Record<NotificationType, string> = {
+  // From FayTarra itself: a moderation decision, not somebody's action.
+  system: '🛡️',
   follow: '👤',
   rating: '★',
   like: '❤️',

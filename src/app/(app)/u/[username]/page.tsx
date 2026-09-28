@@ -69,7 +69,7 @@ export default async function ProfilePage({
     await Promise.all([
       getUserStats(user.id),
       viewer && !isSelf ? isFollowing(viewer.id, user.id) : Promise.resolve(false),
-      postsByAuthor(user.id),
+      postsByAuthor(user.id, viewer),
       userRating(user.id),
       userRanks(user.id),
       myRating(viewer?.id ?? null, 'user', user.id),

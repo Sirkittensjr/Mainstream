@@ -1,6 +1,7 @@
 import 'server-only';
 import { cookies } from 'next/headers';
 import { db, isMissingColumn } from '@/lib/db';
+import { underReview } from './auto-review';
 import { communityCache, refreshCommunity } from './community-cache';
 import { newId } from '@/lib/ids';
 import type { Category, ID, Media, Post, PublicUser, User } from '@/lib/types';
@@ -120,7 +121,14 @@ export async function visiblePosts(viewerId: ID | null): Promise<Post[]> {
     hiddenUserIds(viewerId),
   ]);
   const notShown = new Set(inactive);
-  return posts.filter((post) => !hidden.has(post.author_id) && !notShown.has(post.author_id));
+  return posts.filter(
+    (post) =>
+      !hidden.has(post.author_id) &&
+      !notShown.has(post.author_id) &&
+      // Temporarily hidden while it is reviewed. Not removed — it comes back
+      // on its own if nobody looks at it within 24 hours.
+      !underReview(post),
+  );
 }
 
 export interface CreatePostInput {
@@ -401,12 +409,29 @@ export async function registerView(postId: ID, viewerId: ID | null): Promise<voi
   await store.update('posts', postId, { views: post.views + 1 });
 }
 
-export async function postsByAuthor(authorId: ID): Promise<Post[]> {
-  return db().query('posts', {
+/**
+ * One person's posts, as a given viewer may see them.
+ *
+ * A post under temporary review has to disappear from its author's public
+ * profile too, or the hide is undone by anybody who clicks through to them. The
+ * author themselves still sees it — they were told it is under review, and a
+ * profile that silently drops it would contradict that — and so does an
+ * administrator, who cannot review what they cannot see.
+ *
+ * `viewer` defaults to null, which is the cautious reading: a caller that does
+ * not say who is looking gets the version everybody may see.
+ */
+export async function postsByAuthor(
+  authorId: ID,
+  viewer: { id: ID; role?: string | null } | null = null,
+): Promise<Post[]> {
+  const posts = await db().query('posts', {
     where: { author_id: authorId, removed: false },
     orderBy: 'created_at',
     desc: true,
   });
+  if (viewer && (viewer.id === authorId || viewer.role === 'admin')) return posts;
+  return posts.filter((post) => !underReview(post));
 }
 
 export async function engagementFor(postIds: ID[]) {

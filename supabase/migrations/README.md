@@ -16,7 +16,7 @@ has never been installed.
 | Row 1 says | Run |
 | --- | --- |
 | `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including both migrations. |
-| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`, `0006` and `0007`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
+| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`, `0006`, `0007`, `0008` and `0009`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
 | anything between | Stop and ask. A half-installed schema needs looking at, not a migration. |
 
 If the storage bucket row shows `none`, create it in the dashboard
@@ -290,3 +290,84 @@ content warning checkbox stores nothing (the app notices the missing column,
 says so once in the log, and posts normally without it). `/api/health` names
 `0007` under `schema.migrations` until the column exists; the storage side is
 not visible there, so check it with the `verdict` this file prints.
+
+---
+
+## 0008_first_admin.sql
+
+Promotes exactly one existing account — `admin@faytarra.com` — to
+`role = 'admin'`. Nothing else. Safe to run twice.
+
+| Step | Statement | What it touches | Risk |
+| --- | --- | --- | --- |
+| 1 | `update public.users set role = 'admin' where lower(email) = 'admin@faytarra.com'` | One column on one row | None to anything else. It does not touch the password, the session or the email confirmation |
+| 2 | `select … from public.users where role = 'admin'` | Nothing — a read-back | None |
+
+**Why this is SQL and not a button.** The admin role already existed: the
+column is in `public.users`, `requireAdmin()` gates /admin and every admin
+action against it, and the API roles are not granted `UPDATE` on `role`, so a
+signed-in person cannot promote themselves through PostgREST. What did not exist
+was a *first* admin, and the app only lets an admin make an admin — which is the
+correct shape for it. Somebody has to be made one from outside, deliberately and
+auditably.
+
+**The account must already exist and be verified.** If there is no FayTarra
+account for the address, this raises a warning and changes nothing rather than
+inventing a user with no auth record behind it. Create it through /signup,
+confirm the email, then run the file again. It never creates, demotes or grants
+anybody else anything.
+
+**Not running it:** nobody can open /admin at all, because nobody holds the
+role. The rest of the site is unaffected.
+
+`admin-checks.sql` in `scripts/e2e/` proves this file is re-runnable and that a
+signed-in person holding the anon key cannot make themselves an admin, demote
+the admin, promote anyone else, or read the admin's email.
+
+---
+
+## 0009_auto_review.sql
+
+The automatic temporary review: when ten different accounts report the same
+post, it is hidden while somebody looks at it. Three additive parts, safe to run
+twice. **No table is dropped, no column rewritten, no existing post changed.**
+
+| Step | Statement | What it touches | Risk |
+| --- | --- | --- | --- |
+| 1 | `delete from public.reports a using public.reports b where (a.created_at, a.id) > (b.created_at, b.id)` | Duplicate report rows | **The only delete in this file.** It folds repeat reports by the same account on the same target down to the oldest one, which is what has to be true before the unique index can exist. See below |
+| 2 | `create unique index reports_one_per_reporter_idx on (reporter_id, target_type, target_id)` | An index | None to data |
+| 3 | `add column if not exists cleared_at` on `reports`, plus a partial index | One nullable column | None. Existing reports stay `null`, which means "still counts" |
+| 4 | Four columns on `posts`: `review_state`, `review_started_at`, `review_expires_at`, `review_reports` | Adds columns with safe defaults | None. Existing posts get `null` / `0`, which means "not under review" |
+| 5 | `create table if not exists public.moderation_events` | A new table | None |
+| 6 | `enable row level security` on it, and `revoke all` from `anon` and `authenticated` | Permissions only | None to data |
+
+**About step 1.** It is a delete, so it is worth being clear about. The rows it
+removes are the same account reporting the same thing more than once; the oldest
+row survives with its reason and its note. Nothing a *different* account
+reported is touched, and no report against a different target is touched. The
+count that hides a post has to mean "ten people" rather than "one person
+pressing a button ten times", and a rule that lives only in application code is
+one forgotten call site away from not existing — so the database enforces it.
+After this, a repeat report updates the existing row instead of adding one.
+
+The comparison is on `(created_at, id)` rather than `created_at` alone because
+two reports can share a timestamp — rows inserted by one statement all get the
+same `now()`, and so does anything bulk-imported. Comparing the timestamp on its
+own removes neither of a tied pair, and step 2 then fails on rows step 1 was
+supposed to have folded. `(created_at, id)` is a total order, so exactly one row
+of every group survives. (Measured: it does fail without the tie-break.)
+
+**`review_state` is deliberately separate from `removed`.** Removed is a
+decision; this is a pause. Keeping them apart is what stops a temporary hide
+being read as a verdict later, by a person or by a query. `temporary_review`
+expires at `review_expires_at`; `admin_hold` has no expiry, because an
+administrator holding something is not undone by a clock.
+
+**Nothing is granted to the API roles.** The app reads and writes all of this
+with the service role, which bypasses RLS. The policies exist so that a leaked
+anon key cannot read the moderation log — and "who reported this" least of all.
+
+**Not running it:** the automatic review switches itself off and says so once in
+the log. Reporting, the reports queue and every manual moderation action carry
+on working exactly as before; nothing 500s and no post is hidden. `/api/health`
+names `0009` under `schema.migrations` until the table exists.

@@ -32,9 +32,16 @@ language sql stable as $$
   select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
 $$;
 
+-- Same shape as Supabase's, including the two columns schema.sql and migration
+-- 0007 set. Without them schema.sql aborts partway through on a real Postgres,
+-- which silently skips everything after it — the grants and the RLS block
+-- included, which are the parts rls-checks.sql exists to test.
 create table if not exists storage.buckets (
-  id text primary key, name text not null, public boolean not null default false
+  id text primary key, name text not null, public boolean not null default false,
+  file_size_limit bigint, allowed_mime_types text[]
 );
+alter table storage.buckets add column if not exists file_size_limit bigint;
+alter table storage.buckets add column if not exists allowed_mime_types text[];
 
 -- Supabase grants its API roles access to everything in `public` by default,
 -- which is what makes a column-level revoke the thing that actually hides a

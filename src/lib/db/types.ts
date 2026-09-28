@@ -4,6 +4,7 @@ import type {
   Follow,
   Like,
   Message,
+  ModerationEvent,
   Notification,
   Post,
   Rating,
@@ -23,6 +24,7 @@ export interface Schema {
   notifications: Notification;
   reports: Report;
   messages: Message;
+  moderation_events: ModerationEvent;
 }
 
 export type TableName = keyof Schema;
