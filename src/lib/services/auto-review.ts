@@ -7,6 +7,7 @@ import type { ID, ModerationEvent, Report, ReportTarget } from '@/lib/types';
 import {
   AUTO_REVIEW_THRESHOLD,
   REVIEW_WINDOW_HOURS,
+  REVIEW_STATES,
   REVIEW_WINDOW_MS,
   clampWindow,
   countUniqueReporters,
@@ -180,19 +181,6 @@ export async function record(input: {
     }
     throw error;
   }
-}
-
-/** Everything that happened to one piece of content, newest first. */
-export async function historyFor(
-  targetType: ReportTarget,
-  targetId: ID,
-): Promise<ModerationEvent[]> {
-  if (!(await autoReviewAvailable())) return [];
-  return db().query('moderation_events', {
-    where: { target_type: targetType, target_id: targetId },
-    orderBy: 'created_at',
-    desc: true,
-  });
 }
 
 /**
@@ -406,60 +394,72 @@ export async function reviewQueue(): Promise<ReviewItem[]> {
   if (!(await autoReviewAvailable())) return [];
 
   const store = db();
-  let posts;
+  let candidates;
   try {
-    posts = await store.query('posts');
+    // Asking for the two review states rather than reading every post and
+    // filtering in memory. This is what `posts_review_idx` is for — a partial
+    // index over exactly these rows — and the gap widens as the site grows: the
+    // queue is a handful of posts on a table that is not.
+    candidates = await store.query('posts', { in: { review_state: REVIEW_STATES } });
   } catch (error) {
-    if (isMissingRelation(error)) {
-      noteMissing();
-      return [];
-    }
-    throw error;
+    if (!isMissingReviewColumn(error)) throw error;
+    noteMissing();
+    return [];
   }
 
-  const pending = posts.filter((post) =>
-    underReview(post as { review_state?: string | null; review_expires_at?: string | null }),
-  );
+  // Still filtered through `underReview`. The query returns rows the DATABASE
+  // has marked; `underReview` decides whether they still count as of now, and a
+  // row whose window ran out an hour ago is in the first answer but not this one.
+  const pending = candidates.filter((post) => underReview(post));
   if (pending.length === 0) return [];
 
-  const users = await store.query('users');
-  const username = new Map(users.map((user) => [user.id, user.username]));
-
-  const items = await Promise.all(
-    pending.map(async (post) => {
-      const [reports, history] = await Promise.all([
-        activeReports('post', post.id),
-        historyFor('post', post.id),
-      ]);
-      const byReason = new Map<string, number>();
-      const byReporter = new Set<ID>();
-      const notes: string[] = [];
-      for (const report of reports) {
-        byReporter.add(report.reporter_id);
-        byReason.set(report.reason, (byReason.get(report.reason) ?? 0) + 1);
-        const note = (report.details ?? '').trim();
-        if (note) notes.push(note);
-      }
-      const state = ((post as { review_state?: string | null }).review_state ??
-        'temporary_review') as ReviewState;
-      return {
-        postId: post.id,
-        authorId: post.author_id,
-        authorUsername: username.get(post.author_id) ?? 'unknown',
-        caption: post.caption,
-        video: isVideoPost(post),
-        state,
-        startedAt: (post as { review_started_at?: string | null }).review_started_at ?? null,
-        expiresAt: (post as { review_expires_at?: string | null }).review_expires_at ?? null,
-        uniqueReports: byReporter.size,
-        reasons: [...byReason.entries()]
-          .map(([reason, count]) => ({ reason, count }))
-          .sort((a, b) => b.count - a.count),
-        notes: notes.slice(0, 10),
-        history,
-      } satisfies ReviewItem;
+  // Three queries for the whole queue rather than two per item: the per-item
+  // version was an N+1 on the page a moderator reloads most.
+  const postIds = pending.map((post) => post.id);
+  const [users, allReports, allEvents] = await Promise.all([
+    store.query('users', { in: { id: [...new Set(pending.map((p) => p.author_id))] } }),
+    store.query('reports', { where: { target_type: 'post' }, in: { target_id: postIds } }),
+    store.query('moderation_events', {
+      where: { target_type: 'post' },
+      in: { target_id: postIds },
+      orderBy: 'created_at',
+      desc: true,
     }),
-  );
+  ]);
+  const username = new Map(users.map((user) => [user.id, user.username]));
+  const reportsByPost = groupByTarget(allReports.filter((row) => !row.cleared_at));
+  const eventsByPost = groupByTarget(allEvents);
+
+  const items = pending.map((post) => {
+    const reports = reportsByPost.get(post.id) ?? [];
+    const byReason = new Map<string, number>();
+    const byReporter = new Set<ID>();
+    const notes: string[] = [];
+    for (const report of reports) {
+      byReporter.add(report.reporter_id);
+      byReason.set(report.reason, (byReason.get(report.reason) ?? 0) + 1);
+      const note = (report.details ?? '').trim();
+      if (note) notes.push(note);
+    }
+    const state = ((post as { review_state?: string | null }).review_state ??
+      'temporary_review') as ReviewState;
+    return {
+      postId: post.id,
+      authorId: post.author_id,
+      authorUsername: username.get(post.author_id) ?? 'unknown',
+      caption: post.caption,
+      video: isVideoPost(post),
+      state,
+      startedAt: (post as { review_started_at?: string | null }).review_started_at ?? null,
+      expiresAt: (post as { review_expires_at?: string | null }).review_expires_at ?? null,
+      uniqueReports: byReporter.size,
+      reasons: [...byReason.entries()]
+        .map(([reason, count]) => ({ reason, count }))
+        .sort((a, b) => b.count - a.count),
+      notes: notes.slice(0, 10),
+      history: eventsByPost.get(post.id) ?? [],
+    } satisfies ReviewItem;
+  });
 
   // Whatever is closest to expiring needs a human first.
   return items.sort((a, b) => {
@@ -562,4 +562,15 @@ export async function clearReportThreshold(
       'The reports themselves are kept on the record.',
   });
   return reports.length;
+}
+
+/** Buckets rows by `target_id`, so one query can serve a page of items. */
+function groupByTarget<T extends { target_id: ID }>(rows: T[]): Map<ID, T[]> {
+  const out = new Map<ID, T[]>();
+  for (const row of rows) {
+    const bucket = out.get(row.target_id);
+    if (bucket) bucket.push(row);
+    else out.set(row.target_id, [row]);
+  }
+  return out;
 }

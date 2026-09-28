@@ -29,6 +29,12 @@ export const REVIEW_WINDOW_MS = REVIEW_WINDOW_HOURS * 3_600_000;
 
 export type ReviewState = 'temporary_review' | 'admin_hold';
 
+/**
+ * Both review states, for querying them rather than reading a whole table and
+ * filtering. Kept beside the type so the two cannot drift apart.
+ */
+export const REVIEW_STATES: readonly ReviewState[] = ['temporary_review', 'admin_hold'];
+
 export type ModerationAction =
   | 'auto_review_started'
   | 'auto_review_expired'
