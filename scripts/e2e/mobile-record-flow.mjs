@@ -370,26 +370,24 @@ async function run() {
     (await page.locator('button', { hasText: 'Cover' }).count()) >= 1,
   );
   await page.locator('button', { hasText: 'Cover' }).click();
-  await page.waitForSelector('[data-cover-section]', { timeout: 20000 });
-  await wait(1200);
-  const coverInView = await page.locator('[data-cover-section]').evaluate((node) => {
-    const box = node.getBoundingClientRect();
-    return box.top < window.innerHeight && box.bottom > 0;
-  });
-  check('tapping Cover lands on the posting screen with the cover in view', coverInView);
+  await page.waitForSelector('[data-editor-preview]', { timeout: 20000 });
+  check(
+    'tapping Cover goes to the editing stage, opened on the cover tool',
+    (await page.locator('[data-editor-panel="cover"]').count()) === 1 &&
+      (await page.locator('[data-editor-tool="cover"]').getAttribute('aria-pressed')) === 'true',
+  );
   check(
     'and the take came with it',
     (await page.locator('#thumbnail').count()) === 1,
     'the frame scrubber is there, so there is a video to cover',
   );
 
-  // Back to the camera for the rest of the flow.
-  await page.locator('button', { hasText: 'Start over' }).click();
-  await wait(600);
-  await page.locator('button', { hasText: 'Record a video' }).click();
+  // Back to the camera to carry on through the ordinary path.
+  await page.locator('[data-editor-retake]').click();
   await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 25000 });
+  check('Retake returns to the camera', true);
   await record(page, 3);
-  check('and the camera is reachable again afterwards', (await playback.count()) === 1);
+  check('and a take can be made again', (await playback.count()) === 1);
 
   // The camera light must be off while watching a take back.
   check(
@@ -408,15 +406,174 @@ async function run() {
   check('and a second take can be made', (await playback.count()) === 1);
 
   await page.locator('button', { hasText: 'Continue' }).click();
-  await page.waitForTimeout(1500);
+  await page.waitForSelector('[data-editor-preview]', { timeout: 20000 });
+  check('Continue leaves the camera for the editing stage', true);
+  // Retake dropped the take it went back past, so this is one clip and not two.
   check(
-    'keeping it leaves the camera and lands on the posting screen',
-    (await page.locator('button[aria-label="Start recording"]').count()) === 0,
+    'the retaken take replaced the first rather than adding to it',
+    !/2 clips/.test(await page.locator('body').innerText()),
+    'one clip, not two',
+  );
+
+  /* ========================= stage 2: editing ========================= */
+  section('EDITING IS ITS OWN STAGE');
+
+  // The thing that makes this a stage rather than a panel: none of the posting
+  // decisions are reachable from here.
+  const postingFields = await page.evaluate(() =>
+    ['#video-title', '#video-caption', '#video-category', '#video-tags', '#video-content-warning']
+      .filter((id) => document.querySelector(id) !== null),
   );
   check(
-    'only the one take was kept',
-    !/2 clips/.test(await page.locator('body').innerText()),
-    'the discarded take is not in the list',
+    'no captions, categories, tags or content warning during editing',
+    postingFields.length === 0,
+    postingFields.join(', ') || 'none present',
+  );
+
+  const editPreview = await page.locator('[data-editor-preview]').evaluate((v) => {
+    const box = v.getBoundingClientRect();
+    return { height: box.height, vh: window.innerHeight, fit: getComputedStyle(v).objectFit };
+  });
+  check(
+    'the video is the biggest thing on the screen',
+    editPreview.height >= editPreview.vh * 0.38,
+    `${Math.round(editPreview.height)}px of ${editPreview.vh}`,
+  );
+  check('and is not cropped while being edited', editPreview.fit === 'contain');
+
+  const tools = await page
+    .locator('[data-editor-tool]')
+    .evaluateAll((nodes) => nodes.map((node) => node.dataset.editorTool));
+  check(
+    'the four tools are Trim, Sound, Text and Cover',
+    JSON.stringify(tools) === JSON.stringify(['trim', 'sound', 'text', 'cover']),
+    tools.join(', '),
+  );
+  const toolSizes = await page
+    .locator('[data-editor-tool]')
+    .evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().height)));
+  check(
+    'each tool is a comfortable tap target',
+    toolSizes.every((height) => height >= 44),
+    toolSizes.join(', '),
+  );
+  check('there is a timeline', (await page.locator('[data-editor-timeline]').count()) === 1);
+  check(
+    'and it is thumb-sized',
+    await page
+      .locator('[data-editor-timeline]')
+      .evaluate((i) => i.getBoundingClientRect().height >= 44),
+  );
+  check('and a clear Next', (await page.locator('[data-editor-next]').count()) === 1);
+
+  // --- trim ---
+  // A new take arrives on Trim: the tool is remembered while editing, but coming
+  // back from the camera to whichever panel was last open is disorienting.
+  check(
+    'a new take lands on the Trim tool',
+    (await page.locator('[data-editor-tool="trim"]').getAttribute('aria-pressed')) === 'true',
+  );
+  const endHandle = page.locator('[data-editor-trim="end"]');
+  const wholeTake = Number(await endHandle.getAttribute('max'));
+  check('trim offers a start and an end', (await page.locator('[data-editor-trim]').count()) === 2);
+  await setRange(endHandle, Math.max(0.5, wholeTake - 1));
+  await wait(400);
+  const trimmedLabel = await page.locator('[data-editor-panel="trim"]').innerText();
+  check(
+    'moving the end handle shortens what is kept',
+    /Keeping 0:0/.test(trimmedLabel),
+    trimmedLabel.split('\n')[0],
+  );
+  check(
+    'the timeline follows the trim',
+    Math.abs(Number(await page.locator('[data-editor-timeline]').getAttribute('max')) - (wholeTake - 1)) < 0.3,
+    `timeline max=${await page.locator('[data-editor-timeline]').getAttribute('max')}`,
+  );
+  // Put it back: the rest of the run wants the whole take.
+  await page.locator('button', { hasText: 'Reset' }).click();
+  await wait(400);
+  check(
+    'and Reset puts the whole take back',
+    Math.abs(Number(await endHandle.inputValue()) - wholeTake) < 0.2,
+    await endHandle.inputValue(),
+  );
+
+  // --- text ---
+  await page.locator('[data-editor-tool="text"]').click();
+  await page.locator('[data-editor-add-text]').click();
+  const overlayText = `over the video ${stamp}`;
+  await page.locator('[data-editor-text-input]').fill(overlayText);
+  await wait(400);
+  check(
+    'text appears over the video as it is typed',
+    (await page.locator('[data-video-text]').innerText()).includes(overlayText),
+    (await page.locator('[data-video-text]').innerText()).trim(),
+  );
+  await page.locator('[data-editor-text-at="top"]').click();
+  await wait(300);
+  check(
+    'and it can be moved up the frame',
+    (await page.locator('[data-editor-text-at="top"]').getAttribute('aria-pressed')) === 'true',
+  );
+
+  // --- sound ---
+  await page.locator('[data-editor-tool="sound"]').click();
+  check('sound is on to begin with', !(await page.locator('[data-editor-preview]').evaluate((v) => v.muted)));
+  await page.locator('[data-editor-sound="off"]').click();
+  await wait(300);
+  check(
+    'turning it off silences the preview too',
+    await page.locator('[data-editor-preview]').evaluate((v) => v.muted),
+  );
+
+  // --- cover ---
+  await page.locator('[data-editor-tool="cover"]').click();
+  await page.waitForSelector('#thumbnail', { timeout: 15000 });
+  check('the cover tool is the same picker as the posting screen', true, 'one CoverPicker');
+  check(
+    'a custom thumbnail can still be supplied here',
+    (await page.locator('label[for="cover-file"]').count()) >= 1,
+  );
+
+  check('the editing stage does not scroll sideways', (await sideways(page)) === 0);
+
+  await page.locator('[data-editor-next]').click();
+  await page.waitForSelector('#video-title', { timeout: 20000 });
+  check('Next leaves editing for the posting screen', true);
+
+  /* ========================== stage 3: posting ========================== */
+  section('POSTING IS ITS OWN STAGE');
+
+  check(
+    'the screen says it is the posting stage',
+    (await page.locator('[data-post-stage]').count()) === 1,
+  );
+  check(
+    'with a way back to editing',
+    (await page.locator('[data-post-stage] button', { hasText: 'Edit' }).count()) === 1,
+  );
+  check(
+    'the text is on the final preview',
+    (await page.locator('[data-video-text]').innerText()).includes(overlayText),
+  );
+  // Sticky, so it is on screen without scrolling to the end of the form.
+  const postButton = await page.locator('[data-post-button]').evaluate((b) => {
+    const box = b.getBoundingClientRect();
+    return {
+      height: box.height,
+      fromBottom: window.innerHeight - box.bottom,
+      onScreen: box.top >= 0 && box.bottom <= window.innerHeight + 1,
+    };
+  });
+  check(
+    'the Post button is prominent',
+    postButton.height >= 52,
+    `${Math.round(postButton.height)}px tall`,
+  );
+  check(
+    'and on screen without scrolling for it',
+    postButton.onScreen && postButton.fromBottom < 120,
+    `${Math.round(postButton.fromBottom)}px from the bottom`,
   );
 
   /* ========================== cover + caption ========================== */
@@ -586,6 +743,19 @@ async function run() {
     .catch(() => undefined);
   const body = await page.locator('body').innerText();
   check('the post page shows the title', body.includes(title), `${body.length} chars rendered`);
+
+  // The two playback properties chosen in the editing stage have to have
+  // survived the trip through sanitiseMedia, which rebuilds media from scratch.
+  check(
+    'the text chosen while editing is on the posted video',
+    (await page.locator('[data-video-text]').count()) >= 1 &&
+      (await page.locator('[data-video-text]').first().innerText()).includes(overlayText),
+    (await page.locator('[data-video-text]').first().innerText().catch(() => '-')).trim(),
+  );
+  check(
+    'and the video is silent, as it was set to be',
+    await page.locator('video').first().evaluate((v) => v.muted),
+  );
   check('it carries the content warning', /content warning|sensitive|Show/i.test(body));
   check('a video element is on the page', (await page.locator('video').count()) >= 1);
 
@@ -623,6 +793,13 @@ async function run() {
     inVideos === null ? 'not there after 90s' : `after ${inVideos}s`,
   );
   check('the Videos feed fits their phone', (await sideways(viewer.page)) === 0);
+  // The overlay travels with the post, so it is on the full-screen feed too —
+  // that is the point of storing it rather than burning it into the file.
+  check(
+    'the text is on it in the Videos feed as well',
+    (await viewer.page.locator('[data-video-text]').count()) >= 1,
+    `${await viewer.page.locator('[data-video-text]').count()} overlays rendered`,
+  );
   check(
     'and it plays there behind its content warning',
     (await viewer.page.locator('video').count()) >= 1 ||
@@ -648,6 +825,69 @@ async function run() {
   const theirView = await viewer.page.locator('body').innerText();
   check('somebody else can open the post', theirView.includes(title));
   check('with the content warning in front of it', /content warning|sensitive|Show/i.test(theirView));
+
+  /* ===================== trim, all the way through ===================== */
+  section('A TRIMMED VIDEO IS ACTUALLY TRIMMED');
+
+  // Trim is the one tool that changes the bytes, so it is the one that has to be
+  // followed to the finished post. Sound and text are playback properties and
+  // cost no render pass — proved above, where the pass never ran.
+  await page.goto('/create', { waitUntil: 'domcontentloaded' });
+  await page.locator('button[role=tab]', { hasText: 'Video' }).click();
+  await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 25000 });
+  await record(page, 6);
+  await page.locator('button', { hasText: 'Continue' }).click();
+  await page.waitForSelector('[data-editor-trim="end"]', { timeout: 20000 });
+
+  const fullLength = Number(await page.locator('[data-editor-trim="end"]').getAttribute('max'));
+  const target = Math.max(1.2, fullLength / 2);
+  await setRange(page.locator('[data-editor-trim="end"]'), target);
+  await wait(500);
+  check(
+    `trimmed from ${fullLength.toFixed(1)}s to about ${target.toFixed(1)}s`,
+    Math.abs(Number(await page.locator('[data-editor-trim="end"]').inputValue()) - target) < 0.2,
+    await page.locator('[data-editor-trim="end"]').inputValue(),
+  );
+
+  await page.locator('[data-editor-next]').click();
+  await page.waitForSelector('#video-title', { timeout: 20000 });
+  const trimmedTitle = `Trimmed take ${stamp}`;
+  await page.fill('#video-title', trimmedTitle);
+
+  // This one MUST take the render pass — that is how a trim becomes real bytes.
+  let sawPreparing2 = false;
+  const watch2 = setInterval(async () => {
+    try {
+      if (/Preparing your video/i.test(await page.locator('body').innerText())) sawPreparing2 = true;
+    } catch {
+      /* navigated */
+    }
+  }, 200);
+  await page.locator('[data-post-button]').click();
+  await page.waitForURL(/\/post\//, { timeout: 180000 });
+  clearInterval(watch2);
+  const trimmedId = page.url().split('/post/')[1].split(/[?#]/)[0];
+  check('a trimmed video posts', Boolean(trimmedId), page.url());
+  check(
+    'and it DID go through the render pass, because the bytes had to change',
+    sawPreparing2,
+    'the trim is applied by a real pass, not promised',
+  );
+
+  // The finished post's own length, asked of the app rather than of a file — this
+  // suite runs against the local JSON driver AND against the Supabase stubs, and
+  // only one of those has a .data/faytarra.json to read.
+  const storedDuration = await page.evaluate(async (id) => {
+    const response = await fetch(`/api/v1/posts/${id}`);
+    if (!response.ok) return null;
+    const body = await response.json();
+    return body?.post?.media?.[0]?.duration ?? null;
+  }, trimmedId);
+  check(
+    'the posted video is the trimmed length, not the original',
+    storedDuration !== null && Math.abs(storedDuration - target) < 1.2,
+    `stored ${storedDuration}s against a ${target.toFixed(1)}s trim of a ${fullLength.toFixed(1)}s take`,
+  );
 
   /* ========================== desktop is untouched ========================== */
   section('THE DESKTOP FILE UPLOAD STILL WORKS');

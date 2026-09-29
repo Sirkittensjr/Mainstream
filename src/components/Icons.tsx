@@ -342,3 +342,11 @@ export function GalleryIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function TextIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4.5 6.5h15M12 6.5v12M8.5 18.5h7" />
+    </svg>
+  );
+}

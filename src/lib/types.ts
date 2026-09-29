@@ -111,7 +111,49 @@ export interface Media {
   height?: number;
   /** Seconds, for video. */
   duration?: number;
+  /**
+   * Whether viewers hear this video.
+   *
+   * A playback property, not a change to the file. Re-encoding a two-minute
+   * video to silence its audio track costs a two-minute pass in the browser —
+   * the same real-time render the trim needs — and "the viewer hears nothing" is
+   * what somebody turning the sound off actually means. The audio is still in
+   * the file; nothing plays it.
+   */
+  muted?: boolean;
+  /**
+   * Words over the video, drawn by the player.
+   *
+   * Also deliberately not burnt in. `needsRender` returns false for an untouched
+   * recording, which is the only reason a two-minute take does not cost a
+   * two-minute re-encode before it can be uploaded; burning text in would flip
+   * that for every video that has any. Drawn at playback instead: free, and
+   * still editable afterwards.
+   *
+   * The trade-off, stated because it is real: the text is not in the file, so a
+   * downloaded copy does not carry it.
+   */
+  text?: TextOverlay[];
 }
+
+/** One line of text over a video. Positions and tones are fixed, not free-form. */
+export interface TextOverlay {
+  text: string;
+  /** Where down the frame it sits. Three stops rather than a drag: a thumb on a
+   *  phone is not a precise instrument, and a caption that lands under the feed's
+   *  own controls is worse than one of three sensible places. */
+  at: 'top' | 'middle' | 'bottom';
+  size: 'm' | 'l';
+  /** From FayTarra's palette. Not a colour picker — an unbounded colour is how
+   *  text ends up invisible on its own video. */
+  tone: 'light' | 'dark' | 'fay';
+}
+
+/** The most overlays one video may carry. */
+export const MAX_TEXT_OVERLAYS = 4;
+
+/** The longest one line may be. */
+export const MAX_TEXT_OVERLAY_LENGTH = 120;
 
 export interface Post {
   id: ID;

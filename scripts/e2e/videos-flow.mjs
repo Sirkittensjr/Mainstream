@@ -55,6 +55,11 @@ async function createAccount(browser, handle, interest, options = {}) {
   const link = confirmationLink(email);
   if (!link) throw new Error(`no confirmation email for ${email}`);
   await page.goto(link, { waitUntil: 'domcontentloaded' });
+  // The confirmation link exchanges a token and then redirects. Returning
+  // before that settles hands back a page that is still navigating, and the
+  // next goto races it — which shows up much later as a page that does not
+  // have the element it obviously should. The other suites already wait.
+  await page.waitForLoadState('networkidle');
   return { context, page, handle };
 }
 

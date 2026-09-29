@@ -307,6 +307,29 @@ agent is dropped — a WebKit UA on a Chromium engine is a lie the app might
 behave differently for, and what is being tested here is the viewport and touch
 input).
 
+**The flow is three stages**, and the suite walks them in order:
+
+```
+camera  →  record  →  Next  →  EDIT  →  Next  →  POST
+```
+
+The editing stage is a screen of its own between the camera and the caption. Its
+four tools are Trim, Sound, Text and Cover, and the suite checks that none of the
+POSTING decisions — caption, category, tags, content warning — is reachable from
+it. Editing should feel like editing.
+
+**What each tool costs, because two of them were designed around it.** Trim
+changes the bytes, so it goes through the existing real-time render pass; the
+suite records a 6-second take, trims it to 3, and reads the finished post's own
+duration back from `/api/v1/posts/<id>` — asked of the app, not of a file, so the
+same check works on the local driver and against the Supabase stubs. Sound and
+Text do NOT change the bytes: they are stored on the post and applied by the
+player, because `needsRender` returning false for an untouched recording is the
+only thing stopping a two-minute take from costing a two-minute re-encode, and
+burning either one in would flip that for every video carrying them. The suite
+asserts both halves — the render pass runs for the trim and never runs for the
+untouched take.
+
 Covers, in the order somebody walks it:
 
 - **Getting there.** Create from the bottom navigation, the Post tab still beside
@@ -328,8 +351,19 @@ Covers, in the order somebody walks it:
 - **The review.** Full screen, `object-fit: contain` (nothing about the take may
   be cropped while it is being judged), play and pause, a scrubber that spans the
   whole recording and moves the video when dragged, a sound control that really
-  mutes the element, the camera released while it plays, and **Cover** landing on
-  the posting screen with the cover editor in view.
+  mutes the element, the camera released while it plays, and **Cover** going to
+  the editing stage already opened on the cover tool.
+- **The editing stage.** No posting fields present; the video measured at 38% or
+  more of the screen and uncropped; the four tools in order and each at least
+  44px; a thumb-sized timeline; a new take landing on Trim; the end handle
+  shortening what is kept and the timeline following it; Reset restoring the whole
+  take; text appearing over the video as it is typed and moving up the frame;
+  sound off silencing the preview; the cover tool being the same `CoverPicker` the
+  posting screen uses; and Retake dropping the take it goes back past rather than
+  adding a second clip.
+- **The posting stage.** That it says so, offers a way back to editing, shows the
+  text on the final preview, and has a Post button at least 52px tall that is on
+  screen without scrolling for it.
 - **The posting screen.** That a phone opens on the video, a caption, a cover, a
   content warning and Post — with the description, category and tags folded away
   behind More options and **provably still there** when it is opened.
@@ -350,6 +384,13 @@ The second is that **both feeds are checked from somebody else's account**.
 Neither feed recommends you your own posts — `videoFeed` filters on
 `post.author_id !== viewerId` deliberately — so looking as the author is a
 question with no right answer, and a check that can only fail is not a check.
+
+**An imported video goes through the editing stage too**, which
+`video-upload-flow.mjs` had to be told about — trimming, a cover, sound and text
+are no less useful for a file than for a recording, so on a phone a chosen file
+lands in the editor and reaching the caption means tapping Next. That suite has a
+`reachPostingScreen` helper which taps it when the editor is showing and does
+nothing on a desktop, where there is no such stage.
 
 **The camera opens itself at phone width**, which three other suites had to be
 told about: `video-upload-flow.mjs` and `video-flow.mjs` close it to get at the

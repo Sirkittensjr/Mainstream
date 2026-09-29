@@ -16,7 +16,13 @@
  * `pending/` here is what makes those checks unavoidable.
  */
 
-import type { Media, MediaKind } from './types';
+import {
+  MAX_TEXT_OVERLAYS,
+  MAX_TEXT_OVERLAY_LENGTH,
+  type Media,
+  type MediaKind,
+  type TextOverlay,
+} from './types';
 
 const LOCAL_PREFIX = '/api/media/';
 
@@ -75,6 +81,8 @@ export interface UnsafeMedia {
   width?: unknown;
   height?: unknown;
   duration?: unknown;
+  muted?: unknown;
+  text?: unknown;
 }
 
 const dimension = (value: unknown): number | undefined =>
@@ -86,6 +94,49 @@ const seconds = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 24 * 3600
     ? Math.round(value * 100) / 100
     : undefined;
+
+const TEXT_POSITIONS = new Set(['top', 'middle', 'bottom']);
+const TEXT_SIZES = new Set(['m', 'l']);
+const TEXT_TONES = new Set(['light', 'dark', 'fay']);
+
+/**
+ * The text overlays on one video, from whatever the client sent.
+ *
+ * Every field is checked against a fixed set rather than passed through. The
+ * strings are rendered as React text so they cannot become markup, but they are
+ * still somebody's words on a page: the length is capped so one overlay cannot
+ * paper over a video, the count is capped so four cannot become four hundred,
+ * and anything blank after trimming is dropped rather than stored as an empty
+ * box. Position, size and tone are enumerations because an arbitrary colour or
+ * offset is how text ends up unreadable or off-screen.
+ */
+function sanitiseTextOverlays(input: unknown): TextOverlay[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const out: TextOverlay[] = [];
+  for (const entry of input) {
+    if (out.length >= MAX_TEXT_OVERLAYS) break;
+    if (!entry || typeof entry !== 'object') continue;
+    const candidate = entry as Record<string, unknown>;
+    const text =
+      typeof candidate.text === 'string'
+        ? candidate.text.replace(/\s+/g, ' ').trim().slice(0, MAX_TEXT_OVERLAY_LENGTH)
+        : '';
+    if (!text) continue;
+    out.push({
+      text,
+      at: TEXT_POSITIONS.has(candidate.at as string)
+        ? (candidate.at as TextOverlay['at'])
+        : 'bottom',
+      size: TEXT_SIZES.has(candidate.size as string)
+        ? (candidate.size as TextOverlay['size'])
+        : 'm',
+      tone: TEXT_TONES.has(candidate.tone as string)
+        ? (candidate.tone as TextOverlay['tone'])
+        : 'light',
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
 
 /** Keeps only the media entries this deployment actually stored. */
 export function sanitiseMedia(input: unknown, max = 6): Media[] {
@@ -110,6 +161,15 @@ export function sanitiseMedia(input: unknown, max = 6): Media[] {
     }
     const length = seconds(entry.duration);
     if (length && item.kind === 'video') item.duration = length;
+
+    // Playback properties, video only. Opted in one at a time because this
+    // function rebuilds media from scratch — anything not named here is dropped,
+    // which is what stops a client inventing fields the app will later trust.
+    if (item.kind === 'video') {
+      if (entry.muted === true) item.muted = true;
+      const overlays = sanitiseTextOverlays(entry.text);
+      if (overlays) item.text = overlays;
+    }
 
     out.push(item);
   }

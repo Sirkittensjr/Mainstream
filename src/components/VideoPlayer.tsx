@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { formatSeconds } from '@/lib/video/limits';
 import type { Media } from '@/lib/types';
+import { VideoText } from './video/VideoText';
 
 /**
  * How a video post plays.
@@ -55,7 +56,9 @@ export function VideoPlayer({
         // request per clip. Without one, metadata is what draws the first
         // frame, so it is still worth asking for.
         preload={media.poster ? 'none' : 'metadata'}
-        muted={autoPlayMuted}
+        // The creator's own choice comes first: a video posted with the sound off
+        // is silent for everybody, not just in an autoplaying feed.
+        muted={autoPlayMuted || media.muted === true}
         autoPlay={autoPlayMuted}
         loop={autoPlayMuted}
         onLoadedMetadata={(event) => {
@@ -66,6 +69,7 @@ export function VideoPlayer({
         }}
         className="h-full w-full object-contain"
       />
+      <VideoText media={media} />
       {media.duration != null && (
         <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-white/90 backdrop-blur">
           {formatSeconds(media.duration)}

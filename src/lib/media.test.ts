@@ -91,3 +91,93 @@ describe('which media URLs are allowed on a post', () => {
     assert.equal(sanitiseAvatarUrl('https://evil.example/a.png'), null);
   });
 });
+
+/**
+ * Text over a video and the sound being off are the only two things a client
+ * tells the server about a video that the server cannot re-derive from the file.
+ * `sanitiseMedia` rebuilds media from scratch, so these are the fields that had
+ * to be opted in — which makes this the place where a client's claim about them
+ * stops being a claim.
+ */
+describe('playback properties on a video', () => {
+  let previous: string | undefined;
+
+  beforeEach(() => {
+    previous = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    process.env.NEXT_PUBLIC_SUPABASE_URL = PROJECT;
+  });
+  afterEach(() => {
+    if (previous === undefined) delete process.env.NEXT_PUBLIC_SUPABASE_URL;
+    else process.env.NEXT_PUBLIC_SUPABASE_URL = previous;
+  });
+
+  const video = (over: Record<string, unknown> = {}) =>
+    sanitiseMedia([{ kind: 'video', url: `${BUCKET}media/clip.mp4`, ...over }])[0];
+
+  it('keeps a muted flag, and only when it is really true', () => {
+    assert.equal(video({ muted: true })?.muted, true);
+    // Not a truthy string, not a 1 — the flag is a boolean or it is absent.
+    for (const nonsense of ['true', 1, {}, [], 'yes']) {
+      assert.equal(video({ muted: nonsense })?.muted, undefined, JSON.stringify(nonsense));
+    }
+    assert.equal(video()?.muted, undefined);
+  });
+
+  it('keeps a text overlay, normalised', () => {
+    const [overlay] = video({
+      text: [{ text: '  hello   there  ', at: 'top', size: 'l', tone: 'fay' }],
+    })!.text!;
+    assert.deepEqual(overlay, { text: 'hello there', at: 'top', size: 'l', tone: 'fay' });
+  });
+
+  it('falls back to safe values rather than trusting an unknown one', () => {
+    // An arbitrary position or colour is how text ends up off-screen or
+    // invisible on its own video.
+    const [overlay] = video({
+      text: [{ text: 'x', at: 'floating', size: 'enormous', tone: '#000000' }],
+    })!.text!;
+    assert.deepEqual(overlay, { text: 'x', at: 'bottom', size: 'm', tone: 'light' });
+  });
+
+  it('caps the length of one line', () => {
+    const long = 'a'.repeat(400);
+    const [overlay] = video({ text: [{ text: long }] })!.text!;
+    assert.equal(overlay.text.length, 120);
+  });
+
+  it('caps how many there can be', () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({ text: `line ${i}` }));
+    assert.equal(video({ text: many })!.text!.length, 4);
+  });
+
+  it('drops blank and non-object entries instead of storing empty boxes', () => {
+    assert.equal(video({ text: [{ text: '   ' }, { text: '' }, null, 'nope', 7] })?.text, undefined);
+    assert.equal(video({ text: [] })?.text, undefined);
+    assert.equal(video({ text: 'not an array' })?.text, undefined);
+  });
+
+  it('keeps the good entries from a mixed list', () => {
+    const overlays = video({ text: [{ text: '' }, { text: 'keep me' }, null] })!.text!;
+    assert.equal(overlays.length, 1);
+    assert.equal(overlays[0].text, 'keep me');
+  });
+
+  /**
+   * An image has no playback properties. Accepting them there would mean the
+   * feed had to decide what muted means for a photograph.
+   */
+  it('ignores both on an image', () => {
+    const [image] = sanitiseMedia([
+      { kind: 'image', url: `${BUCKET}media/photo.jpg`, muted: true, text: [{ text: 'hi' }] },
+    ]);
+    assert.equal(image.muted, undefined);
+    assert.equal(image.text, undefined);
+  });
+
+  /** The strings are rendered as React text, so they are escaped by the
+   *  renderer — but they are kept as DATA here, not interpreted. */
+  it('keeps markup as the literal text it is', () => {
+    const [overlay] = video({ text: [{ text: '<script>alert(1)</script>' }] })!.text!;
+    assert.equal(overlay.text, '<script>alert(1)</script>');
+  });
+});

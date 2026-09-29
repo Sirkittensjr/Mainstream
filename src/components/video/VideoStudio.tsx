@@ -12,7 +12,7 @@ import {
   VideoIcon,
   VolumeIcon,
 } from '@/components/Icons';
-import { CATEGORIES, type Category, type Media } from '@/lib/types';
+import { CATEGORIES, type Category, type Media, type TextOverlay } from '@/lib/types';
 import {
   FULL_FRAME,
   type Clip,
@@ -28,7 +28,6 @@ import {
 } from '@/lib/video/clips';
 import { grabFrame, probeLocalVideo } from '@/lib/video/capture';
 import {
-  COVER_ACCEPT,
   MAX_COVER_BYTES,
   MAX_VIDEO_BYTES,
   MAX_VIDEO_SECONDS,
@@ -41,6 +40,9 @@ import { recordedFile } from '@/lib/video/recording';
 import { canRender, renderClips } from '@/lib/video/render';
 import { UploadError, contentTypeFor, discardMedia, uploadMedia } from '@/lib/video/upload-client';
 import { ClipEditor } from './ClipEditor';
+import { CoverPicker } from './CoverPicker';
+import { VideoEditor, type EditorTool } from './VideoEditor';
+import { VideoText } from './VideoText';
 import { VideoRecorder } from './VideoRecorder';
 
 /**
@@ -110,14 +112,42 @@ export function VideoStudio() {
    * reopen it.
    */
   const autoOpened = useRef(false);
+  /**
+   * Whether this is a phone, decided once.
+   *
+   * Once, and not on every resize, because rotating a phone into landscape makes
+   * it 844 wide — re-reading this mid-edit would move somebody from the staged
+   * mobile flow to the desktop one while they were using it.
+   */
+  const [phone, setPhone] = useState(false);
   useEffect(() => {
     if (autoOpened.current) return;
     autoOpened.current = true;
     if (typeof window === 'undefined' || !window.matchMedia) return;
-    const phone = window.matchMedia('(max-width: 639px) and (pointer: coarse)').matches;
+    const isPhone = window.matchMedia('(max-width: 639px) and (pointer: coarse)').matches;
+    setPhone(isPhone);
     const canRecordHere = Boolean(navigator.mediaDevices?.getUserMedia);
-    if (phone && canRecordHere) setRecording(true);
+    if (isPhone && canRecordHere) setRecording(true);
   }, []);
+
+  /**
+   * Which of the three mobile stages is showing.
+   *
+   * Deliberately not the `stage` above, which is the DESKTOP editor's
+   * compose/clips/editing state and is left alone.
+   *
+   * Camera, then editing, then posting — three decisions, three screens, because
+   * one screen asking for all of them is what made this feel like a form with a
+   * preview in it. Only consulted on a phone: the desktop flow is one page with
+   * the clip editor behind "Edit", and it is not changed by any of this.
+   */
+  const [mobileStage, setMobileStage] = useState<'camera' | 'edit' | 'post'>('post');
+
+  /** Playback properties of the finished post, set in the editing stage. */
+  const [mutedOnPost, setMutedOnPost] = useState(false);
+  /** Which editing tool is open, so arriving to pick a cover can start there. */
+  const [editorTool, setEditorTool] = useState<EditorTool>('trim');
+  const [overlays, setOverlays] = useState<TextOverlay[]>([]);
 
   /** Set when the camera hands a take over for its cover to be chosen. */
   const [coverWanted, setCoverWanted] = useState(false);
@@ -290,9 +320,11 @@ export function VideoStudio() {
           continue;
         }
         await addSource(file, file.name, file);
-        // Chosen from the camera roll while the camera was open: the camera has
-        // done its job and the posting screen is where this goes next.
+        // Chosen from the camera roll: the camera has done its job, and an
+        // imported video gets the same editing stage a recorded one does —
+        // trimming, a cover, sound and text are no less useful for it.
         setRecording(false);
+        setMobileStage('edit');
       }
     } finally {
       setBusy(null);
@@ -401,8 +433,17 @@ export function VideoStudio() {
       }
 
       setProgress({ label: 'Posting…', ratio: 1 });
+      // The playback properties chosen in the editing stage travel with the post
+      // rather than with the file. sanitiseMedia re-validates both server-side —
+      // these are a client's claim until it has.
+      const written = overlays.filter((entry) => entry.text.trim().length > 0);
       const result = await createVideoPostAction({
-        media: { ...uploaded.media, ...(poster ? { poster } : {}) },
+        media: {
+          ...uploaded.media,
+          ...(poster ? { poster } : {}),
+          ...(mutedOnPost ? { muted: true } : {}),
+          ...(written.length > 0 ? { text: written } : {}),
+        },
         // A video post is an ordinary FayTarra post, so the title is the first
         // line of its caption rather than a second field in the database that
         // only videos would ever use. It is what the feed, the Videos feed,
@@ -457,7 +498,17 @@ export function VideoStudio() {
         maxSeconds={MAX_VIDEO_SECONDS}
         onClose={() => setRecording(false)}
         onPickFile={() => fileInput.current?.click()}
-        onChooseCover={() => setCoverWanted(true)}
+        onChooseCover={() => {
+          // On a phone the cover lives in the editing stage, so that is where
+          // this goes — opened on the right tool. On a desktop there is no such
+          // stage, so it scrolls the posting screen's picker into view instead.
+          if (phone) {
+            setEditorTool('cover');
+            setMobileStage('edit');
+          } else {
+            setCoverWanted(true);
+          }
+        }}
         onRecorded={({ blob, mimeType, seconds }) => {
           // Wrapped as a File, which is what keeps an untouched recording OUT
           // of the render pass: `needsRender` reads `clip.file` as "we still
@@ -467,10 +518,70 @@ export function VideoStudio() {
           const index = clips.length + 1;
           const file = recordedFile(blob, mimeType, index);
           void addSource(file, `Recording ${index}`, file);
+          // Next from the camera goes to EDITING, not to the caption. The
+          // camera closes when the take is kept — and when the budget is spent
+          // there is nothing left to film either way.
+          setMobileStage('edit');
+          // A new take lands on Trim, the first thing anybody does to one. The
+          // tool is otherwise remembered, which is right while editing and wrong
+          // on arrival — coming back from the camera to whichever panel happened
+          // to be open last is disorienting. Arriving to pick a cover overrides
+          // this, because onChooseCover runs after it.
+          setEditorTool('trim');
           if (seconds >= left - 0.5) setRecording(false);
         }}
         />
       </>
+    );
+  }
+
+  /* ------------------------------------------------- the mobile edit stage */
+
+  // Between the camera and the caption, on a phone. The video is the screen and
+  // the only decisions here are about the video itself; posting comes next.
+  if (phone && mobileStage === 'edit' && clips.length > 0) {
+    return (
+      <VideoEditor
+        clip={clips[0]}
+        clipCount={clips.length}
+        // The combined video once one has been built, the first clip until then.
+        // Sound, text and a cover apply to the whole post either way; trimming is
+        // the only tool that needs a single clip, and its panel says so.
+        src={previewUrl ?? clips[0].src}
+        muted={mutedOnPost}
+        overlays={overlays}
+        cover={{
+          preview: coverPreview,
+          custom: customCover,
+          isCustom: Boolean(customCoverUrl),
+          at: thumbnailAt,
+          error: coverError,
+          onAt: setThumbnailAt,
+          onFile: chooseCover,
+          onClear: clearCover,
+        }}
+        tool={editorTool}
+        onTool={setEditorTool}
+        onTrim={(patch) => {
+          setClips((current) => updateClip(current, clips[0].id, patch));
+          // The rendered video is now out of date, so it is thrown away rather
+          // than posted as the pre-trim version.
+          setFinished(null);
+        }}
+        onMuted={setMutedOnPost}
+        onOverlays={setOverlays}
+        onAddClip={left > 0.5 ? () => setRecording(true) : undefined}
+        onRetake={() => {
+          // Going back past a take means that take is being redone, so it is
+          // dropped — the LAST one, which is the one just filmed. Keeping it and
+          // filming another is the other button.
+          setClips((current) => current.slice(0, -1));
+          setFinished(null);
+          setMobileStage('camera');
+          setRecording(true);
+        }}
+        onNext={() => setMobileStage('post')}
+      />
     );
   }
 
@@ -670,14 +781,38 @@ export function VideoStudio() {
 
   return (
     <div className="space-y-5">
+      {/* A phone arrived here from the editor, so it says so and offers the way
+          back. Editing is finished; this screen is for posting. */}
+      {phone && clips.length > 0 && (
+        <div className="flex items-center justify-between" data-post-stage>
+          <button
+            type="button"
+            onClick={() => setMobileStage('edit')}
+            className="btn-quiet px-3 py-2 text-sm"
+          >
+            <ChevronIcon direction="left" width={15} height={15} /> Edit
+          </button>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/40">
+            Post video
+          </p>
+          <span className="w-16" aria-hidden />
+        </div>
+      )}
+
       {previewUrl ? (
-        <video
-          src={previewUrl}
-          controls
-          playsInline
-          preload="metadata"
-          className="mx-auto max-h-[52vh] w-full rounded-2xl bg-black object-contain"
-        />
+        // The overlays and the sound choice are on the preview, so what is shown
+        // here is the post rather than the raw file.
+        <div className="relative mx-auto w-full">
+          <video
+            src={previewUrl}
+            controls
+            playsInline
+            muted={mutedOnPost}
+            preload="metadata"
+            className="mx-auto max-h-[52vh] w-full rounded-2xl bg-black object-contain"
+          />
+          <VideoText media={{ text: overlays.filter((entry) => entry.text.trim().length > 0) }} />
+        </div>
       ) : (
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 text-center text-sm text-white/45">
           {clips.length} clips, {formatSeconds(total)} in total. They are put together when you
@@ -731,93 +866,17 @@ export function VideoStudio() {
           data-cover-section
           className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"
         >
-          <h2 id="cover-heading" className="text-sm font-semibold text-white/70">
-            Choose cover
-          </h2>
-          <p className="mt-1 text-xs text-white/40">
-            What people see before they press play. The start of the video unless you pick
-            something else.
-          </p>
-
-          <div className="mt-3 flex items-start gap-3">
-            {/* One preview, whichever kind of cover is winning. */}
-            {coverPreview ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={coverPreview}
-                alt={customCoverUrl ? 'The image chosen as this cover' : 'The frame chosen as this cover'}
-                data-cover-preview={customCoverUrl ? 'custom' : 'frame'}
-                className="h-20 w-20 shrink-0 rounded-xl bg-black object-contain"
-              />
-            ) : (
-              <div className="h-20 w-20 shrink-0 rounded-xl bg-white/[0.04]" />
-            )}
-
-            <div className="min-w-0 flex-1">
-              {customCover ? (
-                <>
-                  <p className="truncate text-xs text-white/60">
-                    Using your own image — {formatMegabytes(customCover.size)}
-                  </p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <label
-                      htmlFor="cover-file"
-                      className="btn-quiet cursor-pointer px-3 py-2 text-xs"
-                    >
-                      Replace
-                    </label>
-                    <button type="button" onClick={clearCover} className="btn-quiet px-3 py-2 text-xs">
-                      Use a frame instead
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <label htmlFor="thumbnail" className="text-xs text-white/40">
-                    Drag to pick a frame
-                  </label>
-                  {/* Full width and 44px tall so a thumb can work it. */}
-                  <input
-                    id="thumbnail"
-                    type="range"
-                    min={0}
-                    max={Math.max(0.1, total - 0.1)}
-                    step={0.1}
-                    value={thumbnailAt}
-                    aria-label="Cover frame position"
-                    aria-valuetext={`${formatPreciseSeconds(thumbnailAt)} of ${formatSeconds(total)}`}
-                    onChange={(event) => setThumbnailAt(Number(event.target.value))}
-                    className="mt-1 h-11 w-full accent-fay"
-                  />
-                  <label
-                    htmlFor="cover-file"
-                    className="btn-quiet inline-block cursor-pointer px-3 py-2 text-xs"
-                  >
-                    Upload thumbnail
-                  </label>
-                </>
-              )}
-
-              {/* Nothing is uploaded on pick — see the note on `customCover`. */}
-              <input
-                id="cover-file"
-                type="file"
-                accept={COVER_ACCEPT}
-                className="hidden"
-                onChange={(event) => {
-                  chooseCover(event.target.files?.[0]);
-                  // Cleared so picking the SAME file again still fires.
-                  event.target.value = '';
-                }}
-              />
-
-              {coverError && (
-                <p role="alert" className="mt-2 text-xs text-fay-soft">
-                  {coverError}
-                </p>
-              )}
-            </div>
-          </div>
+          <CoverPicker
+            preview={coverPreview}
+            custom={customCover}
+            isCustom={Boolean(customCoverUrl)}
+            at={thumbnailAt}
+            max={total}
+            error={coverError}
+            onAt={setThumbnailAt}
+            onFile={chooseCover}
+            onClear={clearCover}
+          />
         </section>
       )}
 
@@ -958,14 +1017,21 @@ export function VideoStudio() {
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={() => void post()}
-        disabled={posting || Boolean(busy)}
-        className="btn-primary w-full py-4"
-      >
-        {posting ? 'Posting…' : 'Post video'}
-      </button>
+      {/* Sticky at the bottom on a phone: the posting screen scrolls once More
+          options is open, and the one button somebody came here to press should
+          not be the one they have to go looking for. Static from `sm:` up, where
+          the whole screen fits and a floating bar would be noise. */}
+      <div className="safe-bottom sticky bottom-0 -mx-4 bg-gradient-to-t from-ink-950 via-ink-950/95 to-transparent px-4 pb-2 pt-4 sm:static sm:mx-0 sm:bg-none sm:p-0">
+        <button
+          type="button"
+          onClick={() => void post()}
+          disabled={posting || Boolean(busy)}
+          data-post-button
+          className="btn-primary min-h-[56px] w-full py-4"
+        >
+          {posting ? 'Posting…' : 'Post video'}
+        </button>
+      </div>
     </div>
   );
 }

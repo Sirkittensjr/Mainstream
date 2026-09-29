@@ -134,6 +134,25 @@ const resetStorageBytes = () =>
   fetch(`${STUB.replace('55300', '54500')}/__stats`, { method: 'POST' });
 
 /**
+ * Gets from a chosen file to the posting screen.
+ *
+ * On a phone an imported video now lands in the EDITING stage — trimming, a
+ * cover, sound and text are no less useful for a file than for a recording — so
+ * reaching the caption means tapping Next. On a desktop there is no such stage
+ * and the composer is already there, so this waits for whichever arrives.
+ */
+async function reachPostingScreen(page, timeout = 30000) {
+  await Promise.race([
+    page.waitForSelector('[data-editor-next]', { timeout }).catch(() => null),
+    page.waitForSelector('#video-title', { timeout }).catch(() => null),
+  ]);
+  if ((await page.locator('[data-editor-next]').count()) > 0) {
+    await page.locator('[data-editor-next]').click();
+  }
+  await page.waitForSelector('#video-title', { timeout });
+}
+
+/**
  * Opens the Video tab and gets to the chooser.
  *
  * On a phone the camera opens itself there — tapping + then Video is already a
@@ -191,7 +210,7 @@ const run = async () => {
   );
 
   await A.page.locator('input[type=file]').setInputFiles(fixture('portrait.webm'));
-  await A.page.waitForSelector('#video-title', { timeout: 20000 });
+  await reachPostingScreen(A.page);
   const composing = await A.page.locator('body').innerText();
   check('the video is previewed', (await A.page.locator('video').count()) >= 1);
   check('its length is shown', /0:0[23]/.test(composing), composing.split('\n').find((l) => /^0:/.test(l)));
@@ -290,7 +309,7 @@ const run = async () => {
   await openStudio(A.page);
   const big = paddedFixture('portrait.webm', 9);
   await A.page.locator('input[type=file]').setInputFiles(big.path);
-  await A.page.waitForSelector('#video-title', { timeout: 30000 });
+  await reachPostingScreen(A.page);
   const bigSeen = watchRequests(A.page);
   await resetStorageBytes();
   await A.page.fill('#video-title', `big clip ${stamp}`);
@@ -348,7 +367,7 @@ const run = async () => {
     await openStudio(A.page);
     const resumeFile = paddedFixture('portrait.webm', 14);
     await A.page.locator('input[type=file]').setInputFiles(resumeFile.path);
-    await A.page.waitForSelector('#video-title', { timeout: 30000 });
+    await reachPostingScreen(A.page);
     await resetStorageBytes();
     await A.page.fill('#video-title', `resumed ${stamp}`);
     await A.page.locator('button', { hasText: /^Post video$/ }).click();
@@ -367,7 +386,7 @@ const run = async () => {
 
   await openStudio(A.page);
   await A.page.locator('input[type=file]').setInputFiles(paddedFixture('portrait.webm', 24).path);
-  await A.page.waitForSelector('#video-title', { timeout: 30000 });
+  await reachPostingScreen(A.page);
   await A.page.fill('#video-title', `cancelled ${stamp}`);
   await A.page.locator('button', { hasText: /^Post video$/ }).click();
   await A.page.waitForSelector('button:has-text("Cancel")', { timeout: 30000 });

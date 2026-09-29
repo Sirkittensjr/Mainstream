@@ -18,6 +18,7 @@ import type { PostCardData } from '@/components/PostCard';
 import { RateButton } from '@/components/RateSheet';
 import { ReportDialog } from '@/components/ReportDialog';
 import { VideoComments, type CommenterInfo, type VideoComment } from './VideoComments';
+import { VideoText } from './VideoText';
 import {
   CommentIcon,
   HeartIcon,
@@ -368,7 +369,10 @@ function Slide({
             preload={preload}
             playsInline
             loop
-            muted={muted}
+            // The feed's own mute toggle, or the creator's — whichever silences it.
+            // A video posted with the sound off does not start making noise
+            // because a viewer unmuted the feed.
+            muted={muted || media.muted === true}
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
             onTimeUpdate={(event) => {
@@ -388,6 +392,10 @@ function Slide({
             className="object-contain"
           />
         ) : null}
+        {/* Whatever the creator wrote over it, on the mounted slide and on the
+            poster alike — a slide that has not mounted its player yet is still
+            showing this video. */}
+        <VideoText media={media} />
       </div>
 
       {covered && (
