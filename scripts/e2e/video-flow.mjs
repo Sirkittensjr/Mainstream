@@ -177,7 +177,7 @@ const run = async () => {
     await A.page.locator('button[aria-label="Stop recording"]').click();
     await A.page.waitForSelector('video[data-recorder-playback]', { timeout: 10000 });
     check(`3. take ${take} can be watched back before it is kept`, true);
-    await A.page.locator('button', { hasText: 'Film another' }).click();
+    await A.page.locator('button', { hasText: 'Another' }).click();
     await A.page.waitForSelector('button[aria-label="Start recording"]', { timeout: 20000 });
     check(`3. take ${take} kept, and the camera came back for the next one`, true);
   }
@@ -380,6 +380,15 @@ const run = async () => {
 
   await phonePage.goto(`${BASE}/create`, { waitUntil: 'domcontentloaded' });
   await phonePage.locator('button[role=tab]', { hasText: 'Video' }).click();
+  // The camera opens itself on a phone now. This section is about the editor, so
+  // it is closed first; mobile-record-flow.mjs is where the camera is tested.
+  const cameraHere = await phonePage
+    .locator('button[aria-label="Close the camera"]')
+    .waitFor({ timeout: 20000 })
+    .then(() => true)
+    .catch(() => false);
+  check('17. the camera opens itself at phone width', cameraHere);
+  if (cameraHere) await phonePage.locator('button[aria-label="Close the camera"]').click();
   await phonePage.waitForTimeout(500);
   const editorOverflow = await phonePage.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   check('17. the editor fits a phone screen', editorOverflow <= 0, `${editorOverflow}px of overflow`);

@@ -133,10 +133,25 @@ async function storageBytes() {
 const resetStorageBytes = () =>
   fetch(`${STUB.replace('55300', '54500')}/__stats`, { method: 'POST' });
 
+/**
+ * Opens the Video tab and gets to the chooser.
+ *
+ * On a phone the camera opens itself there — tapping + then Video is already a
+ * decision to use it — so this closes it, which is also how somebody who wanted
+ * to upload gets to the picker. Returns whether the camera had to be dismissed,
+ * so the caller can check that it appeared at all.
+ */
 async function openStudio(page) {
   await page.goto('/create', { waitUntil: 'domcontentloaded' });
   await page.locator('button[role=tab]', { hasText: 'Video' }).click();
+  const close = page.locator('button[aria-label="Close the camera"]');
+  const cameraOpened = await close
+    .waitFor({ timeout: 20000 })
+    .then(() => true)
+    .catch(() => false);
+  if (cameraOpened) await close.click();
   await page.waitForSelector('text=Post a video', { timeout: 15000 });
+  return cameraOpened;
 }
 
 const run = async () => {
@@ -157,7 +172,10 @@ const run = async () => {
   /* ============================== the simple UI ========================== */
   section('SIMPLE — one video, no clips anywhere');
 
-  await openStudio(A.page);
+  // This suite is about the FILE path, so openStudio closes the camera that now
+  // opens itself on a phone. That it opened is worth recording here.
+  check('the camera opens itself on a phone', await openStudio(A.page));
+
   const empty = await A.page.locator('body').innerText();
   check('the first screen says what fits', /2 minutes and 250MB/.test(empty), empty.split('\n').find((l) => /minutes and/.test(l)));
   // Renamed from "Select video" when recording became the phone-first action:
@@ -177,9 +195,30 @@ const run = async () => {
   const composing = await A.page.locator('body').innerText();
   check('the video is previewed', (await A.page.locator('video').count()) >= 1);
   check('its length is shown', /0:0[23]/.test(composing), composing.split('\n').find((l) => /^0:/.test(l)));
+  // The posting screen a PHONE opens on, which is what this context is: a
+  // caption, a cover and a content warning. The description, category and tags
+  // are folded behind More options rather than removed — proved just below by
+  // opening it — because five fields between somebody and their own video is
+  // the thing the redesign took away.
   check(
-    'the caption, tags and content warning are all there',
-    /title/i.test(composing) && /tags/i.test(composing) && /content warning/i.test(composing),
+    'the caption, cover and content warning are all there',
+    /caption/i.test(composing) &&
+      /choose cover/i.test(composing) &&
+      /content warning/i.test(composing),
+    composing.split('\n').filter((l) => /caption|cover|content warning/i.test(l)).join(' / '),
+  );
+  check(
+    'and the rest is folded away, not gone',
+    (await A.page.locator('[data-more-options]').count()) === 1 &&
+      !/tags/i.test(composing),
+  );
+  await A.page.locator('[data-more-options]').click();
+  await A.page.waitForTimeout(300);
+  check(
+    'opening it brings back the description, category and tags',
+    /description/i.test(await A.page.locator('body').innerText()) &&
+      /tags/i.test(await A.page.locator('body').innerText()) &&
+      /category/i.test(await A.page.locator('body').innerText()),
   );
   check('and nothing about clips is on screen', !/Clip 1|Combining|clip 1 of/i.test(composing));
   check('no upload has started yet', (await A.page.locator('text=Uploading').count()) === 0);

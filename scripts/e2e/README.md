@@ -307,17 +307,36 @@ agent is dropped — a WebKit UA on a Chromium engine is a lie the app might
 behave differently for, and what is being tested here is the viewport and touch
 input).
 
-Covers: Create reachable from the bottom navigation and fitting the screen, with
-the Post tab still beside Video; Record offered first on a phone and the file
-picker still offered; the camera opening; the 2-minute budget shown; front/rear
-switching keeping the camera open; every control at least 44px and the record
-button clear of the bottom edge; recording, stopping, **watching the take back
-with play and pause**, the camera being released while it plays, re-recording,
-and only the kept take surviving; the cover scrubber working on a recording and a
-custom thumbnail still being offered; the caption fields; the content warning;
-the post; and the video reaching the Videos feed and the normal feed **as seen by
-a second account**. It finishes by checking the desktop file upload is still
-offered and still first at desktop width.
+Covers, in the order somebody walks it:
+
+- **Getting there.** Create from the bottom navigation, the Post tab still beside
+  Video, and the camera opening **by itself** — no chooser card in between,
+  because tapping + then Video on a phone is already a decision to use the
+  camera. Uploading stays reachable in both directions: a camera-roll button on
+  the camera, and the file chooser behind the X.
+- **The camera screen.** The preview measured to fill the whole viewport, with
+  `object-fit: cover` and its top edge at 0 — a letterboxed preview between two
+  solid bars is the thing that makes a web camera feel like a web page. The
+  2-minute budget, front/rear switching that keeps the camera open, flash shown
+  only where the camera reports a torch, every control at least 44px, and the
+  close and record buttons clear of the top and bottom edges the notch and home
+  indicator occupy.
+- **Recording.** That nothing claims to be recording before it is, that the REC
+  indicator then appears and says so in words, and that the shutter's ring is
+  partly filled — read off the SVG arc's `stroke-dashoffset`, so it is the real
+  progress and not a class name.
+- **The review.** Full screen, `object-fit: contain` (nothing about the take may
+  be cropped while it is being judged), play and pause, a scrubber that spans the
+  whole recording and moves the video when dragged, a sound control that really
+  mutes the element, the camera released while it plays, and **Cover** landing on
+  the posting screen with the cover editor in view.
+- **The posting screen.** That a phone opens on the video, a caption, a cover, a
+  content warning and Post — with the description, category and tags folded away
+  behind More options and **provably still there** when it is opened.
+- **The post.** The upload route the server chose, the video reaching the Videos
+  feed and the normal feed **as seen by a second account**, and the content
+  warning in front of it.
+- **Desktop.** The file picker still offered and still first at desktop width.
 
 **Two of these checks are worth knowing about.**
 
@@ -331,6 +350,13 @@ The second is that **both feeds are checked from somebody else's account**.
 Neither feed recommends you your own posts — `videoFeed` filters on
 `post.author_id !== viewerId` deliberately — so looking as the author is a
 question with no right answer, and a check that can only fail is not a check.
+
+**The camera opens itself at phone width**, which three other suites had to be
+told about: `video-upload-flow.mjs` and `video-flow.mjs` close it to get at the
+editor they are actually testing (and check that it appeared), and
+`video-cover-flow.mjs` needs nothing because its phone context has no touch, so
+it never triggers. The condition is narrow AND coarse — a phone, not a small
+window — so desktop is untouched.
 
 **On TUS.** Against the local driver `/api/upload/sign` answers `post`, so the
 resumable branch does not run and the suite says so rather than claiming

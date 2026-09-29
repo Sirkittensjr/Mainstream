@@ -128,46 +128,59 @@ async function run() {
   check('Create fits the phone screen', (await sideways(page)) === 0, `${await sideways(page)}px`);
 
   await page.locator('button[role=tab]', { hasText: 'Video' }).click();
-  await page.waitForTimeout(400);
   check(
     'the Post tab is still there beside it',
     (await page.locator('button[role=tab]', { hasText: 'Post' }).count()) === 1,
   );
 
-  // Recording leads on a phone; choosing a file is still offered.
-  const recordButton = page.locator('button', { hasText: 'Record a video' });
-  const fileButton = page.locator('button', { hasText: 'Choose a file' });
-  check('Record is offered', (await recordButton.count()) === 1);
-  check('and so is choosing a file, on a phone too', (await fileButton.count()) === 1);
-  const order = await page.evaluate(() => {
-    const buttons = [...document.querySelectorAll('button')];
-    const find = (text) => buttons.find((b) => b.textContent.trim() === text);
-    const rec = find('Record a video');
-    const file = find('Choose a file');
-    if (!rec || !file) return null;
-    return rec.getBoundingClientRect().top <= file.getBoundingClientRect().top ? 'record' : 'file';
-  });
-  check('and Record comes first on a phone', order === 'record', String(order));
-  check(
-    'Record is a comfortable tap target',
-    await recordButton.evaluate((b) => b.getBoundingClientRect().height >= 44),
-  );
-
-  await recordButton.click();
+  // The camera opens ITSELF. Tapping + and then Video on a phone is already a
+  // decision to use the camera, and a chooser card in between is a form in front
+  // of the thing somebody asked for.
   await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 25000 });
-  check('the camera opens', true);
+  check('the camera opens on its own — no chooser in the way', true);
   check('the camera fills the screen without overflowing', (await sideways(page)) === 0);
+
+  // Uploading has to stay reachable from a phone, in both directions: a button
+  // to the camera roll on the camera itself, and the chooser behind the X.
+  check(
+    'the camera roll is one tap away',
+    (await page.locator('[data-camera-roll]').count()) === 1,
+  );
+  await page.locator('button[aria-label="Close the camera"]').click();
+  await page.waitForTimeout(400);
+  check(
+    'and closing the camera still offers the file chooser',
+    (await page.locator('button', { hasText: 'Choose a file' }).count()) === 1,
+  );
+  await page.locator('button', { hasText: 'Record a video' }).click();
+  await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 25000 });
 
   /* ========================== the camera ========================== */
   section('CAMERA CONTROLS');
 
-  const timer = page.locator('span.tabular-nums').first();
-  check('a time budget is shown before recording', /left/.test(await timer.innerText()), (await timer.innerText()).trim());
+  // The picture is the screen, not a letterboxed panel between two bars.
+  const frame = await page.locator('video').first().evaluate((v) => {
+    const box = v.getBoundingClientRect();
+    return {
+      width: box.width,
+      height: box.height,
+      top: box.top,
+      fit: getComputedStyle(v).objectFit,
+      vw: window.innerWidth,
+      vh: window.innerHeight,
+    };
+  });
   check(
-    'it is the 2-minute maximum',
-    /^2:00 left$/.test((await timer.innerText()).trim()),
-    (await timer.innerText()).trim(),
+    'the preview fills the whole screen',
+    frame.width >= frame.vw - 1 && frame.height >= frame.vh - 1,
+    `${Math.round(frame.width)}x${Math.round(frame.height)} in ${frame.vw}x${frame.vh}`,
   );
+  check('and fills it rather than letterboxing', frame.fit === 'cover', frame.fit);
+  check('starting at the very top of the screen', frame.top <= 0, `${Math.round(frame.top)}px`);
+
+  const timer = page.locator('button[aria-label="Close the camera"]').locator('..');
+  const budget = (await timer.innerText()).trim();
+  check('the 2-minute budget is shown before recording', /2:00/.test(budget), budget.replace(/\n/g, ' '));
 
   const switchButton = page.locator('button[aria-label="Switch camera"]');
   check('the camera can be switched', (await switchButton.count()) === 1);
@@ -178,22 +191,67 @@ async function run() {
     (await page.locator('button[aria-label="Start recording"]').count()) === 1,
   );
 
+  // The tool rail exists as a column, so the next camera tool has somewhere to
+  // go. Flash only appears where the camera reports a torch — headless Chromium
+  // does not, and a control that would do nothing must not be drawn.
+  const flash = await page.locator('[data-camera-flash]').count();
+  check(
+    'flash is shown only where the camera has one',
+    flash === 0 || flash === 1,
+    flash === 1 ? 'this camera reports a torch' : 'no torch on this camera, so no control',
+  );
+
   for (const label of ['Close the camera', 'Switch camera', 'Start recording']) {
     const size = await page
       .locator(`button[aria-label="${label}"]`)
       .evaluate((b) => Math.min(b.getBoundingClientRect().width, b.getBoundingClientRect().height));
     check(`"${label}" is at least 44px`, size >= 44, `${Math.round(size)}px`);
   }
+  check(
+    'the camera roll button is big enough to tap',
+    await page
+      .locator('[data-camera-roll]')
+      .evaluate((b) => Math.min(b.getBoundingClientRect().width, b.getBoundingClientRect().height) >= 44),
+  );
 
-  // The record button must not be under the home indicator. The iPhone 13
-  // descriptor has no inset in headless Chromium, so what this can check is
-  // that the control sits inside the viewport with room to spare.
-  const bottomGap = await page
-    .locator('button[aria-label="Start recording"]')
-    .evaluate((b) => window.innerHeight - b.getBoundingClientRect().bottom);
-  check('the record button is clear of the bottom edge', bottomGap >= 8, `${Math.round(bottomGap)}px`);
+  // Safe areas. Headless Chromium reports no insets, so what this can prove is
+  // that the controls sit inside the viewport with room at both ends rather than
+  // flush against the edges the notch and the home indicator occupy.
+  const edges = await page.evaluate(() => {
+    const close = document.querySelector('button[aria-label="Close the camera"]');
+    const shutter = document.querySelector('button[aria-label="Start recording"]');
+    return {
+      top: close.getBoundingClientRect().top,
+      bottom: window.innerHeight - shutter.getBoundingClientRect().bottom,
+    };
+  });
+  check('the close button is clear of the top edge', edges.top >= 8, `${Math.round(edges.top)}px`);
+  check('the record button is clear of the bottom edge', edges.bottom >= 8, `${Math.round(edges.bottom)}px`);
 
-  await record(page, 3);
+  // Recording says so in more than a ticking number.
+  check(
+    'nothing claims to be recording before it is',
+    (await page.locator('[data-recording-indicator]').count()) === 0,
+  );
+  await page.locator('button[aria-label="Start recording"]').click();
+  await page.waitForSelector('button[aria-label="Stop recording"]', { timeout: 15000 });
+  const indicator = page.locator('[data-recording-indicator]');
+  check('recording is clearly indicated', (await indicator.count()) === 1);
+  check('and says so in words', /REC/.test(await indicator.innerText()), (await indicator.innerText()).trim());
+  await wait(2500);
+  check(
+    'the shutter shows how much of the budget is gone',
+    await page.evaluate(() => {
+      const arc = document.querySelector('button[aria-label="Stop recording"] circle:nth-of-type(2)');
+      if (!arc) return false;
+      const total = Number(arc.getAttribute('stroke-dasharray'));
+      const left = Number(arc.getAttribute('stroke-dashoffset'));
+      return total > 0 && left < total && left > 0;
+    }),
+  );
+  await page.locator('button[aria-label="Stop recording"]').click();
+  await page.waitForSelector('video[data-recorder-playback]', { timeout: 15000 });
+
   check('recording stops and the take is shown back', true);
 
   /* ========================== the review ========================== */
@@ -201,6 +259,26 @@ async function run() {
 
   const playback = page.locator('video[data-recorder-playback]');
   check('the take is on screen', (await playback.count()) === 1);
+  const shape = await playback.evaluate((v) => {
+    const box = v.getBoundingClientRect();
+    return {
+      width: box.width,
+      height: box.height,
+      fit: getComputedStyle(v).objectFit,
+      vw: window.innerWidth,
+      vh: window.innerHeight,
+    };
+  });
+  check(
+    'and it takes the whole screen',
+    shape.width >= shape.vw - 1 && shape.height >= shape.vh - 1,
+    `${Math.round(shape.width)}x${Math.round(shape.height)} in ${shape.vw}x${shape.vh}`,
+  );
+  check(
+    'without cropping it — this is the thing being judged',
+    shape.fit === 'contain',
+    shape.fit,
+  );
   const takeLength = await playback.evaluate((v) => v.duration);
   check(
     'and it is about as long as it was recorded for',
@@ -234,6 +312,85 @@ async function run() {
   await wait(300);
   check('and pauses', await playback.evaluate((v) => v.paused));
 
+  // The WHOLE take has to be watchable, which means somewhere to drag.
+  const scrub = page.locator('[data-review-scrub]');
+  check('there is a scrubber', (await scrub.count()) === 1);
+  check(
+    'that covers the whole recording',
+    await scrub.evaluate((input, length) => {
+      const max = Number(input.max);
+      return Number.isFinite(length) ? Math.abs(max - length) < 0.5 : max > 0;
+    }, await playback.evaluate((v) => v.duration)),
+    `max=${await scrub.getAttribute('max')}`,
+  );
+  await setRange(scrub, 2);
+  await wait(500);
+  check(
+    'and dragging it moves the video',
+    await playback.evaluate((v) => Math.abs(v.currentTime - 2) < 0.6),
+    `t=${await playback.evaluate((v) => v.currentTime.toFixed(2))}`,
+  );
+  check(
+    'the review screen does not scroll sideways',
+    (await sideways(page)) === 0,
+    `${await sideways(page)}px`,
+  );
+  check(
+    'the scrubber meets the 44px the rest of the app uses',
+    await scrub.evaluate((i) => i.getBoundingClientRect().height >= 44),
+    `${Math.round(await scrub.evaluate((i) => i.getBoundingClientRect().height))}px`,
+  );
+
+  // Sound. The recording has audio, so being able to silence the playback is
+  // the control that matters here.
+  const sound = page.locator('[data-review-sound]');
+  check('there is a sound control', (await sound.count()) === 1);
+  check('and it starts with sound on', (await sound.getAttribute('data-review-sound')) === 'on');
+  await sound.click();
+  await wait(300);
+  check(
+    'turning it off mutes the playback',
+    (await sound.getAttribute('data-review-sound')) === 'off' &&
+      (await playback.evaluate((v) => v.muted)),
+  );
+  await sound.click();
+  await wait(300);
+  check(
+    'and it comes back on',
+    (await sound.getAttribute('data-review-sound')) === 'on' &&
+      !(await playback.evaluate((v) => v.muted)),
+  );
+
+  // Choosing a cover is offered from here, not only from the posting screen —
+  // and it has to actually land there, with the cover editor in view rather
+  // than somewhere below the fold. There is ONE cover implementation; this is a
+  // way into it, not a second copy of it.
+  check(
+    'a cover can be chosen from the review screen',
+    (await page.locator('button', { hasText: 'Cover' }).count()) >= 1,
+  );
+  await page.locator('button', { hasText: 'Cover' }).click();
+  await page.waitForSelector('[data-cover-section]', { timeout: 20000 });
+  await wait(1200);
+  const coverInView = await page.locator('[data-cover-section]').evaluate((node) => {
+    const box = node.getBoundingClientRect();
+    return box.top < window.innerHeight && box.bottom > 0;
+  });
+  check('tapping Cover lands on the posting screen with the cover in view', coverInView);
+  check(
+    'and the take came with it',
+    (await page.locator('#thumbnail').count()) === 1,
+    'the frame scrubber is there, so there is a video to cover',
+  );
+
+  // Back to the camera for the rest of the flow.
+  await page.locator('button', { hasText: 'Start over' }).click();
+  await wait(600);
+  await page.locator('button', { hasText: 'Record a video' }).click();
+  await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 25000 });
+  await record(page, 3);
+  check('and the camera is reachable again afterwards', (await playback.count()) === 1);
+
   // The camera light must be off while watching a take back.
   check(
     'the camera is released while the take is being watched',
@@ -243,14 +400,14 @@ async function run() {
     }),
   );
 
-  // Re-record: the first take is thrown away and the camera comes back.
-  await page.locator('button', { hasText: 'Re-record' }).click();
+  // Back to the camera: the first take is thrown away and a new one can be made.
+  await page.locator('button[aria-label="Back to the camera"]').click();
   await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 25000 });
-  check('Re-record goes back to the camera', true);
+  check('back goes to the camera to re-record', true);
   await record(page, 3);
   check('and a second take can be made', (await playback.count()) === 1);
 
-  await page.locator('button', { hasText: 'Use this video' }).click();
+  await page.locator('button', { hasText: 'Continue' }).click();
   await page.waitForTimeout(1500);
   check(
     'keeping it leaves the camera and lands on the posting screen',
@@ -282,6 +439,35 @@ async function run() {
   check(
     'the cover scrubber is thumb-sized',
     await page.locator('#thumbnail').evaluate((i) => i.getBoundingClientRect().height >= 40),
+  );
+
+  // The posting screen a phone opens on: the video, a caption, a cover, a
+  // content warning, Post. Everything else is folded away rather than removed.
+  const visibleOnArrival = await page.evaluate(() =>
+    ['#video-caption', '#video-category', '#video-tags'].filter((id) => {
+      const element = document.querySelector(id);
+      return element && element.offsetParent !== null;
+    }),
+  );
+  check(
+    'the extra fields are folded away on a phone',
+    visibleOnArrival.length === 0,
+    visibleOnArrival.join(', ') || 'none showing',
+  );
+  check(
+    'and reachable, not removed',
+    (await page.locator('[data-more-options]').count()) === 1,
+  );
+  await page.locator('[data-more-options]').click();
+  await wait(400);
+  check(
+    'opening More options reveals them',
+    await page.evaluate(() =>
+      ['#video-caption', '#video-category', '#video-tags'].every((id) => {
+        const element = document.querySelector(id);
+        return element && element.offsetParent !== null;
+      }),
+    ),
   );
 
   const title = `Phone take ${stamp}`;
@@ -388,8 +574,18 @@ async function run() {
   /* ========================== where it ends up ========================== */
   section('IT IS AN ORDINARY POST');
 
+  // `waitForURL` resolves when the navigation commits, not when the page has
+  // rendered — so the body has to be waited for, not just read. On a slower
+  // deployment reading it straight away gets an empty string, which looks
+  // exactly like a post that came out wrong.
+  await page.waitForLoadState('networkidle');
+  await page
+    .waitForFunction((needle) => document.body.innerText.includes(needle), title, {
+      timeout: 20000,
+    })
+    .catch(() => undefined);
   const body = await page.locator('body').innerText();
-  check('the post page shows the title', body.includes(title));
+  check('the post page shows the title', body.includes(title), `${body.length} chars rendered`);
   check('it carries the content warning', /content warning|sensitive|Show/i.test(body));
   check('a video element is on the page', (await page.locator('video').count()) >= 1);
 

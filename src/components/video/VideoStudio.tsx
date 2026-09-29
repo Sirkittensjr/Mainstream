@@ -98,6 +98,36 @@ export function VideoStudio() {
    * one failure path after that — the post itself failing — discards it
    * alongside the video.
    */
+  /**
+   * Whether the camera should open the moment the Video tab does.
+   *
+   * On a phone, tapping + and then Video is already a decision to use the
+   * camera — making somebody pass a chooser card first is a form in front of the
+   * thing they asked for. On a desktop it is not: a webcam is rarely what
+   * somebody at a desk came here for, and a camera permission prompt out of
+   * nowhere would be worse than a tap. So this is narrow AND coarse — a phone,
+   * not a small window — and it fires once, so closing the camera does not
+   * reopen it.
+   */
+  const autoOpened = useRef(false);
+  useEffect(() => {
+    if (autoOpened.current) return;
+    autoOpened.current = true;
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const phone = window.matchMedia('(max-width: 639px) and (pointer: coarse)').matches;
+    const canRecordHere = Boolean(navigator.mediaDevices?.getUserMedia);
+    if (phone && canRecordHere) setRecording(true);
+  }, []);
+
+  /** Set when the camera hands a take over for its cover to be chosen. */
+  const [coverWanted, setCoverWanted] = useState(false);
+  const coverSection = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!coverWanted || !coverSection.current) return;
+    coverSection.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setCoverWanted(false);
+  }, [coverWanted, clips.length]);
+
   const [customCover, setCustomCover] = useState<File | null>(null);
   const [customCoverUrl, setCustomCoverUrl] = useState<string | null>(null);
   const [coverError, setCoverError] = useState<string | null>(null);
@@ -106,6 +136,8 @@ export function VideoStudio() {
   const [category, setCategory] = useState<Category>('Life');
   const [tags, setTags] = useState('');
   const [contentWarning, setContentWarning] = useState(false);
+  /** Whether the folded-away fields are showing. Phones only; always open at sm+. */
+  const [showMore, setShowMore] = useState(false);
   const [posting, setPosting] = useState(false);
 
   const cancelled = useRef<AbortController | null>(null);
@@ -258,6 +290,9 @@ export function VideoStudio() {
           continue;
         }
         await addSource(file, file.name, file);
+        // Chosen from the camera roll while the camera was open: the camera has
+        // done its job and the posting screen is where this goes next.
+        setRecording(false);
       }
     } finally {
       setBusy(null);
@@ -413,9 +448,16 @@ export function VideoStudio() {
 
   if (recording) {
     return (
-      <VideoRecorder
+      <>
+        {/* Mounted beside the camera, not instead of it: the camera-roll button
+            clicks this input, so it has to exist while the camera is open. */}
+        <FilePicker inputRef={fileInput} onFiles={pickFiles} />
+        <VideoRecorder
         remainingSeconds={left}
+        maxSeconds={MAX_VIDEO_SECONDS}
         onClose={() => setRecording(false)}
+        onPickFile={() => fileInput.current?.click()}
+        onChooseCover={() => setCoverWanted(true)}
         onRecorded={({ blob, mimeType, seconds }) => {
           // Wrapped as a File, which is what keeps an untouched recording OUT
           // of the render pass: `needsRender` reads `clip.file` as "we still
@@ -427,7 +469,8 @@ export function VideoStudio() {
           void addSource(file, `Recording ${index}`, file);
           if (seconds >= left - 0.5) setRecording(false);
         }}
-      />
+        />
+      </>
     );
   }
 
@@ -683,7 +726,9 @@ export function VideoStudio() {
       {/* ------------------------------------------------------------ cover */}
       {previewUrl && (
         <section
+          ref={coverSection}
           aria-labelledby="cover-heading"
+          data-cover-section
           className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"
         >
           <h2 id="cover-heading" className="text-sm font-semibold text-white/70">
@@ -776,64 +821,94 @@ export function VideoStudio() {
         </section>
       )}
 
+      {/* The one field that always shows. It is the first line of the post's
+          caption, which on a phone is simply "the caption" — so it is called
+          that there. On a desktop, where the longer description sits right
+          underneath it, "Title" is the more accurate of the two words and the
+          screen is unchanged. */}
       <div>
         <label className="label" htmlFor="video-title">
-          Title
+          <span className="sm:hidden">Caption</span>
+          <span className="hidden sm:inline">Title</span>
         </label>
         <input
           id="video-title"
           maxLength={120}
           value={title}
           onChange={(event) => setTitle(event.target.value)}
-          placeholder="What is this video?"
+          placeholder="Say something about it"
           className="mt-2 w-full text-base"
         />
       </div>
 
-      <div>
-        <label className="label" htmlFor="video-caption">
-          Description (optional)
-        </label>
-        <textarea
-          id="video-caption"
-          rows={3}
-          maxLength={1200}
-          value={caption}
-          onChange={(event) => setCaption(event.target.value)}
-          placeholder="Say more about it. @mention anyone you want to bring in."
-          className="mt-2 w-full text-base"
+      {/* Everything else is folded away on a phone and open on a desktop.
+          Nothing is removed — a mobile creator can still write a description,
+          set a category and add tags — but the posting screen a phone opens on
+          is the video, a caption, a cover, a content warning and Post, and not
+          a five-field form standing between somebody and their own video. */}
+      <button
+        type="button"
+        onClick={() => setShowMore((current) => !current)}
+        aria-expanded={showMore}
+        aria-controls="video-more"
+        data-more-options
+        className="chip w-full justify-center py-2.5 hover:bg-white/10 sm:hidden"
+      >
+        {showMore ? 'Fewer options' : 'More options'}
+        <ChevronIcon
+          direction="right"
+          width={14}
+          height={14}
+          className={`transition ${showMore ? '-rotate-90' : 'rotate-90'}`}
         />
-      </div>
+      </button>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div id="video-more" className={`space-y-4 ${showMore ? '' : 'hidden sm:block'}`}>
         <div>
-          <label className="label" htmlFor="video-category">
-            Category
+          <label className="label" htmlFor="video-caption">
+            Description (optional)
           </label>
-          <select
-            id="video-category"
-            value={category}
-            onChange={(event) => setCategory(event.target.value as Category)}
-            className="mt-2 w-full"
-          >
-            {CATEGORIES.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="label" htmlFor="video-tags">
-            Tags (optional)
-          </label>
-          <input
-            id="video-tags"
-            value={tags}
-            onChange={(event) => setTags(event.target.value)}
-            placeholder="firstvideo, studio"
-            className="mt-2 w-full"
+          <textarea
+            id="video-caption"
+            rows={3}
+            maxLength={1200}
+            value={caption}
+            onChange={(event) => setCaption(event.target.value)}
+            placeholder="Say more about it. @mention anyone you want to bring in."
+            className="mt-2 w-full text-base"
           />
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label className="label" htmlFor="video-category">
+              Category
+            </label>
+            <select
+              id="video-category"
+              value={category}
+              onChange={(event) => setCategory(event.target.value as Category)}
+              className="mt-2 w-full"
+            >
+              {CATEGORIES.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label" htmlFor="video-tags">
+              Tags (optional)
+            </label>
+            <input
+              id="video-tags"
+              value={tags}
+              onChange={(event) => setTags(event.target.value)}
+              placeholder="firstvideo, studio"
+              className="mt-2 w-full"
+            />
+          </div>
         </div>
       </div>
 
