@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { CreatePostMenu } from '@/components/CreatePostMenu';
 import { EmptyState } from '@/components/EmptyState';
 import { PageTopBar } from '@/components/PageTopBar';
 import { PostList } from '@/components/PostList';
@@ -95,16 +96,25 @@ export default async function HomePage({
           className="hide-scrollbar mb-4 flex gap-2 overflow-x-auto"
         >
           {(viewer ? TABS : TABS.filter((entry) => entry !== 'following')).map((entry) => (
-            <Link
+            // Plain anchors for the same reason the profile's shelf tabs are:
+            // these three live in a search param on a `force-dynamic` page, and a
+            // client-side navigation that only changes a search param was
+            // intermittently applied as no change at all — the click fired, the
+            // RSC request came back 200, and the URL never moved. Measured here at
+            // one tap in six doing nothing. A full navigation cannot be swallowed,
+            // and switching feed is a page-level view switch rather than an
+            // in-page interaction.
+            <a
               key={entry}
               href={entry === 'following' ? '/home' : `/home?tab=${entry}`}
               aria-current={entry === active ? 'page' : undefined}
+              data-feed-tab={entry}
               className={`chip shrink-0 capitalize ${
                 entry === active ? 'chip-active' : 'hover:bg-white/10'
               }`}
             >
               {entry}
-            </Link>
+            </a>
           ))}
           {active === 'discover' && (
             <Link href="/discover" className="chip shrink-0 text-white/50 hover:bg-white/10">
@@ -112,6 +122,13 @@ export default async function HomePage({
             </Link>
           )}
         </nav>
+
+        {/* The general way in to posting, above the feed. The `+` in the bottom
+            navigation is still the fast, dedicated path to the camera; this is
+            the one for when the thing being made is a photo, a few words or a
+            video already sitting on the phone. Signed-in only — a guest has the
+            Join card below instead. */}
+        {viewer && <CreatePostMenu variant="prompt" className="mb-4" />}
 
         {!viewer && (
           <div className="card mb-4 flex items-center gap-4 p-5">

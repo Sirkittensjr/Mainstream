@@ -62,9 +62,9 @@ npm run typecheck # tsc --noEmit
 | `/verify-email` | After signup — confirm the address, or send the mail again |
 | `/forgot-password`, `/reset-password` | Password reset, by email link |
 | `/auth/callback` | Where Supabase's email links land; exchanges the code for a session |
-| `/home` | **Following** and **Recommended** feeds |
+| `/home` | **Following** and **Recommended** feeds, and the general **Create post** chooser |
 | `/discover` | Rankings: Overall, Last 30 days, and by category |
-| `/create` | A photo post, or just something to say |
+| `/create` | A photo post, or just something to say. `?kind=photo` / `?kind=text` pick which half leads |
 | `/create/video` | The camera — what the `+` button opens. `?upload=1` for a file you already have |
 | `/u/[username]` | Profile: Videos, Posts and Text shelves, both ratings, rank, followers |
 | `/post/[id]` | Post detail, community rating, comments |

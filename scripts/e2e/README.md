@@ -336,7 +336,9 @@ Covers, in the order somebody walks it:
   labelled "Record a video", it links straight to `/create/video`, and the
   viewfinder is what opens — there is no Create page in between and no Post/Video
   toggle to choose from, because tapping + on a phone is already a decision to
-  film something. The suite asserts all of that, and that the Create page was
+  film something. (The general four-way chooser lives on Home and the profile
+  instead, and is covered further down — the point of the two doors is that this
+  one has nothing in it.) The suite asserts all of that, and that the Create page was
   demoted rather than deleted: `/create` still answers, still carries the photo
   form, and no longer has a `role="tab"` anywhere — checked over `fetch` so the
   camera is not torn down to find out. It also offers the camera back, through a
@@ -387,15 +389,37 @@ Covers, in the order somebody walks it:
 - **The post.** The upload route the server chose, the video reaching the Videos
   feed and the normal feed **as seen by a second account**, and the content
   warning in front of it.
-- **The profile shelves.** Videos, Posts, Text and About, in that order, each a
-  tap target and the row fitting the phone. The video that was just recorded is on
-  **Videos**, with "upload a video you already have" beside it going to
-  `/create/video?upload=1` — the chooser, not the camera. **Text** carries the
-  writing form that used to be a tab on the Create page, and a post written there
-  lands on that shelf and provably not on Videos. **Posts** points at `/create`
-  for a photo post and does not list the video. Nothing was migrated to make this
-  work: each shelf is the same list filtered by what its posts carry, so an old
-  post lands on the right one by itself.
+- **The profile shelves.** Posts, Videos, Text and About, in that order — Posts
+  first because that is the shelf a profile opens on — each a tap target and the
+  row fitting the phone. The video that was just recorded is on **Videos**, with
+  "upload a video you already have" beside it going to `/create/video?upload=1` —
+  the chooser, not the camera. **Text** carries the writing form that used to be a
+  tab on the Create page, and a post written there lands on that shelf and
+  provably not on Videos. **Posts** points at `/create` for a photo post and does
+  not list the video. Nothing was migrated to make this work: each shelf is the
+  same list filtered by what its posts carry, so an old post lands on the right
+  one by itself.
+- **The general Create post path**, which is the other door and deliberately not
+  the `+`. Home and your own profile each carry a `data-create-post` trigger whose
+  sheet offers four kinds, and the suite checks all four are there, in order, each
+  at least 44px, with the sheet fitting the phone — and, the part that matters,
+  that every one of them points at a route that already exists:
+
+  ```
+  photo         /create?kind=photo
+  text          /create?kind=text
+  upload-video  /create/video?upload=1
+  record-video  /create/video
+  ```
+
+  Then it follows two of them: **Record video** must land on the same
+  `/create/video` the `+` lands on and show the same full-screen viewfinder — if
+  it went anywhere else there would be two cameras — and **Upload video** must
+  land on the chooser with the camera off. **Photo** and **Text** are one composer
+  leading with different halves of itself, so the suite compares the positions of
+  the picker and the caption and checks that neither kind has lost the other half.
+  It finishes by writing a post through that path and finding it on the Text
+  shelf, because a chooser nothing can be posted from is not worth offering.
 - **Desktop.** The file picker still offered and still first at desktop width,
   reached through `/create/video?upload=1`.
 
@@ -428,13 +452,24 @@ wants. `video-flow.mjs`, `video-upload-flow.mjs`, `videos-flow.mjs` and
 coarse — `(max-width: 639px) and (pointer: coarse)`, evaluated once on mount — so
 a small desktop window is not a phone and desktop is untouched.
 
-**A soft navigation is not a page load.** The profile's shelf tabs are `<Link>`s,
-so switching shelf fetches an RSC payload and only then changes the URL and
-re-renders — about a second on the seeded store. `waitForLoadState('networkidle')`
-does not cover that (there is no document load to wait on, so it returns straight
-away), which made the shelf checks read the shelf they were already on. The suite
-has an `openShelf` helper that waits for the tab to claim `aria-current` instead,
-which is waiting for the render rather than for the network.
+**Why the shelf tabs are plain anchors.** They used to be `<Link>`s, and tapping
+one did nothing perhaps a third of the time. The shelf lives in a search param on
+a `force-dynamic` page, and a client-side navigation that only changes a search
+param was intermittently applied as no change at all: the click fired, the RSC
+request was answered 200, and the URL never moved. Measured by clicking all four
+shelves twice from a fresh load each time — three of eight stuck. `prefetch={false}`
+took it to one in eight; plain anchors took it to zero, because a full navigation
+cannot be swallowed. Switching shelf is a page-level view switch rather than an
+in-page interaction, so the cost is a reload the server was doing all of anyway.
+
+The same measurement on **Home's feed tabs** found one tap in six doing nothing,
+so those are plain anchors now too — it was the same bug on the same pattern, and
+it predates the Create post work rather than coming from it.
+
+The suite's `openShelf` helper waits for the tab to claim `aria-current` rather
+than for `networkidle`, which is waiting for the render rather than the network.
+That mattered while these were soft navigations and is still the honest thing to
+wait for.
 
 **On TUS.** Against the local driver `/api/upload/sign` answers `post`, so the
 resumable branch does not run and the suite says so rather than claiming

@@ -1022,7 +1022,7 @@ async function run() {
   );
 
   /* ================= the profile is where content lives ================= */
-  section('PROFILE: VIDEOS, POSTS, TEXT');
+  section('PROFILE: POSTS, VIDEOS, TEXT');
 
   // The three kinds of creation that used to sit behind one Create page are now
   // in three places, and the profile is where two of them went.
@@ -1032,8 +1032,10 @@ async function run() {
     .locator('[data-profile-tab]')
     .evaluateAll((nodes) => nodes.map((node) => node.dataset.profileTab));
   check(
-    'the profile has Videos, Posts, Text and About',
-    JSON.stringify(shelves) === JSON.stringify(['videos', 'posts', 'text', 'about']),
+    'the profile has Posts, Videos, Text and About',
+    // Posts first, which is also the shelf a profile opens on — the first chip
+    // and the filled-in chip being different ones reads as a bug.
+    JSON.stringify(shelves) === JSON.stringify(['posts', 'videos', 'text', 'about']),
     shelves.join(', '),
   );
   check('and they fit the phone', (await sideways(page)) === 0, `${await sideways(page)}px`);
@@ -1110,6 +1112,134 @@ async function run() {
     'while still being the photo form itself',
     (await page.locator('textarea[name=caption]').count()) === 1 &&
       (await page.locator('[role=tab]').count()) === 0,
+  );
+
+  /* ================= the general way in, beside the fast one ================= */
+  section('CREATE POST: THE GENERAL PATH');
+
+  // Two doors, on purpose. The `+` is the fast one — one tap to a viewfinder, and
+  // the section at the top of this suite proves it still is. This is the general
+  // one, on Home and on your own profile, and what matters about it is that it
+  // OFFERS the four kinds and then hands each off to something that already
+  // exists. If "Record video" here went anywhere but the same route `+` goes to,
+  // there would be two cameras.
+  const WANTED = [
+    ['photo', '/create?kind=photo'],
+    ['text', '/create?kind=text'],
+    ['upload-video', '/create/video?upload=1'],
+    ['record-video', '/create/video'],
+  ];
+
+  async function openCreateSheet(where) {
+    await page.goto(where, { waitUntil: 'domcontentloaded' });
+    await page.waitForLoadState('networkidle');
+    const trigger = page.locator('[data-create-post]');
+    if ((await trigger.count()) !== 1) return null;
+    await trigger.click();
+    await page.waitForSelector('[data-create-post-sheet]', { timeout: 10000 });
+    return page.locator('[data-create-option]');
+  }
+
+  for (const where of ['/home', `/u/${me.handle}`]) {
+    const label = where === '/home' ? 'Home' : 'the profile';
+    const options = await openCreateSheet(where);
+    check(`${label} has a Create post button`, options !== null);
+    if (!options) continue;
+
+    check(
+      `${label}'s sheet offers all four kinds`,
+      JSON.stringify(
+        await options.evaluateAll((nodes) => nodes.map((n) => n.dataset.createOption)),
+      ) === JSON.stringify(WANTED.map(([key]) => key)),
+      (await options.allInnerTexts()).join(' / ').replace(/\n/g, ' '),
+    );
+    check(
+      `${label}'s options point at the routes that already exist`,
+      JSON.stringify(
+        await options.evaluateAll((nodes) => nodes.map((n) => n.getAttribute('href'))),
+      ) === JSON.stringify(WANTED.map(([, href]) => href)),
+      (await options.evaluateAll((nodes) => nodes.map((n) => n.getAttribute('href')))).join(' '),
+    );
+    check(
+      `${label}'s options are all thumb-sized`,
+      await options.evaluateAll((nodes) =>
+        nodes.every((n) => n.getBoundingClientRect().height >= 44),
+      ),
+      (await options.evaluateAll((nodes) =>
+        nodes.map((n) => Math.round(n.getBoundingClientRect().height)),
+      )).join(', '),
+    );
+    check(`${label}'s sheet fits the phone`, (await sideways(page)) === 0);
+  }
+
+  // Record video is the SAME camera, not a second one: the same route, and a
+  // viewfinder at the end of it.
+  let options = await openCreateSheet('/home');
+  await options.nth(3).click();
+  await page.waitForURL(/\/create\/video$/, { timeout: 15000 });
+  check(
+    'Record video opens the same full-screen camera the + button does',
+    (await page
+      .waitForSelector('button[aria-label="Start recording"]', { timeout: 25000 })
+      .then(() => true)
+      .catch(() => false)) &&
+      (await page.locator('button[aria-label="Close the camera"]').count()) === 1,
+    page.url(),
+  );
+
+  // Upload video is the other door of that same studio — chooser, camera off.
+  options = await openCreateSheet(`/u/${me.handle}`);
+  await options.nth(2).click();
+  await page.waitForURL(/upload=1/, { timeout: 15000 });
+  await page.waitForSelector('input[type=file]', { state: 'attached', timeout: 20000 });
+  check(
+    'Upload video opens the chooser instead, with the camera off',
+    (await page.locator('button[aria-label="Close the camera"]').count()) === 0 &&
+      (await page.locator('button', { hasText: 'Choose a file' }).count()) === 1,
+  );
+
+  // Photo and Text are the one composer, leading with different halves of itself.
+  await page.goto('/create?kind=photo', { waitUntil: 'domcontentloaded' });
+  const photoOrder = await page.evaluate(() => {
+    const caption = document.querySelector('textarea[name=caption]');
+    const picker = document.querySelector('input[type=file]')?.closest('div');
+    if (!caption || !picker) return null;
+    return {
+      pickerFirst: picker.getBoundingClientRect().top < caption.getBoundingClientRect().top,
+      heading: document.querySelector('h1')?.textContent ?? '',
+    };
+  });
+  check('Photo leads with the picker', photoOrder?.pickerFirst === true, photoOrder?.heading);
+
+  await page.goto('/create?kind=text', { waitUntil: 'domcontentloaded' });
+  const textOrder = await page.evaluate(() => {
+    const caption = document.querySelector('textarea[name=caption]');
+    const picker = document.querySelector('input[type=file]')?.closest('div');
+    if (!caption || !picker) return null;
+    return {
+      captionFirst: caption.getBoundingClientRect().top < picker.getBoundingClientRect().top,
+      heading: document.querySelector('h1')?.textContent ?? '',
+      // Nothing was taken away: a text post can still gain a picture.
+      stillHasPicker: Boolean(picker),
+    };
+  });
+  check('Text leads with the words', textOrder?.captionFirst === true, textOrder?.heading);
+  check('and neither kind loses the other half', textOrder?.stillHasPicker === true);
+
+  // A post really can still be made from here, which is the only thing that makes
+  // the two of them worth offering.
+  const fromSheet = `written from the sheet ${stamp}`;
+  await page.fill('textarea[name=caption]', fromSheet);
+  await Promise.all([
+    page.waitForURL(/\/post\//, { timeout: 25000 }),
+    page.locator('form button[type=submit]').last().click(),
+  ]);
+  check('and a post made this way lands on the Text shelf', true, page.url());
+  await page.goto(`/u/${me.handle}?tab=text`, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle');
+  check(
+    'where it belongs',
+    (await page.locator('body').innerText()).includes(fromSheet),
   );
 
   /* ========================== desktop is untouched ========================== */

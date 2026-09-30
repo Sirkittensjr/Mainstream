@@ -8,22 +8,45 @@ import { CreateForm } from './CreateForm';
 export const metadata: Metadata = { title: 'New post' };
 export const dynamic = 'force-dynamic';
 
-export default async function CreatePage() {
+/**
+ * What the Create post sheet said somebody came here for.
+ *
+ * It changes the heading and which half of the composer leads — nothing else.
+ * Both kinds post through the same action and neither loses anything the other
+ * has, so arriving here with no `kind` at all (an old link, a bookmark, an empty
+ * state's CTA) is the same page it always was.
+ */
+const LEADS = {
+  photo: {
+    title: 'New photo post',
+    blurb: 'Pick your pictures, then say something about them.',
+  },
+  text: {
+    title: 'Write something',
+    blurb: 'Just words. Add a picture if you want one.',
+  },
+} as const;
+
+export default async function CreatePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ kind?: string }>;
+}) {
+  const { kind } = await searchParams;
+  const lead = kind === 'photo' ? 'photo' : 'text';
+  const copy = LEADS[lead];
   const viewer = await requireViewer('/create');
 
   return (
     <>
-      <PageTopBar title="New post" />
+      <PageTopBar title={copy.title} />
       <div className="mx-auto max-w-2xl px-4 py-6 lg:py-10">
         <div className="mb-6">
-          {/* "New post" rather than "Create": this page is one of three places
-              that make something now, and the + button is the other one people
-              will reach for. Naming it after what it makes is clearer than
-              naming it after the verb. */}
-          <h1 className="font-display text-3xl font-extrabold tracking-tight">New post</h1>
-          <p className="mt-1 text-white/45">
-            A photo and something to say. For a video, use the camera.
-          </p>
+          {/* Named after what it makes rather than after the verb: this is one of
+              several places that make something now, and "Create" said nothing
+              about which. */}
+          <h1 className="font-display text-3xl font-extrabold tracking-tight">{copy.title}</h1>
+          <p className="mt-1 text-white/45">{copy.blurb}</p>
         </div>
 
         {viewer.status !== 'active' ? (
@@ -49,7 +72,7 @@ export default async function CreatePage() {
             >
               <VideoIcon width={18} height={18} /> Record a video instead
             </Link>
-            <CreateForm />
+            <CreateForm lead={lead} />
           </>
         )}
       </div>

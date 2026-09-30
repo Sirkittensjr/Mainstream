@@ -17,6 +17,7 @@ import { formatCount } from '@/lib/format';
 import { profileSkin } from '@/lib/profile-theme';
 import { formatVotes, topReactions } from '@/lib/ratings';
 import { PlusIcon } from '@/components/Icons';
+import { CreatePostMenu } from '@/components/CreatePostMenu';
 import { shelfFor, type PostShelf } from '@/lib/media';
 import { TextPostForm } from './TextPostForm';
 import { hydratePosts, postsByAuthor } from '@/lib/services/posts';
@@ -48,17 +49,17 @@ export async function generateMetadata({
 /**
  * The profile's shelves.
  *
- * Videos first, because a video is the thing FayTarra is built around and the
- * `+` button now makes nothing else. Each shelf is the same list filtered by what
- * its posts carry — see `shelfFor` — so nothing was migrated and an old post
+ * Posts first, because Posts is where a profile opens — a bar whose first chip is
+ * not the one filled in reads as a bug. Each shelf is the same list filtered by
+ * what its posts carry — see `shelfFor` — so nothing was migrated and an old post
  * lands on the right one the first time somebody looks.
  *
  * Their owner also gets a way to ADD to two of them here: a pre-recorded video
- * under Videos, and a written post under Text. Those are the two kinds of
- * creation that used to be behind the Create page's toggle, and this is where
- * they went.
+ * under Videos, and a written post under Text. Both are also in the Create post
+ * sheet at the top of the page; these are the same destinations, offered next to
+ * the thing they make.
  */
-const TABS = ['videos', 'posts', 'text', 'about'] as const;
+const TABS = ['posts', 'videos', 'text', 'about'] as const;
 
 /** What an empty shelf says. Three lists deserve three answers. */
 const SHELF_EMPTY: Record<PostShelf, { title: string; mine: string; theirs: string }> = {
@@ -278,9 +279,10 @@ export default async function ProfilePage({
                   <Link href="/settings" className="btn-ghost px-6 py-2.5 text-sm">
                     Edit profile
                   </Link>
-                  <Link href="/create" className="btn-primary px-6 py-2.5 text-sm">
-                    Create a post
-                  </Link>
+                  {/* The general way in, beside Edit profile: Photo, Text,
+                      Upload video, Record video. Record video opens the same
+                      VideoStudio the `+` button does, by the same route. */}
+                  <CreatePostMenu variant="button" />
                 </>
               ) : (
                 <>
@@ -322,7 +324,16 @@ export default async function ProfilePage({
               small phone — and cutting one off the end would hide a whole shelf. */}
           <nav className="profile-tabs -mx-4 mt-6 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {TABS.map((entry) => (
-              <Link
+              // A plain anchor, not a `<Link>`, and deliberately. The shelf lives
+              // in a search param on a `force-dynamic` page, and a client-side
+              // navigation that only changes a search param was intermittently
+              // applied as no change at all: the click fired, the RSC request was
+              // answered 200, and the URL never moved — so tapping a shelf did
+              // nothing perhaps a third of the time. `prefetch={false}` reduced it
+              // without fixing it. A full navigation cannot be swallowed, and this
+              // is a page-level view switch rather than an in-page interaction, so
+              // the cost is a reload the server was doing all of anyway.
+              <a
                 key={entry}
                 href={entry === 'posts' ? `/u/${user.username}` : `/u/${user.username}?tab=${entry}`}
                 data-profile-tab={entry}
@@ -337,7 +348,7 @@ export default async function ProfilePage({
                 {entry !== 'about' && counts[entry] > 0 && (
                   <span className="tabular-nums opacity-60">{counts[entry]}</span>
                 )}
-              </Link>
+              </a>
             ))}
           </nav>
 
