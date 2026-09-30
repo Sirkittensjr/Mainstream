@@ -66,8 +66,10 @@ async function createAccount(browser, handle, interest) {
 
 /** Opens Create and switches to the video tab. */
 async function openStudio(page) {
-  await page.goto('/create', { waitUntil: 'domcontentloaded' });
-  await page.locator('button[role=tab]', { hasText: 'Video' }).click();
+  await page.goto('/create/video?upload=1', { waitUntil: 'domcontentloaded' });
+  // The video route, which replaced the Create page's Post/Video toggle.
+  // `?upload=1` lands on the chooser rather than opening the camera,
+  // which is what a suite that uploads a file wants.
   await page.waitForSelector('text=Post a video', { timeout: 10000 });
 }
 
@@ -130,7 +132,15 @@ const run = async () => {
   section('CREATE — upload, record, and the clip strip');
 
   await openStudio(A.page);
-  check('the existing Post tab is still there', (await A.page.locator('button[role=tab]', { hasText: 'Post' }).count()) === 1);
+  // The Post/Video toggle is gone — + is a camera button and photo posts have
+  // their own page. What has to still be true is that the photo page is there and
+  // is NOT a video form.
+  const postPage = await A.page.request.get(`${BASE}/create`);
+  check('photo posts still have their own page', postPage.ok(), `HTTP ${postPage.status()}`);
+  check(
+    'and the Post/Video toggle is gone from it',
+    !(await postPage.text()).includes('role="tab"'),
+  );
 
   // 1. Upload a video. One video is the plain screen, so the clip strip only
   // exists once somebody goes looking for it.
@@ -383,17 +393,17 @@ const run = async () => {
   });
   check('17. and is sized to the screen', phoneShape.width > 200 && phoneShape.width <= 390, `${phoneShape.width.toFixed(0)}px wide`);
 
-  await phonePage.goto(`${BASE}/create`, { waitUntil: 'domcontentloaded' });
-  await phonePage.locator('button[role=tab]', { hasText: 'Video' }).click();
-  // The camera opens itself on a phone now. This section is about the editor, so
-  // it is closed first; mobile-record-flow.mjs is where the camera is tested.
-  const cameraHere = await phonePage
-    .locator('button[aria-label="Close the camera"]')
-    .waitFor({ timeout: 20000 })
-    .then(() => true)
-    .catch(() => false);
-  check('17. the camera opens itself at phone width', cameraHere);
-  if (cameraHere) await phonePage.locator('button[aria-label="Close the camera"]').click();
+  await phonePage.goto('/create/video?upload=1', { waitUntil: 'domcontentloaded' });
+  // The video route, which replaced the Create page's Post/Video toggle. A bare
+  // /create/video opens the camera on a phone — that is what `+` is for, and
+  // mobile-record-flow.mjs is where it is tested. `?upload=1` is the other door,
+  // the one the profile's "upload a video you already have" uses: it lands on the
+  // chooser with the camera off, which is what a suite handing over a file wants.
+  await phonePage.waitForSelector('input[type=file]', { state: 'attached', timeout: 20000 });
+  check(
+    '17. ?upload=1 gives a phone the chooser, not the camera',
+    (await phonePage.locator('button[aria-label="Close the camera"]').count()) === 0,
+  );
   await phonePage.waitForTimeout(500);
   const editorOverflow = await phonePage.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   check('17. the editor fits a phone screen', editorOverflow <= 0, `${editorOverflow}px of overflow`);

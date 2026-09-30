@@ -115,10 +115,11 @@ async function createAccount(browser, handle, interest, viewport) {
 
 /** Opens the video composer with a clip loaded and waits for the cover UI. */
 async function openStudio(page, videoFile) {
-  await page.goto('/create?tab=video', { waitUntil: 'domcontentloaded' });
+  // The video studio has its own route now, and `?upload=1` is its chooser door:
+  // a suite handing over a file on disk does not want the camera switched on.
+  await page.goto('/create/video?upload=1', { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle');
-  const videoTab = page.locator('button, a', { hasText: /^Video$/ });
-  if (await videoTab.count()) await videoTab.first().click().catch(() => {});
+  await page.waitForSelector('input[type=file][accept*="video"]', { state: 'attached' });
   await page.setInputFiles('input[type=file][accept*="video"]', videoFile);
   await page.waitForSelector('#cover-heading', { timeout: 30000 });
   await page.waitForSelector('img[data-cover-preview]', { timeout: 30000 });
@@ -311,7 +312,9 @@ async function run() {
 
   // Your own posts, on the surfaces that show them to you.
   await shows(A, 'Home / Following', '/home?tab=following', customMedia.poster);
-  await shows(A, 'the profile', `/u/${A.handle}`, customMedia.poster);
+  // A profile keeps videos on their own shelf now, so a video post is on
+  // `?tab=videos` rather than on the profile's default (photo) shelf.
+  await shows(A, 'the profile', `/u/${A.handle}?tab=videos`, customMedia.poster);
   await shows(A, 'Search', `/search?q=custom+cover+${stamp}`, customMedia.poster);
 
   // Recommended, Discover and the Videos feed deliberately leave YOUR posts
@@ -335,7 +338,7 @@ async function run() {
   // for the check to be about the cover.
   await shows(B, 'Discover', `/discover?category=${COVER_CATEGORY}`, defaultMedia.poster, 90000);
   await shows(B, 'the Videos feed', '/videos', defaultMedia.poster);
-  await shows(B, 'another account\u2019s profile', `/u/${A.handle}`, customMedia.poster);
+  await shows(B, 'another account\u2019s profile', `/u/${A.handle}?tab=videos`, customMedia.poster);
 
   // ===================== 10. somebody else's cover =====================
   section('SECURITY');

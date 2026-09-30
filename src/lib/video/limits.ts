@@ -37,6 +37,26 @@ export const DURATION_TOLERANCE_SECONDS = 2.5;
 export const MAX_VIDEO_SECONDS_ENFORCED = MAX_VIDEO_SECONDS + DURATION_TOLERANCE_SECONDS;
 
 /**
+ * The caps the camera offers before filming starts.
+ *
+ * A shorter cap is a decision about the video, not a restriction: picking 15
+ * seconds is how somebody commits to something short, and the ring on the
+ * shutter then means something the whole way round rather than creeping along a
+ * two-minute track. They are all bounded by MAX_VIDEO_SECONDS, which stays the
+ * only number the server enforces.
+ */
+export const RECORD_CAPS = [15, 60, MAX_VIDEO_SECONDS] as const;
+
+export type RecordCap = (typeof RECORD_CAPS)[number];
+
+/** "15s" / "60s" / "2m" — the cap as the camera labels it. */
+export function capLabel(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds % 60 === 0 && seconds > 60) return `${seconds / 60}m`;
+  return `${seconds}s`;
+}
+
+/**
  * The most a custom cover image may weigh.
  *
  * Well under the 25MB the upload route allows any image, because this one is

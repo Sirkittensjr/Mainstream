@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import { isOwnMediaUrl, mediaKindForUrl, sanitiseAvatarUrl, sanitiseMedia } from './media';
+import { isOwnMediaUrl, mediaKindForUrl, sanitiseAvatarUrl, sanitiseMedia, shelfFor } from './media';
 
 const PROJECT = 'https://abcdefgh.supabase.co';
 const BUCKET = `${PROJECT}/storage/v1/object/public/faytarra-media/`;
@@ -179,5 +179,44 @@ describe('playback properties on a video', () => {
   it('keeps markup as the literal text it is', () => {
     const [overlay] = video({ text: [{ text: '<script>alert(1)</script>' }] })!.text!;
     assert.equal(overlay.text, '<script>alert(1)</script>');
+  });
+});
+
+/**
+ * The profile is three lists and this is the whole rule for which one a post is
+ * on. Derived rather than stored, so an old post lands correctly the first time
+ * somebody looks and nothing had to be migrated.
+ */
+describe('which shelf of a profile a post is on', () => {
+  const video = { kind: 'video' as const, url: 'v.mp4' };
+  const image = { kind: 'image' as const, url: 'p.jpg' };
+
+  it('a video post is under Videos', () => {
+    assert.equal(shelfFor([video]), 'videos');
+  });
+
+  it('a photo post is under Posts', () => {
+    assert.equal(shelfFor([image]), 'posts');
+    assert.equal(shelfFor([image, image]), 'posts');
+  });
+
+  it('a post with nothing attached is under Text', () => {
+    assert.equal(shelfFor([]), 'text');
+  });
+
+  /**
+   * The video wins. It is what people came to watch, and filing the post under
+   * Posts would hide it from the shelf it belongs on.
+   */
+  it('a post with a video AND photos is a video post', () => {
+    assert.equal(shelfFor([image, video]), 'videos');
+    assert.equal(shelfFor([video, image]), 'videos');
+  });
+
+  it('every post lands on exactly one shelf', () => {
+    for (const media of [[], [image], [video], [image, video]]) {
+      const shelf = shelfFor(media);
+      assert.ok(['videos', 'posts', 'text'].includes(shelf), JSON.stringify(media));
+    }
   });
 });

@@ -65,8 +65,10 @@ async function createAccount(browser, handle, interest, options = {}) {
 
 /** Posts one fixture as a video post and returns its post id. */
 async function postVideo(page, file, title, category, { description = '', tags = '' } = {}) {
-  await page.goto('/create', { waitUntil: 'domcontentloaded' });
-  await page.locator('button[role=tab]', { hasText: 'Video' }).click();
+  await page.goto('/create/video?upload=1', { waitUntil: 'domcontentloaded' });
+  // The video route, which replaced the Create page's Post/Video toggle.
+  // `?upload=1` lands on the chooser rather than opening the camera,
+  // which is what a suite that uploads a file wants.
   await page.waitForSelector('text=Post a video', { timeout: 15000 });
   await page.locator('input[type=file]').setInputFiles(fixture(file));
   // One video goes straight to the composer: no clips, no preview step, and
@@ -155,8 +157,10 @@ const run = async () => {
   }
   check('T. the tag is stored and searchable', found);
 
-  await A.page.goto('/create', { waitUntil: 'domcontentloaded' });
-  await A.page.locator('button[role=tab]', { hasText: 'Video' }).click();
+  await A.page.goto('/create/video?upload=1', { waitUntil: 'domcontentloaded' });
+  // The video route, which replaced the Create page's Post/Video toggle.
+  // `?upload=1` lands on the chooser rather than opening the camera,
+  // which is what a suite that uploads a file wants.
   await A.page.waitForSelector('text=Post a video', { timeout: 15000 });
   check(
     'T. the editor says two minutes, not three',
@@ -561,11 +565,23 @@ const run = async () => {
   /* ============================ nothing broken =========================== */
   section('UNCHANGED — the rest of FayTarra');
 
-  await C.page.goto('/home?tab=recommended', { waitUntil: 'domcontentloaded' });
+  // The Following feed rather than Recommended: what this is checking is that a
+  // video post is an ordinary post and still shows up in the ordinary feed, and
+  // Recommended cannot prove that on a seeded site — it is a ranked board, so a
+  // brand-new post from an account nobody has rated is not entitled to a place
+  // on the first page, and its absence says nothing about video posts. Following
+  // is deterministic: follow the person, see their post.
+  await C.page.goto(`/u/${a}`, { waitUntil: 'domcontentloaded' });
+  await C.page.waitForLoadState('networkidle');
+  const follow = C.page.locator('button:has-text("Follow")').first();
+  if (await follow.count()) await follow.click();
+  await C.page.waitForTimeout(1500);
+  await C.page.goto('/home?tab=following', { waitUntil: 'domcontentloaded' });
+  await C.page.waitForLoadState('networkidle');
   const home = await C.page.locator('body').innerText();
   check(
     '19. one video post is in the normal feed and the Videos feed both',
-    home.includes(`tall clip ${stamp}`) || home.includes(`wide clip ${stamp}`),
+    home.includes(`tall clip ${stamp}`) || home.includes(`square clip ${stamp}`),
   );
   check('19. Videos is in the navigation', (await C.page.locator('a[href="/videos"]').count()) >= 1);
   await C.page.goto('/discover', { waitUntil: 'domcontentloaded' });

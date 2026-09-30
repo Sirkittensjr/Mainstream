@@ -15,7 +15,7 @@ import {
   VolumeIcon,
 } from '@/components/Icons';
 import { settleDuration } from '@/lib/video/capture';
-import { formatSeconds } from '@/lib/video/limits';
+import { RECORD_CAPS, capLabel, formatSeconds } from '@/lib/video/limits';
 import { pickMimeType } from '@/lib/video/render';
 
 /**
@@ -83,6 +83,35 @@ export function VideoRecorder({
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [hasMic, setHasMic] = useState(true);
+  /**
+   * Whether to record sound at all.
+   *
+   * A decision, not a device fact — `hasMic` is whether a microphone is there,
+   * this is whether it should be used. Filming something to put other audio over,
+   * or in a room where the sound is not worth having, is a normal reason to want
+   * the picture without it.
+   *
+   * NOT the same thing as the editor's Sound tool, which silences PLAYBACK on a
+   * video that has audio. This one means the audio was never recorded.
+   */
+  const [wantsMic, setWantsMic] = useState(true);
+
+  /**
+   * The length this take is being filmed to.
+   *
+   * Defaults to the full budget, so nothing anybody could film before is out of
+   * reach now. A shorter cap is a commitment to something short: the ring on the
+   * shutter then means something the whole way round instead of creeping along a
+   * two-minute track.
+   */
+  const [cap, setCap] = useState<number>(maxSeconds);
+
+  /**
+   * What this take may run to: the chosen cap, or whatever is left of the overall
+   * budget, whichever is smaller. Declared here because the clock effect below
+   * stops on it.
+   */
+  const budget = Math.max(0, Math.min(remainingSeconds, cap));
 
   /** Torch, where the camera has one. Rear cameras sometimes do; front ones do not. */
   const [canFlash, setCanFlash] = useState(false);
@@ -123,7 +152,7 @@ export function VideoRecorder({
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: true,
+          audio: wantsMic,
         });
       } catch (micFailure) {
         // A refused microphone should not cost somebody the camera as well.
@@ -134,7 +163,7 @@ export function VideoRecorder({
         });
         withMic = false;
       }
-      setHasMic(withMic && stream.getAudioTracks().length > 0);
+      setHasMic(wantsMic && withMic && stream.getAudioTracks().length > 0);
       streamRef.current = stream;
 
       // Is there a torch on this camera? Asked of the track rather than assumed
@@ -162,7 +191,7 @@ export function VideoRecorder({
             : 'The camera could not be opened. You can upload a video instead.',
       );
     }
-  }, [facing, stopStream]);
+  }, [facing, wantsMic, stopStream]);
 
   useEffect(() => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
@@ -190,10 +219,10 @@ export function VideoRecorder({
     const timer = window.setInterval(() => {
       const seconds = (Date.now() - startedAt.current) / 1000;
       setElapsed(seconds);
-      if (seconds >= remainingSeconds) recorderRef.current?.stop();
+      if (seconds >= budget) recorderRef.current?.stop();
     }, 100);
     return () => window.clearInterval(timer);
-  }, [status, remainingSeconds]);
+  }, [status, budget]);
 
   async function toggleFlash() {
     const [videoTrack] = streamRef.current?.getVideoTracks() ?? [];
@@ -249,7 +278,7 @@ export function VideoRecorder({
     recorder.start(1000);
   }
 
-  const left = Math.max(0, remainingSeconds - elapsed);
+  const left = Math.max(0, budget - elapsed);
   const recording = status === 'recording';
 
   /** Keeps the take and hands it up. `then` says where the caller goes next. */
@@ -457,7 +486,7 @@ export function VideoRecorder({
         <div className="absolute inset-x-0 top-0 z-10 h-[3px] bg-white/15">
           <div
             className="h-full bg-gradient-to-r from-solar via-fay to-fay-soft transition-[width] duration-100"
-            style={{ width: `${Math.min(100, (elapsed / Math.max(1, maxSeconds)) * 100)}%` }}
+            style={{ width: `${Math.min(100, (elapsed / Math.max(1, budget)) * 100)}%` }}
           />
         </div>
       )}
@@ -490,7 +519,7 @@ export function VideoRecorder({
             </span>
           ) : (
             <span className="rounded-full bg-black/35 px-3 py-1.5 text-[13px] font-semibold tabular-nums text-white/80 backdrop-blur-md">
-              {formatSeconds(remainingSeconds)}
+              {formatSeconds(budget)}
             </span>
           )}
 
@@ -525,6 +554,26 @@ export function VideoRecorder({
               <FlashIcon off={!flashOn} />
             </button>
           )}
+
+          {/* Sound: whether the microphone is used at all. NOT the editor's Sound
+              tool, which silences playback on a video that has audio — this one
+              decides whether there is any audio to silence. Filming something to
+              put other audio over is a normal reason to want the picture alone.
+
+              It is not the "Add Sound" of a music-library app: FayTarra has no
+              track catalogue, and a button that looked like one and did nothing
+              would be worse than not having it. */}
+          <button
+            type="button"
+            onClick={() => setWantsMic((current) => !current)}
+            disabled={recording}
+            className={`${TOOL} ${wantsMic ? '' : 'bg-white text-ink-950'}`}
+            aria-label={wantsMic ? 'Record without sound' : 'Record with sound'}
+            aria-pressed={!wantsMic}
+            data-camera-mic={wantsMic ? 'on' : 'off'}
+          >
+            <VolumeIcon muted={!wantsMic} />
+          </button>
         </div>
       </div>
 
@@ -553,14 +602,44 @@ export function VideoRecorder({
           </div>
         </div>
       )}
-      {!hasMic && status !== 'denied' && !error && (
-        <p className="absolute inset-x-0 bottom-[164px] z-10 mx-auto w-fit rounded-full bg-black/60 px-3 py-1.5 text-xs text-white/70 backdrop-blur-md">
+      {/* Only when a microphone was WANTED and is not available. Switching sound
+          off deliberately is not a problem to be told about. */}
+      {wantsMic && !hasMic && status !== 'denied' && !error && (
+        <p className="absolute inset-x-0 bottom-[204px] z-10 mx-auto w-fit rounded-full bg-black/60 px-3 py-1.5 text-xs text-white/70 backdrop-blur-md">
           No microphone — this will record without sound
         </p>
       )}
 
       {/* -------------------------------------------------------- bottom */}
       <div className="safe-bottom safe-x absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-6 pb-2 pt-16">
+        {/* How long this one is going to be, chosen before filming and gone once
+            it starts — the length of a take is not something to change mid-take.
+            All three stay selectable while there is any budget left, and the clock
+            above tells the truth about what a choice actually buys: it shows
+            `budget`, which is the cap or what is left of the two minutes,
+            whichever is smaller. So picking 2m on a second clip with twenty
+            seconds left reads 0:20 rather than promising two minutes. */}
+        {!recording && status !== 'denied' && remainingSeconds >= 1 && (
+          <div className="mb-4 flex items-center justify-center gap-2" data-camera-caps>
+            {RECORD_CAPS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => setCap(option)}
+                aria-pressed={cap === option}
+                data-camera-cap={option}
+                className={`min-h-[34px] rounded-full px-3.5 text-[13px] font-bold transition ${
+                  cap === option
+                    ? 'bg-white text-ink-950'
+                    : 'bg-black/35 text-white/70 backdrop-blur-md'
+                }`}
+              >
+                {capLabel(option)}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="flex items-center justify-between">
           {/* Camera roll. Left, so the record button stays dead centre. */}
           <div className="w-14">
@@ -580,8 +659,9 @@ export function VideoRecorder({
           <RecordButton
             recording={recording}
             disabled={status !== 'ready' && !recording}
-            spent={remainingSeconds < 0.5}
-            progress={recording ? Math.min(1, elapsed / Math.max(1, maxSeconds)) : 0}
+            spent={budget < 0.5}
+            // Against the CHOSEN length, which is the point of choosing one.
+            progress={recording ? Math.min(1, elapsed / Math.max(1, budget)) : 0}
             onClick={() => (recording ? recorderRef.current?.stop() : start())}
           />
 

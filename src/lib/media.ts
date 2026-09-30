@@ -190,3 +190,23 @@ export function sanitiseAvatarUrl(input: unknown): string | null {
 export function firstVideo(media: Media[]): Media | null {
   return media.find((item) => item.kind === 'video') ?? null;
 }
+
+/**
+ * Which shelf of a profile a post belongs on.
+ *
+ * The profile is three lists — Videos, Posts, Text — and this is the only rule
+ * that decides which. It is derived from the media a post carries rather than
+ * stored on it, so nothing had to be migrated and an old post lands in the right
+ * place the first time somebody looks.
+ *
+ * A post with both a video and photos counts as a video: the video is the thing
+ * people came to watch, and putting it under Posts would hide it from the shelf
+ * it belongs on.
+ */
+export type PostShelf = 'videos' | 'posts' | 'text';
+
+export function shelfFor(media: Media[]): PostShelf {
+  if (media.some((item) => item.kind === 'video')) return 'videos';
+  if (media.length > 0) return 'posts';
+  return 'text';
+}

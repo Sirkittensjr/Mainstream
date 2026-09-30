@@ -332,18 +332,35 @@ untouched take.
 
 Covers, in the order somebody walks it:
 
-- **Getting there.** Create from the bottom navigation, the Post tab still beside
-  Video, and the camera opening **by itself** — no chooser card in between,
-  because tapping + then Video on a phone is already a decision to use the
-  camera. Uploading stays reachable in both directions: a camera-roll button on
-  the camera, and the file chooser behind the X.
+- **Getting there.** The **+ in the bottom navigation is the camera**. It is
+  labelled "Record a video", it links straight to `/create/video`, and the
+  viewfinder is what opens — there is no Create page in between and no Post/Video
+  toggle to choose from, because tapping + on a phone is already a decision to
+  film something. The suite asserts all of that, and that the Create page was
+  demoted rather than deleted: `/create` still answers, still carries the photo
+  form, and no longer has a `role="tab"` anywhere — checked over `fetch` so the
+  camera is not torn down to find out. It also offers the camera back, through a
+  `data-to-camera` link, for somebody who landed there wanting to film something.
+  Uploading stays reachable in both directions: a camera-roll button on the
+  camera, and the file chooser behind the X.
 - **The camera screen.** The preview measured to fill the whole viewport, with
   `object-fit: cover` and its top edge at 0 — a letterboxed preview between two
   solid bars is the thing that makes a web camera feel like a web page. The
   2-minute budget, front/rear switching that keeps the camera open, flash shown
   only where the camera reports a torch, every control at least 44px, and the
   close and record buttons clear of the top and bottom edges the notch and home
-  indicator occupy.
+  indicator occupy. Also the **three duration caps** — 15s, 60s and 2 minutes —
+  all three offered and labelled, the full two minutes chosen to begin with (so
+  nothing anybody could film before is out of reach), each one a tap target, the
+  chooser gone while filming, and picking one moving the budget the clock and the
+  shutter's ring are both measured against: choosing 15s makes the clock read 0:15
+  and going back makes it read 2:00 again. The budget is the cap or what is left of
+  the two minutes, whichever is smaller, so a cap never promises more than it can
+  give. And the **sound control**: recording with the microphone off is a real
+  `getUserMedia` with no audio track rather than a muted one, so the suite reads
+  the track count off the live stream and not the button's state. It is not the
+  "Add sound" of a music-library app — FayTarra has no track catalogue, and a
+  button that looked like one and did nothing would be worse than not having it.
 - **Recording.** That nothing claims to be recording before it is, that the REC
   indicator then appears and says so in words, and that the shutter's ring is
   partly filled — read off the SVG arc's `stroke-dashoffset`, so it is the real
@@ -370,7 +387,17 @@ Covers, in the order somebody walks it:
 - **The post.** The upload route the server chose, the video reaching the Videos
   feed and the normal feed **as seen by a second account**, and the content
   warning in front of it.
-- **Desktop.** The file picker still offered and still first at desktop width.
+- **The profile shelves.** Videos, Posts, Text and About, in that order, each a
+  tap target and the row fitting the phone. The video that was just recorded is on
+  **Videos**, with "upload a video you already have" beside it going to
+  `/create/video?upload=1` — the chooser, not the camera. **Text** carries the
+  writing form that used to be a tab on the Create page, and a post written there
+  lands on that shelf and provably not on Videos. **Posts** points at `/create`
+  for a photo post and does not list the video. Nothing was migrated to make this
+  work: each shelf is the same list filtered by what its posts carry, so an old
+  post lands on the right one by itself.
+- **Desktop.** The file picker still offered and still first at desktop width,
+  reached through `/create/video?upload=1`.
 
 **Two of these checks are worth knowing about.**
 
@@ -392,12 +419,22 @@ lands in the editor and reaching the caption means tapping Next. That suite has 
 `reachPostingScreen` helper which taps it when the editor is showing and does
 nothing on a desktop, where there is no such stage.
 
-**The camera opens itself at phone width**, which three other suites had to be
-told about: `video-upload-flow.mjs` and `video-flow.mjs` close it to get at the
-editor they are actually testing (and check that it appeared), and
-`video-cover-flow.mjs` needs nothing because its phone context has no touch, so
-it never triggers. The condition is narrow AND coarse — a phone, not a small
-window — so desktop is untouched.
+**The camera opens itself at phone width**, which is why `/create/video` has a
+second door. A bare `/create/video` opens the viewfinder on a phone; `?upload=1`
+lands on the chooser with the camera off, which is what the profile's "upload a
+video you already have" wants and what every suite handing over a file from disk
+wants. `video-flow.mjs`, `video-upload-flow.mjs`, `videos-flow.mjs` and
+`video-cover-flow.mjs` all go through that door. The phone condition is narrow AND
+coarse — `(max-width: 639px) and (pointer: coarse)`, evaluated once on mount — so
+a small desktop window is not a phone and desktop is untouched.
+
+**A soft navigation is not a page load.** The profile's shelf tabs are `<Link>`s,
+so switching shelf fetches an RSC payload and only then changes the URL and
+re-renders — about a second on the seeded store. `waitForLoadState('networkidle')`
+does not cover that (there is no document load to wait on, so it returns straight
+away), which made the shelf checks read the shelf they were already on. The suite
+has an `openShelf` helper that waits for the tab to claim `aria-current` instead,
+which is waiting for the render rather than for the network.
 
 **On TUS.** Against the local driver `/api/upload/sign` answers `post`, so the
 resumable branch does not run and the suite says so rather than claiming
@@ -860,14 +897,31 @@ it:
 
 ### Which store each suite wants
 
-`auth-flow`, `video-flow`, `videos-flow`, `video-upload-flow`,
-`messaging-flow`, `profile-colours-flow`, `top-creators-flow` and
-`social-navigation` create their own accounts and want an EMPTY store
+`auth-flow`, `features-flow`, `video-flow`, `videos-flow`, `video-upload-flow`,
+`video-cover-flow`, `mobile-record-flow`, `messaging-flow`,
+`profile-colours-flow`, `top-creators-flow`, `auto-review-flow`, `admin-badge`
+and `social-navigation` create their own accounts and want an EMPTY store
 (`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and
 `social-flow` sign in as the seeded demo accounts and check against them —
 `signup-form-state` takes `tommy` as its already-taken username — so those need
 `npm run seed` first. Running them against the wrong one reports failures that
-are not failures.
+are not failures: `features-flow` against the seeded store fails three Discover
+checks, because Discover is a ranked board and a brand-new post with no ratings
+is not entitled to a place on it next to hundreds of seeded ones. That is the
+ranking working.
+
+**The admin suites need the admin's email in the environment**, and they do not
+all use the same one: `admin-badge.mjs` signs its admin up as
+`admin@faytarra.com` while the seeded store's admin is `admin@faytarra.app`.
+`ADMIN_EMAILS` takes a list, so one server can satisfy both:
+
+```bash
+ADMIN_EMAILS=admin@faytarra.com,admin@faytarra.app \
+  ADMIN_SESSION_SECRET=any-long-string npm start &
+```
+
+Without it every badge check fails at once, which looks like the badge being
+broken and is only the account never having been made an admin.
 
 ### A note on running these back to back
 

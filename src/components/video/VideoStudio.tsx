@@ -71,7 +71,20 @@ interface Finished {
   previewUrl: string;
 }
 
-export function VideoStudio() {
+export function VideoStudio({
+  /**
+   * What to show first.
+   *
+   * `camera` is the + button: a viewfinder, immediately, because that is what was
+   * asked for. `chooser` is the profile's "upload a video": somebody who already
+   * has the file does not want their camera turned on to give it to us. Stated
+   * rather than inferred from the device, because the two routes mean different
+   * things on the same phone.
+   */
+  start = 'chooser',
+}: {
+  start?: 'camera' | 'chooser';
+} = {}) {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
   const objectUrls = useRef<string[]>([]);
@@ -124,11 +137,12 @@ export function VideoStudio() {
     if (autoOpened.current) return;
     autoOpened.current = true;
     if (typeof window === 'undefined' || !window.matchMedia) return;
-    const isPhone = window.matchMedia('(max-width: 639px) and (pointer: coarse)').matches;
-    setPhone(isPhone);
+    // Still needed after `start`: it decides whether the three mobile stages run
+    // at all, which is a question about the screen rather than about the route.
+    setPhone(window.matchMedia('(max-width: 639px) and (pointer: coarse)').matches);
     const canRecordHere = Boolean(navigator.mediaDevices?.getUserMedia);
-    if (isPhone && canRecordHere) setRecording(true);
-  }, []);
+    if (start === 'camera' && canRecordHere) setRecording(true);
+  }, [start]);
 
   /**
    * Which of the three mobile stages is showing.
@@ -1021,13 +1035,17 @@ export function VideoStudio() {
           options is open, and the one button somebody came here to press should
           not be the one they have to go looking for. Static from `sm:` up, where
           the whole screen fits and a floating bar would be noise. */}
-      <div className="safe-bottom sticky bottom-0 -mx-4 bg-gradient-to-t from-ink-950 via-ink-950/95 to-transparent px-4 pb-2 pt-4 sm:static sm:mx-0 sm:bg-none sm:p-0">
+      {/* `pointer-events-none` on the bar and `auto` on the button: the bar's
+          transparent gradient sits over whatever is scrolled underneath it, and
+          without this it swallows taps on those controls rather than letting them
+          through. Measured — it ate the More options button. */}
+      <div className="safe-bottom pointer-events-none sticky bottom-0 -mx-4 bg-gradient-to-t from-ink-950 via-ink-950/95 to-transparent px-4 pb-2 pt-4 sm:static sm:mx-0 sm:bg-none sm:p-0">
         <button
           type="button"
           onClick={() => void post()}
           disabled={posting || Boolean(busy)}
           data-post-button
-          className="btn-primary min-h-[56px] w-full py-4"
+          className="btn-primary pointer-events-auto min-h-[56px] w-full py-4"
         >
           {posting ? 'Posting…' : 'Post video'}
         </button>

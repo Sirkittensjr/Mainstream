@@ -86,6 +86,24 @@ async function phoneAccount(browser, handle) {
   return { context, page, email, handle };
 }
 
+/**
+ * Taps a profile shelf and waits for it to actually open.
+ *
+ * The tab bar is a set of `<Link>`s, so switching shelf is an App Router soft
+ * navigation: the RSC payload is fetched, and only when it arrives does the URL
+ * change and the shelf re-render. `waitForLoadState('networkidle')` does not
+ * cover that — there is no document load to wait on, so it returns straight
+ * away and everything read after it is the shelf you were already on. Measured
+ * at about a second on the seeded store. Waiting for the tab to claim
+ * `aria-current` is waiting for the render, which is the thing being asserted.
+ */
+async function openShelf(page, shelf) {
+  await page.locator(`[data-profile-tab="${shelf}"]`).click();
+  await page.waitForSelector(`[data-profile-tab="${shelf}"][aria-current="page"]`, {
+    timeout: 20000,
+  });
+}
+
 /** Records for `seconds`, then stops and waits for the review screen. */
 async function record(page, seconds) {
   await page.locator('button[aria-label="Start recording"]').click();
@@ -115,30 +133,49 @@ async function run() {
   const { page } = me;
 
   /* ===================== getting to the camera ===================== */
-  section('CREATE -> VIDEO -> CAMERA, ON A PHONE');
+  section('+ IS A CAMERA BUTTON');
 
   // Through the bottom navigation, the way somebody on a phone gets there.
   await page.goto('/home', { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle');
-  // `:visible` matters: the desktop sidebar's link to /create is in the DOM at
-  // phone width too, just hidden, and it is the first match without this.
-  await page.locator('a[href="/create"]:visible').first().click();
-  await page.waitForURL(/\/create/, { timeout: 15000 });
-  check('the + in the bottom navigation opens Create', true, page.url());
-  check('Create fits the phone screen', (await sideways(page)) === 0, `${await sideways(page)}px`);
 
-  await page.locator('button[role=tab]', { hasText: 'Video' }).click();
+  // `:visible` matters: the desktop sidebar has the same links in the DOM at phone
+  // width, just hidden, and they are the first matches without this.
+  const plus = page.locator('a[href="/create/video"]:visible').first();
+  check('the + in the bottom navigation is a camera button', (await plus.count()) === 1);
   check(
-    'the Post tab is still there beside it',
-    (await page.locator('button[role=tab]', { hasText: 'Post' }).count()) === 1,
+    'and it says so',
+    (await plus.getAttribute('aria-label')) === 'Record a video',
+    String(await plus.getAttribute('aria-label')),
   );
+  await plus.click();
+  await page.waitForURL(/\/create\/video/, { timeout: 15000 });
 
-  // The camera opens ITSELF. Tapping + and then Video on a phone is already a
-  // decision to use the camera, and a chooser card in between is a form in front
-  // of the thing somebody asked for.
+  // The camera, with nothing in between: no Create page, no Post/Video toggle.
   await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 25000 });
-  check('the camera opens on its own — no chooser in the way', true);
+  check('tapping it opens the camera directly', true, page.url());
+  check(
+    'with no Post/Video toggle anywhere',
+    (await page.locator('[role=tab]').count()) === 0,
+  );
+  check(
+    'and no generic Create page in the way',
+    !/New post|Post a video/.test(await page.locator('body').innerText()),
+  );
   check('the camera fills the screen without overflowing', (await sideways(page)) === 0);
+
+  // The Create page was not deleted, it was demoted: photo posts still live
+  // there, and it is what the Posts shelf of a profile points at. Asked over HTTP
+  // rather than by navigating, so the camera is not torn down to find out.
+  const createPage = await page.evaluate(async () => {
+    const response = await fetch('/create');
+    return { ok: response.ok, body: await response.text() };
+  });
+  check('/create is still there for photo posts', createPage.ok);
+  check(
+    'and carries no Post/Video toggle either',
+    !createPage.body.includes('role="tab"'),
+  );
 
   // Uploading has to stay reachable from a phone, in both directions: a button
   // to the camera roll on the camera itself, and the chooser behind the X.
@@ -201,6 +238,98 @@ async function run() {
     flash === 1 ? 'this camera reports a torch' : 'no torch on this camera, so no control',
   );
 
+  /* ------------------------- how long this one is ------------------------- */
+  // 15s, 60s, 2 minutes. The cap is a decision about the take, made before
+  // filming, and the whole point of it is that the clock and the shutter's ring
+  // then mean something — so what is checked is the BUDGET moving, not a class
+  // name on a chip.
+  const caps = page.locator('[data-camera-cap]');
+  check('three lengths are offered', (await caps.count()) === 3);
+  check(
+    'and they are 15s, 60s and 2 minutes',
+    JSON.stringify(await caps.evaluateAll((nodes) => nodes.map((n) => n.dataset.cameraCap))) ===
+      JSON.stringify(['15', '60', '120']),
+    (await caps.allInnerTexts()).join(' / ').replace(/\n/g, ''),
+  );
+  check(
+    'labelled the way a camera labels them',
+    JSON.stringify((await caps.allInnerTexts()).map((t) => t.trim())) ===
+      JSON.stringify(['15s', '60s', '2m']),
+  );
+  check(
+    'the full two minutes is the one already chosen',
+    (await page.locator('[data-camera-cap="120"]').getAttribute('aria-pressed')) === 'true',
+  );
+  check(
+    'each length is big enough to tap',
+    await caps.evaluateAll((nodes) =>
+      nodes.every((n) => n.getBoundingClientRect().height >= 34),
+    ),
+    (await caps.evaluateAll((nodes) => nodes.map((n) => Math.round(n.getBoundingClientRect().height)))).join(', '),
+  );
+
+  await page.locator('[data-camera-cap="15"]').click();
+  await wait(300);
+  check(
+    'choosing 15s shortens the budget on the clock',
+    /0:15/.test((await timer.innerText()).trim()),
+    (await timer.innerText()).trim().replace(/\n/g, ' '),
+  );
+  check(
+    'and moves which one is chosen',
+    (await page.locator('[data-camera-cap="15"]').getAttribute('aria-pressed')) === 'true' &&
+      (await page.locator('[data-camera-cap="120"]').getAttribute('aria-pressed')) === 'false',
+  );
+  await page.locator('[data-camera-cap="120"]').click();
+  await wait(300);
+  check(
+    'and going back to 2 minutes restores it',
+    /2:00/.test((await timer.innerText()).trim()),
+    (await timer.innerText()).trim().replace(/\n/g, ' '),
+  );
+
+  /* ---------------------------- sound or not ---------------------------- */
+  // Whether the microphone is used AT ALL, which is not the editor's Sound tool
+  // (that silences playback on a video which has audio). So the check is the
+  // track count on the live stream, not a button's state: recording without
+  // sound has to mean there was never any.
+  const mic = page.locator('[data-camera-mic]');
+  check('sound can be turned off before filming', (await mic.count()) === 1);
+  const audioTracks = () =>
+    page.locator('video').first().evaluate((v) => v.srcObject?.getAudioTracks().length ?? -1);
+  check('it is on to start with', (await mic.getAttribute('data-camera-mic')) === 'on');
+  check('and the camera really has an audio track', (await audioTracks()) === 1, `${await audioTracks()} tracks`);
+  await mic.click();
+  await page.waitForFunction(
+    () => {
+      const video = document.querySelector('video');
+      return video?.srcObject?.getAudioTracks().length === 0;
+    },
+    undefined,
+    { timeout: 15000 },
+  ).catch(() => undefined);
+  check('turning it off says so', (await mic.getAttribute('data-camera-mic')) === 'off');
+  check(
+    'and reopens the camera with NO audio track, not a muted one',
+    (await audioTracks()) === 0,
+    `${await audioTracks()} tracks`,
+  );
+  check(
+    'the camera is still usable with sound off',
+    (await page.locator('button[aria-label="Start recording"]').count()) === 1,
+  );
+  // Back on, because the rest of the suite is about a video with sound.
+  await mic.click();
+  await page.waitForFunction(
+    () => {
+      const video = document.querySelector('video');
+      return video?.srcObject?.getAudioTracks().length === 1;
+    },
+    undefined,
+    { timeout: 15000 },
+  ).catch(() => undefined);
+  check('and it can be turned back on', (await audioTracks()) === 1, `${await audioTracks()} tracks`);
+
   for (const label of ['Close the camera', 'Switch camera', 'Start recording']) {
     const size = await page
       .locator(`button[aria-label="${label}"]`)
@@ -237,6 +366,10 @@ async function run() {
   await page.waitForSelector('button[aria-label="Stop recording"]', { timeout: 15000 });
   const indicator = page.locator('[data-recording-indicator]');
   check('recording is clearly indicated', (await indicator.count()) === 1);
+  check(
+    'and the length chooser is out of the way while filming',
+    (await page.locator('[data-camera-caps]').count()) === 0,
+  );
   check('and says so in words', /REC/.test(await indicator.innerText()), (await indicator.innerText()).trim());
   await wait(2500);
   check(
@@ -832,8 +965,7 @@ async function run() {
   // Trim is the one tool that changes the bytes, so it is the one that has to be
   // followed to the finished post. Sound and text are playback properties and
   // cost no render pass — proved above, where the pass never ran.
-  await page.goto('/create', { waitUntil: 'domcontentloaded' });
-  await page.locator('button[role=tab]', { hasText: 'Video' }).click();
+  await page.goto('/create/video', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 25000 });
   await record(page, 6);
   await page.locator('button', { hasText: 'Continue' }).click();
@@ -889,6 +1021,97 @@ async function run() {
     `stored ${storedDuration}s against a ${target.toFixed(1)}s trim of a ${fullLength.toFixed(1)}s take`,
   );
 
+  /* ================= the profile is where content lives ================= */
+  section('PROFILE: VIDEOS, POSTS, TEXT');
+
+  // The three kinds of creation that used to sit behind one Create page are now
+  // in three places, and the profile is where two of them went.
+  await page.goto(`/u/${me.handle}`, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle');
+  const shelves = await page
+    .locator('[data-profile-tab]')
+    .evaluateAll((nodes) => nodes.map((node) => node.dataset.profileTab));
+  check(
+    'the profile has Videos, Posts, Text and About',
+    JSON.stringify(shelves) === JSON.stringify(['videos', 'posts', 'text', 'about']),
+    shelves.join(', '),
+  );
+  check('and they fit the phone', (await sideways(page)) === 0, `${await sideways(page)}px`);
+  const tabSizes = await page
+    .locator('[data-profile-tab]')
+    .evaluateAll((nodes) => nodes.map((n) => Math.round(n.getBoundingClientRect().height)));
+  // 44px, the same bar every other control in this flow is held to: these four
+  // are navigation, not filter chips.
+  check('each is a tap target', tabSizes.every((h) => h >= 44), tabSizes.join(', '));
+
+  // Videos: the posted video is here, and a pre-recorded one can be added.
+  await openShelf(page, 'videos');
+  const videoShelf = await page.locator('body').innerText();
+  check('the videos shelf lists the video that was just posted', videoShelf.includes(title));
+  check(
+    'and offers to upload a pre-recorded one',
+    (await page.locator('[data-upload-video]').count()) === 1,
+  );
+  await page.locator('[data-upload-video]').click();
+  await page.waitForURL(/\/create\/video/, { timeout: 15000 });
+  await page.waitForTimeout(1200);
+  check(
+    'which opens the chooser rather than the camera',
+    (await page.locator('button[aria-label="Start recording"]').count()) === 0 &&
+      (await page.locator('button', { hasText: 'Choose a file' }).count()) === 1,
+  );
+
+  // Text: a written post is made from here, and lands on this shelf.
+  await page.goto(`/u/${me.handle}?tab=text`, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle');
+  check(
+    'the text shelf has somewhere to write',
+    (await page.locator('[data-text-post-form]').count()) === 1,
+  );
+  const thought = `a written thought ${stamp}`;
+  await page.fill('#text-post-caption', thought);
+  await page.locator('[data-text-post-submit]').click();
+  await page.waitForTimeout(2500);
+  await page.goto(`/u/${me.handle}?tab=text`, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle');
+  const textShelf = await page.locator('body').innerText();
+  check('a text post can be written there', textShelf.includes(thought));
+  check(
+    'and it does NOT appear on the videos shelf',
+    !(await (await page.goto(`/u/${me.handle}?tab=videos`))?.text())?.includes(thought),
+  );
+
+  // Photos keep their own page, reachable from the Posts shelf.
+  await page.goto(`/u/${me.handle}`, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle');
+  check(
+    'the posts shelf points at the photo post page',
+    (await page.locator('[data-new-photo-post]').count()) === 1,
+  );
+  check(
+    'and the video is not on it',
+    !(await page.locator('body').innerText()).includes(title),
+    'videos live on their own shelf',
+  );
+
+  // And the way back across. Somebody who went to the photo page wanting to film
+  // something should not have to find the + again.
+  await page.locator('[data-new-photo-post]').click();
+  await page.waitForURL(/\/create$/, { timeout: 15000 });
+  check(
+    'the photo page offers the camera as well',
+    (await page.locator('[data-to-camera]').count()) === 1,
+  );
+  check(
+    'and it goes to the camera route',
+    (await page.locator('[data-to-camera]').getAttribute('href')) === '/create/video',
+  );
+  check(
+    'while still being the photo form itself',
+    (await page.locator('textarea[name=caption]').count()) === 1 &&
+      (await page.locator('[role=tab]').count()) === 0,
+  );
+
   /* ========================== desktop is untouched ========================== */
   section('THE DESKTOP FILE UPLOAD STILL WORKS');
 
@@ -898,10 +1121,15 @@ async function run() {
     storageState: await me.context.storageState(),
   });
   const wide = await desktop.newPage();
-  await wide.goto('/create', { waitUntil: 'domcontentloaded' });
+  // `?upload=1` is the chooser rather than the camera — a desktop that came to
+  // give us a file it already has should not have its webcam switched on.
+  await wide.goto('/create/video?upload=1', { waitUntil: 'domcontentloaded' });
   await wide.waitForLoadState('networkidle');
-  await wide.locator('button[role=tab]', { hasText: 'Video' }).click();
   await wide.waitForTimeout(400);
+  check(
+    'a desktop asking to upload gets the chooser, not the camera',
+    (await wide.locator('button[aria-label="Start recording"]').count()) === 0,
+  );
   check(
     'the file picker is still offered on desktop',
     (await wide.locator('button', { hasText: 'Choose a file' }).count()) === 1,

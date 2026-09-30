@@ -153,24 +153,19 @@ async function reachPostingScreen(page, timeout = 30000) {
 }
 
 /**
- * Opens the Video tab and gets to the chooser.
+ * Gets to the file chooser.
  *
- * On a phone the camera opens itself there — tapping + then Video is already a
- * decision to use it — so this closes it, which is also how somebody who wanted
- * to upload gets to the picker. Returns whether the camera had to be dismissed,
- * so the caller can check that it appeared at all.
+ * The video studio has its own route now, and two doors into it. A bare
+ * `/create/video` opens the viewfinder on a phone — that is what the + button is
+ * — and `?upload=1` lands on the chooser with the camera off, which is the door
+ * the profile's "upload a video you already have" uses and the one a suite handing
+ * over a file wants. Returns whether the camera stayed shut, so the caller can
+ * check that this door really is the other one.
  */
 async function openStudio(page) {
-  await page.goto('/create', { waitUntil: 'domcontentloaded' });
-  await page.locator('button[role=tab]', { hasText: 'Video' }).click();
-  const close = page.locator('button[aria-label="Close the camera"]');
-  const cameraOpened = await close
-    .waitFor({ timeout: 20000 })
-    .then(() => true)
-    .catch(() => false);
-  if (cameraOpened) await close.click();
-  await page.waitForSelector('text=Post a video', { timeout: 15000 });
-  return cameraOpened;
+  await page.goto('/create/video?upload=1', { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('text=Post a video', { timeout: 20000 });
+  return (await page.locator('button[aria-label="Close the camera"]').count()) === 0;
 }
 
 const run = async () => {
@@ -191,9 +186,11 @@ const run = async () => {
   /* ============================== the simple UI ========================== */
   section('SIMPLE — one video, no clips anywhere');
 
-  // This suite is about the FILE path, so openStudio closes the camera that now
-  // opens itself on a phone. That it opened is worth recording here.
-  check('the camera opens itself on a phone', await openStudio(A.page));
+  // This suite is about the FILE path, so it goes through `?upload=1` — the door
+  // that does not switch the camera on. That it does not is worth recording here,
+  // because a phone getting a viewfinder when it asked to hand over a file is the
+  // regression this route exists to avoid.
+  check('?upload=1 gives a phone the chooser, not the camera', await openStudio(A.page));
 
   const empty = await A.page.locator('body').innerText();
   check('the first screen says what fits', /2 minutes and 250MB/.test(empty), empty.split('\n').find((l) => /minutes and/.test(l)));
@@ -442,7 +439,13 @@ const run = async () => {
   const needle = `phone clip ${stamp}`;
   check('it is in the normal feed', await appears(B.page, '/home?tab=recommended', needle), summarise());
   check('and in the Videos feed', await appears(B.page, '/videos', needle), summarise());
-  check('and on the creator profile', await appears(B.page, `/u/${A.handle}`, needle), summarise());
+  // The videos shelf: a profile keeps videos, photo posts and writing on three
+  // tabs now, and the default one is photo posts.
+  check(
+    'and on the creator profile',
+    await appears(B.page, `/u/${A.handle}?tab=videos`, needle),
+    summarise(),
+  );
   check(
     'and findable by its tag',
     await appears(B.page, `/search?q=phone${stamp}`, needle),

@@ -16,6 +16,9 @@ import { RateButton } from '@/components/RateSheet';
 import { formatCount } from '@/lib/format';
 import { profileSkin } from '@/lib/profile-theme';
 import { formatVotes, topReactions } from '@/lib/ratings';
+import { PlusIcon } from '@/components/Icons';
+import { shelfFor, type PostShelf } from '@/lib/media';
+import { TextPostForm } from './TextPostForm';
 import { hydratePosts, postsByAuthor } from '@/lib/services/posts';
 import { myRating, userRating } from '@/lib/services/ratings';
 import { userRanks } from '@/lib/services/rankings';
@@ -42,7 +45,39 @@ export async function generateMetadata({
   return { title: user ? `${user.display_name} (@${user.username})` : 'Profile' };
 }
 
-const TABS = ['posts', 'about'] as const;
+/**
+ * The profile's shelves.
+ *
+ * Videos first, because a video is the thing FayTarra is built around and the
+ * `+` button now makes nothing else. Each shelf is the same list filtered by what
+ * its posts carry — see `shelfFor` — so nothing was migrated and an old post
+ * lands on the right one the first time somebody looks.
+ *
+ * Their owner also gets a way to ADD to two of them here: a pre-recorded video
+ * under Videos, and a written post under Text. Those are the two kinds of
+ * creation that used to be behind the Create page's toggle, and this is where
+ * they went.
+ */
+const TABS = ['videos', 'posts', 'text', 'about'] as const;
+
+/** What an empty shelf says. Three lists deserve three answers. */
+const SHELF_EMPTY: Record<PostShelf, { title: string; mine: string; theirs: string }> = {
+  videos: {
+    title: 'No videos yet',
+    mine: 'Record one with the + button, or upload one you already have.',
+    theirs: 'has not posted a video yet. Follow to be there when they do.',
+  },
+  posts: {
+    title: 'No photo posts yet',
+    mine: 'A photo and something to say. It shows up here.',
+    theirs: 'has not posted a photo yet. Follow to be there when they do.',
+  },
+  text: {
+    title: 'Nothing written yet',
+    mine: 'Say something. No picture needed.',
+    theirs: 'has not written anything yet. Follow to be there when they do.',
+  },
+};
 
 export default async function ProfilePage({
   params,
@@ -56,6 +91,7 @@ export default async function ProfilePage({
   const tab = TABS.includes((tabParam ?? '') as (typeof TABS)[number])
     ? (tabParam as (typeof TABS)[number])
     : 'posts';
+  const shelf = tab === 'about' ? null : (tab as PostShelf);
 
   const user = await getUserByUsername(username);
   if (!user) notFound();
@@ -81,9 +117,18 @@ export default async function ProfilePage({
 
   const requested = Number.parseInt(show ?? '', 10);
   const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 20), 200) : 20;
-  const posts = blocked ? [] : await hydratePosts(allPosts.slice(0, limit), viewer?.id ?? null);
+  // One query, three shelves. The filter is on what a post carries rather than on
+  // a column, so `postsByAuthor` — and the rule it already applies about what a
+  // given viewer may see — is untouched.
+  const shelved = shelf ? allPosts.filter((post) => shelfFor(post.media) === shelf) : [];
+  const posts = blocked ? [] : await hydratePosts(shelved.slice(0, limit), viewer?.id ?? null);
+  const counts = {
+    videos: allPosts.filter((post) => shelfFor(post.media) === 'videos').length,
+    posts: allPosts.filter((post) => shelfFor(post.media) === 'posts').length,
+    text: allPosts.filter((post) => shelfFor(post.media) === 'text').length,
+  };
   const moreHref = `/u/${user.username}?${new URLSearchParams({
-    ...(tab === 'about' ? { tab } : {}),
+    ...(tab === 'posts' ? {} : { tab }),
     show: String(Math.min(limit + 20, 200)),
   })}`;
   const rated = rating.overallVotes > 0;
@@ -273,14 +318,25 @@ export default async function ProfilePage({
             </div>
           </header>
 
-          <nav className="profile-tabs mt-6 flex gap-2">
+          {/* Scrollable, because four chips and a count each do not fit across a
+              small phone — and cutting one off the end would hide a whole shelf. */}
+          <nav className="profile-tabs -mx-4 mt-6 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {TABS.map((entry) => (
               <Link
                 key={entry}
                 href={entry === 'posts' ? `/u/${user.username}` : `/u/${user.username}?tab=${entry}`}
-                className={`chip capitalize ${tab === entry ? 'chip-active' : 'hover:bg-white/10'}`}
+                data-profile-tab={entry}
+                aria-current={tab === entry ? 'page' : undefined}
+                // A `chip`'s own padding makes a 34px-tall pill, which is fine
+                // for a filter and too small for the navigation these four are:
+                // the shelves are how somebody gets at their own videos, photos
+                // and writing, so they are given a thumb-sized target.
+                className={`chip min-h-[44px] shrink-0 px-4 text-sm capitalize ${tab === entry ? 'chip-active' : 'hover:bg-white/10'}`}
               >
                 {entry}
+                {entry !== 'about' && counts[entry] > 0 && (
+                  <span className="tabular-nums opacity-60">{counts[entry]}</span>
+                )}
               </Link>
             ))}
           </nav>
@@ -308,22 +364,52 @@ export default async function ProfilePage({
               </section>
             ) : (
               <>
+                {/* The owner's way to ADD to this shelf. Videos and Text are the
+                    two kinds of creation that used to live behind the Create
+                    page's toggle; they are here now, next to what they make.
+                    Photos keep their own page, which is what /create is. */}
+                {isSelf && shelf === 'videos' && (
+                  <Link
+                    href="/create/video?upload=1"
+                    data-upload-video
+                    className="btn-ghost min-h-[52px] w-full py-3.5"
+                  >
+                    <PlusIcon width={17} height={17} /> Upload a video you already have
+                  </Link>
+                )}
+                {isSelf && shelf === 'posts' && (
+                  <Link
+                    href="/create"
+                    data-new-photo-post
+                    className="btn-ghost min-h-[52px] w-full py-3.5"
+                  >
+                    <PlusIcon width={17} height={17} /> New photo post
+                  </Link>
+                )}
+                {isSelf && shelf === 'text' && <TextPostForm />}
+
                 <PostList
                   posts={posts}
                   viewerId={viewer?.id ?? null}
                   empty={
                     <EmptyState
-                      title="Nothing posted yet"
+                      title={SHELF_EMPTY[shelf ?? 'posts'].title}
                       body={
                         isSelf
-                          ? 'Post a photo, a video or just a thought. It shows up here.'
-                          : `${user.display_name} has not posted yet. Follow to be there when they do.`
+                          ? SHELF_EMPTY[shelf ?? 'posts'].mine
+                          : `${user.display_name} ${SHELF_EMPTY[shelf ?? 'posts'].theirs}`
                       }
-                      cta={isSelf ? { href: '/create', label: 'Create a post' } : undefined}
+                      cta={
+                        isSelf && shelf === 'videos'
+                          ? { href: '/create/video', label: 'Record a video' }
+                          : isSelf && shelf === 'posts'
+                            ? { href: '/create', label: 'New photo post' }
+                            : undefined
+                      }
                     />
                   }
                 />
-                <LoadMore href={moreHref} hasMore={allPosts.length > posts.length} />
+                <LoadMore href={moreHref} hasMore={shelved.length > posts.length} />
               </>
             )}
           </div>

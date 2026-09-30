@@ -64,8 +64,9 @@ npm run typecheck # tsc --noEmit
 | `/auth/callback` | Where Supabase's email links land; exchanges the code for a session |
 | `/home` | **Following** and **Recommended** feeds |
 | `/discover` | Rankings: Overall, Last 30 days, and by category |
-| `/create` | Post photos, video or text |
-| `/u/[username]` | Profile: posts, both ratings, rank, followers |
+| `/create` | A photo post, or just something to say |
+| `/create/video` | The camera — what the `+` button opens. `?upload=1` for a file you already have |
+| `/u/[username]` | Profile: Videos, Posts and Text shelves, both ratings, rank, followers |
 | `/post/[id]` | Post detail, community rating, comments |
 | `/notifications` | Follows, likes, comments, ratings |
 | `/search` | People, posts, categories |
