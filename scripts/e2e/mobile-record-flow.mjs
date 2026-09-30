@@ -959,6 +959,47 @@ async function run() {
   check('somebody else can open the post', theirView.includes(title));
   check('with the content warning in front of it', /content warning|sensitive|Show/i.test(theirView));
 
+  // The ••• menu on somebody else's profile, which is where Block and Report live.
+  // `.card` carries a backdrop-filter, and that creates a stacking context — so
+  // this dropdown's z-index cannot lift it above anything OUTSIDE the header, and
+  // the shelf tab bar comes later in the document. It painted over the open menu,
+  // and a count badge landing on Block made that button unclickable. What is
+  // checked is the click itself, because a hit test on a menu is the bug.
+  await viewer.page.goto(`/u/${me.handle}`, { waitUntil: 'domcontentloaded' });
+  await viewer.page.waitForLoadState('networkidle');
+  await viewer.page
+    .locator('button[aria-label="More options"], button')
+    .filter({ hasText: '•••' })
+    .first()
+    .click();
+  await wait(400);
+  const blockItem = viewer.page.locator('button').filter({ hasText: /^Block/ }).first();
+  check('the ••• menu opens on somebody else\u2019s profile', (await blockItem.count()) === 1);
+  const blockable = await blockItem
+    .click({ timeout: 8000 })
+    .then(() => true)
+    .catch(() => false);
+  check('and the shelf tabs do not paint over it', blockable, 'Block is clickable');
+  // Undo it, so the feed checks above are not the last word on a blocked account.
+  if (blockable) {
+    await wait(1200);
+    await viewer.page.goto(`/u/${me.handle}`, { waitUntil: 'domcontentloaded' });
+    await viewer.page.waitForLoadState('networkidle');
+    await viewer.page
+      .locator('button[aria-label="More options"], button')
+      .filter({ hasText: '•••' })
+      .first()
+      .click();
+    await wait(400);
+    await viewer.page
+      .locator('button')
+      .filter({ hasText: /^Unblock/ })
+      .first()
+      .click()
+      .catch(() => undefined);
+    await wait(1200);
+  }
+
   /* ===================== trim, all the way through ===================== */
   section('A TRIMMED VIDEO IS ACTUALLY TRIMMED');
 

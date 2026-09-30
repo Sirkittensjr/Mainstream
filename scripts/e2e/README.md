@@ -466,6 +466,22 @@ The same measurement on **Home's feed tabs** found one tap in six doing nothing,
 so those are plain anchors now too — it was the same bug on the same pattern, and
 it predates the Create post work rather than coming from it.
 
+**Why the profile header is `relative z-10`.** `.card` carries `backdrop-blur-xl`,
+and a backdrop-filter creates a stacking context — so the ••• menu's `z-40`
+dropdown cannot rise above anything OUTSIDE that header, and the shelf tab bar
+comes later in the document. The tab bar painted over the open menu, and once
+Posts moved to the front of the bar the Videos count badge landed on **Block** and
+made that button unclickable. Raising the header changes no layout, only paint
+order. The suite clicks Block on somebody else's profile rather than hit-testing
+it, because on a menu the click IS the bug; `videos-flow.mjs` blocks and unblocks
+an account too, which is how this was found.
+
+**A suite that crashes prints no `FAIL` line.** This one died inside
+`locator.click`, so grepping its output for `^FAIL` said zero failures and
+grepping for `ALL CHECKS PASSED` said nothing at all — an empty result that is
+easy to read as success. Check the exit code, or count `^PASS` against the
+expected total; every suite here exits non-zero when it has not passed.
+
 The suite's `openShelf` helper waits for the tab to claim `aria-current` rather
 than for `networkidle`, which is waiting for the render rather than the network.
 That mattered while these were soft navigations and is still the honest thing to

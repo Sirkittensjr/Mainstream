@@ -147,7 +147,15 @@ export default async function ProfilePage({
         data-profile-skin={skin ? 'on' : undefined}
       >
         <div className="mx-auto max-w-2xl px-4 pt-4 lg:pt-8">
-          <header className="card p-6">
+          {/* `relative z-10`, and it is load-bearing. `.card` carries
+              `backdrop-blur-xl`, and a backdrop-filter creates a stacking
+              context — so the ••• menu's `z-40` dropdown is trapped inside this
+              header and cannot rise above anything outside it. The shelf tab bar
+              comes later in the document, so it painted OVER the open menu, and a
+              count badge landing on "Block" made that button unclickable. Raising
+              the header itself is what lets the menu inside it win; it changes no
+              layout, only paint order. */}
+          <header className="card relative z-10 p-6">
             <div className="flex items-start gap-4">
               <Avatar
                 username={user.username}
