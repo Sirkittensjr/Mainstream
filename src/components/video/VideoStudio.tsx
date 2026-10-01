@@ -26,7 +26,7 @@ import {
   totalDuration,
   updateClip,
 } from '@/lib/video/clips';
-import { stageAfterNext, stageAfterSegment } from '@/lib/video/camera';
+import { appendSegment, stageAfterNext, stageAfterSegment } from '@/lib/video/camera';
 import { postCaption } from '@/lib/video/compose';
 import { grabFrame, probeLocalVideo } from '@/lib/video/capture';
 import {
@@ -129,23 +129,34 @@ export function VideoStudio({
    */
   const autoOpened = useRef(false);
   /**
-   * Whether this is a phone, decided once.
+   * Whether this runs as three full-screen stages, decided once.
    *
-   * Once, and not on every resize, because rotating a phone into landscape makes
-   * it 844 wide — re-reading this mid-edit would move somebody from the staged
-   * mobile flow to the desktop one while they were using it.
+   * CAMERA → EDIT → POST, every one of them the whole screen. Anybody who came
+   * through the camera door gets it whatever they are holding: they asked to
+   * film something, and a viewfinder followed by a video in a padded content
+   * column with a card around it is not what filming something looks like. A
+   * narrow window gets it too, because that is a phone whether or not the
+   * browser admits to a coarse pointer.
+   *
+   * It used to be `(max-width: 639px) and (pointer: coarse)` alone, which is a
+   * narrow test to hang a whole flow on: an iPad, a browser that reports a fine
+   * pointer on a touch screen, or a phone held in landscape all failed it and
+   * landed on the desktop one-page screen instead.
+   *
+   * Decided once and not on every resize, because rotating a phone into
+   * landscape makes it 844 wide — re-reading this mid-edit would move somebody
+   * from one flow to the other while they were using it.
    */
-  const [phone, setPhone] = useState(false);
+  const [narrow, setNarrow] = useState(false);
   useEffect(() => {
     if (autoOpened.current) return;
     autoOpened.current = true;
     if (typeof window === 'undefined' || !window.matchMedia) return;
-    // Still needed after `start`: it decides whether the three mobile stages run
-    // at all, which is a question about the screen rather than about the route.
-    setPhone(window.matchMedia('(max-width: 639px) and (pointer: coarse)').matches);
+    setNarrow(window.matchMedia('(max-width: 900px)').matches);
     const canRecordHere = Boolean(navigator.mediaDevices?.getUserMedia);
     if (start === 'camera' && canRecordHere) setRecording(true);
   }, [start]);
+  const staged = start === 'camera' || narrow;
 
   /**
    * Which of the three mobile stages is showing.
@@ -155,8 +166,8 @@ export function VideoStudio({
    *
    * Camera, then editing, then posting — three decisions, three screens, because
    * one screen asking for all of them is what made this feel like a form with a
-   * preview in it. Only consulted on a phone: the desktop flow is one page with
-   * the clip editor behind "Edit", and it is not changed by any of this.
+   * preview in it. Only consulted in the staged flow: the one-page desktop
+   * screen has the clip editor behind "Edit", and it is not changed by this.
    */
   const [mobileStage, setMobileStage] = useState<'camera' | 'edit' | 'post'>('post');
 
@@ -287,12 +298,121 @@ export function VideoStudio({
    * An imported clip counts towards it exactly as a filmed one does.
    */
   const segments = clips.map(clipDuration);
+  /**
+   * The same lengths, in a ref.
+   *
+   * The clips are the truth and this is re-synced from them on every render, so
+   * a trim, a delete or an import all land here too. It exists because the
+   * camera's handler has to decide whether a segment fits BEFORE the render that
+   * would tell it — and two clips released a moment apart must both be kept.
+   */
+  const session = useRef<number[]>([]);
+  session.current = segments;
   const editing = clips.find((clip) => clip.id === editingId) ?? null;
   /** What the compose screen plays: the combined video if there is one, else the only clip. */
   const previewUrl = finished?.previewUrl ?? (clips.length === 1 ? clips[0].src : null);
   const simple = clips.length === 1 && !needsRender(clips);
 
-  /** Turns a file or a recording into a clip, once we know how long it is. */
+  /**
+   * A recorded segment, into the session, now.
+   *
+   * The camera measured the take itself, so nothing here has to read the length
+   * back out of the file before the clip can exist — and that is the whole point.
+   * `addSource` below waits on `probeLocalVideo`, which for a MediaRecorder WebM
+   * means a seek to the end and a `durationchange`, and which GIVES UP after four
+   * seconds. On that path a segment appeared late or not at all: the clip strip
+   * stayed empty, the next press of the shutter was measured against a budget
+   * that had not moved, and a probe that timed out lost the take outright. From
+   * the creator's seat that is "pressing Record again started over".
+   *
+   * So a recording is appended on the recorder's own number, immediately, and the
+   * probe only refines it afterwards. A probe that fails now costs a slightly
+   * wrong width and height, not somebody's clip.
+   */
+  const addRecordedSegment = useCallback(
+    (file: File, seconds: number, label: string) => {
+      const url = trackUrl(URL.createObjectURL(file));
+      const id = nextId();
+
+      // Decided here and now, against `session`, because a `setClips` updater
+      // runs during the NEXT render — reading a flag it set, on the line after
+      // the call, is a race. The camera needs the answer in this handler.
+      const room = appendSegment(session.current, seconds);
+      if (!room.added) {
+        if (room.reason === 'no-room') {
+          setError(
+            `There is no room for another clip — your video is already ${formatSeconds(MAX_VIDEO_SECONDS)}. Tap Next, or delete the last clip.`,
+          );
+        }
+        return false;
+      }
+      // Two clips released in quick succession both have to land, so this moves
+      // now rather than waiting for the render to recompute it from `clips`.
+      session.current = room.segments;
+
+      setClips((current) => [
+        ...current,
+        normaliseClip({
+          id,
+          src: url,
+          label,
+          sourceDuration: seconds,
+          // Placeholders until the probe comes back with the real frame size.
+          // Only the first clip's shape decides the output, and the probe lands
+          // long before anything is posted.
+          sourceWidth: 720,
+          sourceHeight: 1280,
+          trimStart: 0,
+          trimEnd: seconds,
+          crop: FULL_FRAME,
+          rotation: 0,
+          volume: 1,
+          file,
+        }),
+      ]);
+
+      setError(null);
+      // A new clip invalidates whatever was rendered from the old list.
+      setFinished(null);
+
+      // The refinement. It can take seconds, it can fail, and the clip is
+      // already in the session either way — which is what makes it safe.
+      void probeLocalVideo(url)
+        .then((facts) => {
+          if (!Number.isFinite(facts.duration) || facts.duration <= 0) {
+            setClips((current) =>
+              updateClip(current, id, {
+                sourceWidth: facts.width,
+                sourceHeight: facts.height,
+              }),
+            );
+            return;
+          }
+          setClips((current) => {
+            const clip = current.find((entry) => entry.id === id);
+            if (!clip) return current;
+            // Only the end moves, and only when the file turns out to be longer
+            // than the recorder said: a trim somebody has since made is theirs.
+            const untrimmed = clip.trimStart === 0 && Math.abs(clip.trimEnd - seconds) < 0.05;
+            return updateClip(current, id, {
+              sourceDuration: facts.duration,
+              sourceWidth: facts.width,
+              sourceHeight: facts.height,
+              ...(untrimmed ? { trimEnd: facts.duration } : {}),
+            });
+          });
+        })
+        .catch(() => {
+          // The browser will not tell us about its own recording. It still
+          // plays, it still uploads, and it is still in the video.
+        });
+
+      return true;
+    },
+    [trackUrl],
+  );
+
+  /** Turns a FILE into a clip, once we know how long it is. */
   const addSource = useCallback(
     async (source: Blob, label: string, file?: File) => {
       const url = trackUrl(URL.createObjectURL(source));
@@ -546,7 +666,7 @@ export function VideoStudio({
           // this goes — opened on the right tool. On a desktop there is no such
           // stage, so it scrolls the posting screen's picker into view instead.
           leaveCamera();
-          if (phone) {
+          if (staged) {
             setEditorTool('cover');
             setMobileStage('edit');
           } else {
@@ -561,7 +681,7 @@ export function VideoStudio({
           // lib/video/recording.ts.
           const index = clips.length + 1;
           const file = recordedFile(blob, mimeType, index);
-          void addSource(file, `Recording ${index}`, file);
+          const added = addRecordedSegment(file, seconds, `Clip ${index}`);
           // And that is all a finished segment does. The camera stays open, on
           // the viewfinder, ready for the next one — releasing the shutter is
           // not a decision to stop filming, and it used to be treated as one.
@@ -569,8 +689,10 @@ export function VideoStudio({
           // The single exception is the budget running out: with no room for
           // another clip there is nothing to stay for, so the editor is where
           // somebody goes. `stageAfterSegment` is that rule, measured against
-          // the TOTAL of every segment including this one.
-          if (stageAfterSegment([...segments, seconds]) === 'edit') leaveCamera();
+          // the TOTAL of every segment including this one — `session` already
+          // holds it, because addRecordedSegment put it there. A take that was
+          // not kept leaves everything exactly as it was.
+          if (added && stageAfterSegment(session.current) === 'edit') leaveCamera();
         }}
         onDropLast={
           clips.length > 0
@@ -594,9 +716,9 @@ export function VideoStudio({
 
   /* ------------------------------------------------- the mobile edit stage */
 
-  // Between the camera and the caption, on a phone. The video is the screen and
-  // the only decisions here are about the video itself; posting comes next.
-  if (phone && mobileStage === 'edit' && clips.length > 0) {
+  // Between the camera and the caption. The video is the screen and the only
+  // decisions here are about the video itself; posting comes next.
+  if (staged && mobileStage === 'edit' && clips.length > 0) {
     return (
       <VideoEditor
         clip={clips[0]}
@@ -838,9 +960,9 @@ export function VideoStudio({
 
   return (
     <div className="space-y-5">
-      {/* A phone arrived here from the editor, so it says so and offers the way
-          back. Editing is finished; this screen is for posting. */}
-      {phone && clips.length > 0 && (
+      {/* Arrived here from the editor, so it says so and offers the way back.
+          Editing is finished; this screen is for posting. */}
+      {staged && clips.length > 0 && (
         <div className="flex items-center justify-between" data-post-stage>
           <button
             type="button"

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import {
+  ChevronIcon,
   ImageIcon,
   PauseIcon,
   PlayIcon,
@@ -105,9 +106,29 @@ export function VideoEditor({
   const video = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   const [at, setAt] = useState(clip.trimStart);
+  /**
+   * Whether a tool's panel is over the video.
+   *
+   * Closed on arrival, so the first thing anybody sees here is their video at
+   * full size rather than a control panel with a video above it. A tool opens
+   * its panel; tapping that tool again gives the screen back.
+   */
+  const [sheetOpen, setSheetOpen] = useState(false);
+
+  // Arriving straight on the cover — the camera's Cover button — is a request
+  // for that panel, so it opens. Arriving on Trim, which is the default, is not.
+  useEffect(() => {
+    if (tool === 'cover') setSheetOpen(true);
+  }, [tool]);
 
   const kept = clipDuration(clip);
   const single = clipCount === 1;
+  /** How far through what is being kept, for the bar under the scrubber. */
+  const progress = (() => {
+    const from = single ? clip.trimStart : 0;
+    const span = single ? Math.max(0.1, clip.trimEnd - clip.trimStart) : Math.max(0.1, kept);
+    return Math.min(1, Math.max(0, (at - from) / span));
+  })();
 
   // Playback stays inside the trim, so what is being watched is what will be
   // posted. Without this, trimming is a promise rather than a preview.
@@ -168,129 +189,102 @@ export function VideoEditor({
   const written = overlays.filter((entry) => entry.text.trim().length > 0);
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-black">
-      {/* ------------------------------------------------------------- top */}
-      <div className="safe-top safe-x flex shrink-0 items-center justify-between px-4 pb-2 pt-1">
-        {/* "Retake", not "Back": going back past a take means filming it again,
-            and this drops it. Keeping it and filming another is the button at the
-            bottom of the panel, which is a different intention. */}
-        <button
-          type="button"
-          onClick={onRetake}
-          data-editor-retake
-          className="flex h-11 items-center justify-center rounded-full bg-white/10 px-4 text-[14px] font-semibold text-white transition active:scale-95"
+    <div className="fixed inset-0 z-50 overflow-hidden bg-black">
+      {/* ----------------------------------------------------------- video */}
+      {/* The video IS the screen. Not a video inside a page: the element fills
+          the viewport and every control floats over it, because this is a
+          creation screen and the thing being created should be the thing you
+          are looking at. `object-contain` so nothing of it is cropped away to
+          fill a house shape. */}
+      <video
+        ref={video}
+        key="editor-preview"
+        src={src}
+        playsInline
+        muted={muted}
+        preload="metadata"
+        data-editor-preview
+        onLoadedMetadata={() => seek(clip.trimStart)}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => setPlaying(false)}
+        className="absolute inset-0 h-full w-full object-contain"
+      />
+      {/* The text as it will really look, over the real video. An overlay
+          previewed anywhere but here is a guess. */}
+      <VideoText media={{ text: written }} />
+
+      {/* The whole frame is play/pause, the way it is in every video feed. It
+          sits under the controls, so a tap on one of those is not a tap on this. */}
+      <button
+        type="button"
+        onClick={toggle}
+        aria-label={playing ? 'Pause' : 'Play'}
+        className="absolute inset-0 z-10 flex items-center justify-center"
+      >
+        <span
+          className={`flex h-[72px] w-[72px] items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-md transition-opacity duration-200 ${
+            playing ? 'opacity-0' : 'opacity-100'
+          }`}
         >
-          Retake
-        </button>
-        <div className="text-center">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/40">
-            Edit
-          </p>
-          <p className="text-[13px] font-semibold tabular-nums text-white/70">
+          {playing ? <PauseIcon width={26} height={26} /> : <PlayIcon width={26} height={26} />}
+        </span>
+      </button>
+
+      {/* ------------------------------------------------------------- top */}
+      <div className="safe-top safe-x pointer-events-none absolute inset-x-0 top-0 z-30 bg-gradient-to-b from-black/70 to-transparent pb-10">
+        <div className="pointer-events-auto flex items-center justify-between px-4 pt-1">
+          {/* "Retake", not "Back": going back past a take means filming it again,
+              and this drops it. Keeping it and filming another is the button in
+              the panel, which is a different intention. */}
+          <button
+            type="button"
+            onClick={onRetake}
+            data-editor-retake
+            className="flex h-11 items-center justify-center rounded-full bg-black/40 px-4 text-[14px] font-semibold text-white backdrop-blur-md transition active:scale-95"
+          >
+            Retake
+          </button>
+          <span className="rounded-full bg-black/40 px-3 py-1.5 text-[13px] font-semibold tabular-nums text-white/85 backdrop-blur-md">
             {formatSeconds(kept)}
             {!single && ` · ${clipCount} clips`}
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onNext}
-          data-editor-next
-          className="btn-primary h-11 px-5 py-0 text-[14px]"
-        >
-          Next
-        </button>
-      </div>
-
-      {/* ----------------------------------------------------------- video */}
-      {/* The video keeps the room. It is the thing being edited, so it is what
-          the screen is mostly made of, and every panel below is sized to leave
-          it alone rather than the other way round. */}
-      {/* `min-h` is the important half of this. `flex-1` alone gives the video
-          whatever the panels leave, and the trim panel's two sliders left it a
-          third of the screen — on the one screen where the video is the point.
-          With a floor, a tall panel scrolls instead of shrinking the video. */}
-      <div className="relative min-h-[40vh] flex-1 overflow-hidden">
-        <video
-          ref={video}
-          key="editor-preview"
-          src={src}
-          playsInline
-          muted={muted}
-          preload="metadata"
-          data-editor-preview
-          onLoadedMetadata={() => seek(clip.trimStart)}
-          onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
-          onEnded={() => setPlaying(false)}
-          className="absolute inset-0 h-full w-full object-contain"
-        />
-        {/* The text as it will really look, over the real video. An overlay
-            previewed anywhere but here is a guess. */}
-        <VideoText media={{ text: written }} />
-        <button
-          type="button"
-          onClick={toggle}
-          aria-label={playing ? 'Pause' : 'Play'}
-          className="absolute inset-0 flex items-center justify-center"
-        >
-          <span
-            className={`flex h-16 w-16 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-md transition-opacity ${
-              playing ? 'opacity-0' : 'opacity-100'
-            }`}
+          </span>
+          <button
+            type="button"
+            onClick={onNext}
+            data-editor-next
+            className="btn-primary h-11 px-5 py-0 text-[14px]"
           >
-            {playing ? <PauseIcon width={24} height={24} /> : <PlayIcon width={24} height={24} />}
-          </span>
-        </button>
-      </div>
-
-      {/* -------------------------------------------------------- timeline */}
-      <div className="safe-x shrink-0 px-4 pt-3">
-        <div className="flex items-center gap-3">
-          <span className="w-11 shrink-0 text-right text-[11px] tabular-nums text-white/55">
-            {formatSeconds(at)}
-          </span>
-          <input
-            type="range"
-            min={single ? clip.trimStart : 0}
-            max={single ? Math.max(clip.trimStart + 0.1, clip.trimEnd) : Math.max(0.1, kept)}
-            step={0.05}
-            value={Math.min(Math.max(at, single ? clip.trimStart : 0), single ? clip.trimEnd : kept)}
-            aria-label="Position in the video"
-            data-editor-timeline
-            onChange={(event) => seek(Number(event.target.value))}
-            className="h-11 flex-1 accent-fay"
-          />
-          <span className="w-11 shrink-0 text-[11px] tabular-nums text-white/55">
-            {formatSeconds(single ? clip.trimEnd : kept)}
-          </span>
+            Next
+          </button>
         </div>
       </div>
 
-      {/* ------------------------------------------------------------ tools */}
-      <div className="safe-x shrink-0 px-2 pt-1">
-        <div className="flex items-stretch gap-1">
-          {TOOLS.map(({ key, label, Icon }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => onTool(key)}
-              aria-pressed={tool === key}
-              data-editor-tool={key}
-              className={`flex min-h-[56px] flex-1 flex-col items-center justify-center gap-1 rounded-2xl text-[11px] font-semibold transition ${
-                tool === key ? 'bg-white/[0.12] text-white' : 'text-white/50 active:bg-white/[0.06]'
-              }`}
-            >
-              <Icon width={19} height={19} />
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* ------------------------------------------------------- the panel */}
-      {/* One tool's controls at a time. All four on screen at once is how an
-          editor becomes a control panel. */}
-      <div className="safe-bottom safe-x max-h-[33vh] shrink-0 overflow-y-auto px-4 pb-2 pt-3">
+      {/* ---------------------------------------------------------- bottom */}
+      {/* Scrubber, then the tool rail, then whichever tool is open as a sheet
+          over the lower part of the picture. Nothing is a bar that steals the
+          video's height: with no sheet open the controls are two thin rows on a
+          gradient and the video is the entire screen. */}
+      <div className="safe-x absolute inset-x-0 bottom-0 z-30">
+        {sheetOpen && (
+          <div
+            data-editor-sheet
+            className="mx-3 mb-2 max-h-[46vh] overflow-y-auto rounded-3xl border border-white/10 bg-black/80 px-4 pb-4 pt-3 backdrop-blur-xl"
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/45">
+                {TOOLS.find((entry) => entry.key === tool)?.label}
+              </p>
+              <button
+                type="button"
+                onClick={() => setSheetOpen(false)}
+                aria-label="Close this panel"
+                data-editor-sheet-close
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white/70 transition active:scale-95"
+              >
+                <ChevronIcon direction="right" width={15} height={15} className="rotate-90" />
+              </button>
+            </div>
         {tool === 'trim' && (
           <div data-editor-panel="trim">
             {single ? (
@@ -353,8 +347,9 @@ export function VideoEditor({
               </>
             ) : (
               <p className="py-3 text-sm text-white/50">
-                This video is {clipCount} clips. They are joined when you post. Trimming a
-                single clip is on the desktop editor.
+                This video is {clipCount} clips, joined in the order you filmed them when you
+                post. To trim or reorder one of them on its own, tap Next and open the clip
+                list on the posting screen.
               </p>
             )}
           </div>
@@ -508,6 +503,77 @@ export function VideoEditor({
             <PlusIcon width={14} height={14} /> Film another clip
           </button>
         )}
+          </div>
+        )}
+
+        <div className="safe-bottom bg-gradient-to-t from-black/85 via-black/45 to-transparent px-4 pb-2 pt-12">
+          {/* ------------------------------------------------------ timeline */}
+          <div className="flex items-center gap-3">
+            <span className="w-10 shrink-0 text-right text-[11px] tabular-nums text-white/60">
+              {formatSeconds(at)}
+            </span>
+            <input
+              type="range"
+              min={single ? clip.trimStart : 0}
+              max={single ? Math.max(clip.trimStart + 0.1, clip.trimEnd) : Math.max(0.1, kept)}
+              step={0.05}
+              value={Math.min(
+                Math.max(at, single ? clip.trimStart : 0),
+                single ? clip.trimEnd : kept,
+              )}
+              aria-label="Position in the video"
+              data-editor-timeline
+              onChange={(event) => seek(Number(event.target.value))}
+              className="h-11 flex-1 accent-fay"
+            />
+            <span className="w-10 shrink-0 text-[11px] tabular-nums text-white/60">
+              {formatSeconds(single ? clip.trimEnd : kept)}
+            </span>
+          </div>
+          {/* A plain bar under it, because a range input's own track is thin and
+              differently styled in every browser. */}
+          <div className="mx-[52px] h-[3px] overflow-hidden rounded-full bg-white/15">
+            <div
+              className="h-full rounded-full bg-fay"
+              style={{
+                width: `${Math.min(100, Math.max(0, progress) * 100)}%`,
+              }}
+            />
+          </div>
+
+          {/* --------------------------------------------------------- tools */}
+          <div className="mt-2 flex items-stretch gap-1">
+            {TOOLS.map(({ key, label, Icon }) => {
+              const active = sheetOpen && tool === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => {
+                    // Tapping the open tool again closes it, which is how the
+                    // video gets the whole screen back.
+                    if (active) {
+                      setSheetOpen(false);
+                      return;
+                    }
+                    onTool(key);
+                    setSheetOpen(true);
+                  }}
+                  aria-pressed={active}
+                  data-editor-tool={key}
+                  className={`flex min-h-[54px] flex-1 flex-col items-center justify-center gap-1 rounded-2xl text-[11px] font-semibold transition ${
+                    active
+                      ? 'bg-white text-ink-950'
+                      : 'bg-black/40 text-white/80 backdrop-blur-md active:bg-black/60'
+                  }`}
+                >
+                  <Icon width={19} height={19} />
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
     </div>
   );

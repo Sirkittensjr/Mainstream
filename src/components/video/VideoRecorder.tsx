@@ -13,6 +13,7 @@ import {
 import {
   budgetLeft,
   canContinue,
+  segmentSpans,
   canRecordAnother,
   keepsSegment,
   segmentBudget,
@@ -99,6 +100,18 @@ export function VideoRecorder({
   /** When the shutter went down, so releasing it can tell a hold from a tap. */
   const heldFrom = useRef(0);
 
+  /**
+   * The current `onRecorded`, for the recorder's stop handler.
+   *
+   * A MediaRecorder listener is registered once, when filming starts, so a
+   * handler that closed over the prop would be holding the version from that
+   * moment — and with it that moment's idea of how many clips there are. Hand a
+   * second segment to a stale handler and it is labelled and counted as though
+   * the first had never happened. Through a ref it is always the live one.
+   */
+  const handOver = useRef(onRecorded);
+  handOver.current = onRecorded;
+
   const [facing, setFacing] = useState<'user' | 'environment'>('user');
   const [status, setStatus] = useState<'starting' | 'ready' | 'recording' | 'denied'>('starting');
   const [error, setError] = useState<string | null>(null);
@@ -126,6 +139,9 @@ export function VideoRecorder({
    * two-minute track.
    */
   const [cap, setCap] = useState<number>(maxSeconds);
+
+  /** The clips already in this session, as spans of the bar across the top. */
+  const spans = segmentSpans(segments, maxSeconds);
 
   /** What is left of the whole post's budget, and what this one take may run to. */
   const remaining = budgetLeft(segments, maxSeconds);
@@ -264,7 +280,7 @@ export function VideoRecorder({
         // than no clip at all.
         return;
       }
-      onRecorded({ blob: new Blob(chunks, { type: mimeType }), mimeType, seconds });
+      handOver.current({ blob: new Blob(chunks, { type: mimeType }), mimeType, seconds });
     });
     recorderRef.current = recorder;
     startedAt.current = Date.now();
@@ -336,14 +352,33 @@ export function VideoRecorder({
         style={{ transform: facing === 'user' ? 'scaleX(-1)' : undefined }}
       />
 
-      {/* How much of the two minutes is gone, across the very top. Thin, and
-          gone entirely when not recording. */}
-      {recording && (
-        <div className="absolute inset-x-0 top-0 z-10 h-[3px] bg-white/15">
-          <div
-            className="h-full bg-gradient-to-r from-solar via-fay to-fay-soft transition-[width] duration-100"
-            style={{ width: `${Math.min(100, (elapsed / Math.max(1, budget)) * 100)}%` }}
-          />
+      {/* The session, across the very top: one span per clip filmed, in order,
+          each as wide a share of the bar as it is of the two minutes, with the
+          take in progress growing at the end of them. It is the one thing on
+          screen that says "these are all one video", and the reason somebody can
+          press Record a third time without wondering what happened to the first
+          two. */}
+      {(spans.length > 0 || recording) && (
+        <div
+          className="absolute inset-x-0 top-0 z-20 flex h-[5px] gap-[2px] bg-black/35 px-[2px]"
+          data-camera-clip-bar
+        >
+          {spans.map((span, index) => (
+            <div
+              key={index}
+              data-camera-clip-span
+              className="h-full rounded-full bg-gradient-to-r from-solar via-fay to-fay-soft"
+              style={{ width: `${span.fraction * 100}%` }}
+            />
+          ))}
+          {recording && (
+            <div
+              className="h-full rounded-full bg-white/90 transition-[width] duration-100"
+              style={{
+                width: `${Math.min(100, (elapsed / Math.max(1, maxSeconds)) * 100)}%`,
+              }}
+            />
+          )}
         </div>
       )}
 

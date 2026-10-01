@@ -113,3 +113,50 @@ export function segmentSummary(segments: readonly number[]): string {
   const clock = `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
   return `${kept.length} clip${kept.length === 1 ? '' : 's'} · ${clock}`;
 }
+
+/**
+ * Where a finished segment goes.
+ *
+ * A recording session is a list that only ever grows: a new segment is appended
+ * to the clips already filmed, and nothing about pressing Record again replaces,
+ * resets or reorders what came before. Stated as a function — and tested — because
+ * "the second clip started a new video" is the exact bug this is here to make
+ * impossible.
+ *
+ * The length is the recorder's OWN measurement, which is why this needs nothing
+ * from the file. Waiting on a probe to read the duration back out of a WebM is
+ * what used to make a segment appear seconds late, or not at all when the probe
+ * gave up — and a clip that has not appeared yet is a clip the next press of the
+ * shutter cannot see.
+ */
+export function appendSegment(
+  segments: readonly number[],
+  seconds: number,
+  max = MAX_VIDEO_SECONDS,
+): { segments: number[]; added: boolean; reason?: 'too-short' | 'no-room' } {
+  const kept = [...segments];
+  if (!keepsSegment(seconds)) return { segments: kept, added: false, reason: 'too-short' };
+  // Measured against the total, so the limit is the finished video's length.
+  if (recordedSeconds(kept) + seconds - max > 0.05) {
+    return { segments: kept, added: false, reason: 'no-room' };
+  }
+  return { segments: [...kept, seconds], added: true };
+}
+
+/**
+ * The segments as spans of the whole budget, for the bar across the top of the
+ * camera.
+ *
+ * One span per clip, in order, each a fraction of the two minutes — so somebody
+ * filming can see at a glance how many clips they have and how much of the
+ * video is already shot, the way every camera that records in takes does.
+ */
+export function segmentSpans(
+  segments: readonly number[],
+  max = MAX_VIDEO_SECONDS,
+): { seconds: number; fraction: number }[] {
+  const ceiling = max > 0 ? max : 1;
+  return segments
+    .filter(keepsSegment)
+    .map((seconds) => ({ seconds, fraction: Math.min(1, seconds / ceiling) }));
+}
