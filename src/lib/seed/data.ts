@@ -300,6 +300,11 @@ export function seedInto(store: Store): Store {
     }
 
     post.views = Math.round(likers.size * between(9, 34) + between(10, 200));
+    // Only video posts have watch counts, and a video is watched more often
+    // than its post page is opened: most of them are watched in the feed.
+    if (post.media.some((item) => item.kind === 'video')) {
+      post.video_views = Math.round(post.views * between(1.2, 3.4));
+    }
   }
 
   // --- ratings ------------------------------------------------------------
@@ -511,6 +516,7 @@ export function buildSeedStore(): Store {
     reports: [],
     messages: [],
     moderation_events: [],
+    video_views: [],
   };
   return seedInto(empty);
 }

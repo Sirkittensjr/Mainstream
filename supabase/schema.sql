@@ -70,6 +70,11 @@ create table if not exists public.posts (
   category       text not null default 'Other',
   tags           text[] not null default '{}',
   views          integer not null default 0,
+  -- How many times the video on this post has actually been watched. A
+  -- different number from `views` above, which counts the post page being
+  -- opened: this one counts playback, once per playback session, and only a
+  -- video post ever has one. Written server-side only; never from a client.
+  video_views    integer not null default 0 check (video_views >= 0),
   -- Set by the author when they post. The media stays behind a cover until
   -- the viewer asks for it.
   content_warning boolean not null default false,
@@ -91,6 +96,9 @@ create table if not exists public.posts (
 -- Present for databases created before content warnings existed.
 alter table public.posts add column if not exists content_warning boolean not null default false;
 
+-- Present for databases created before video view counts existed (0010).
+alter table public.posts add column if not exists video_views integer not null default 0;
+
 -- Present for databases created before automatic review existed (0009).
 alter table public.posts
   add column if not exists review_state      text
@@ -108,6 +116,7 @@ create index if not exists posts_author_visible_idx
   on public.posts (author_id, created_at desc) where removed = false;
 create index if not exists posts_review_idx
   on public.posts (review_state, review_expires_at) where review_state is not null;
+create index if not exists posts_video_views_idx on public.posts (video_views desc);
 
 -- Likes --------------------------------------------------------------------
 create table if not exists public.likes (
@@ -275,6 +284,35 @@ create index if not exists moderation_events_target_idx
 create index if not exists moderation_events_recent_idx
   on public.moderation_events (created_at desc);
 
+-- Video views ---------------------------------------------------------------
+-- One row per COUNTED view, which is what makes deduplication possible: a bare
+-- counter cannot answer "has this person already been counted for this playback
+-- session?", and without that answer a scroll back up a feed is a dozen more
+-- views. `posts.video_views` is the total these keep.
+--
+--   identity    who watched, as far as that can honestly be known: the account
+--               id when somebody is signed in, `anon:<opaque browser id>` when
+--               they are not. Not a name, an address or an IP, and never shown.
+--   dedupe_key  identity plus the browser's key for one playback session. The
+--               unique index on it is the rule rather than a convenience: it is
+--               what holds when two requests race.
+create table if not exists public.video_views (
+  id          uuid primary key default gen_random_uuid(),
+  post_id     uuid not null references public.posts (id) on delete cascade,
+  viewer_id   uuid references public.users (id) on delete set null,
+  identity    text not null,
+  dedupe_key  text not null,
+  created_at  timestamptz not null default now()
+);
+
+create unique index if not exists video_views_dedupe_idx
+  on public.video_views (dedupe_key);
+-- The cooldown read, on the path of every video anybody watches.
+create index if not exists video_views_identity_idx
+  on public.video_views (post_id, identity, created_at desc);
+create index if not exists video_views_post_idx
+  on public.video_views (post_id, created_at desc);
+
 -- 2. Direct messages --------------------------------------------------------
 create table if not exists public.messages (
   id           uuid primary key default gen_random_uuid(),
@@ -371,6 +409,8 @@ alter table public.reports       enable row level security;
 alter table public.messages      enable row level security;
 -- The moderation log is not public, and "who reported this" least of all.
 alter table public.moderation_events enable row level security;
+-- Who watched what is not public either.
+alter table public.video_views   enable row level security;
 
 -- Storage -------------------------------------------------------------------
 -- Uploaded images and video go to this bucket. Public read so posts render.
@@ -549,6 +589,7 @@ begin
   foreach api_role in array array['anon', 'authenticated'] loop
     if exists (select 1 from pg_roles where rolname = api_role) then
       execute format('revoke all on public.moderation_events from %I', api_role);
+      execute format('revoke all on public.video_views from %I', api_role);
     end if;
   end loop;
 end $$;

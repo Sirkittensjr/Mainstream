@@ -11,6 +11,9 @@ export function toCardData(view: PostView): PostCardData {
     category: view.post.category,
     tags: view.post.tags,
     views: view.post.views,
+    // Watch count, for video posts. Straight off the row — the database is the
+    // only thing that decides what this number is.
+    videoViews: view.post.video_views ?? 0,
     contentWarning: view.post.content_warning === true,
     createdAt: view.post.created_at,
     likes: view.likes,

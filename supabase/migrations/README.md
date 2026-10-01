@@ -15,8 +15,8 @@ has never been installed.
 
 | Row 1 says | Run |
 | --- | --- |
-| `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including both migrations. |
-| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`, `0006`, `0007`, `0008` and `0009`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
+| `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including every migration — `0010` included. |
+| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`, `0006`, `0007`, `0008`, `0009` and `0010`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
 | anything between | Stop and ask. A half-installed schema needs looking at, not a migration. |
 
 If the storage bucket row shows `none`, create it in the dashboard
@@ -371,3 +371,41 @@ anon key cannot read the moderation log — and "who reported this" least of all
 the log. Reporting, the reports queue and every manual moderation action carry
 on working exactly as before; nothing 500s and no post is hidden. `/api/health`
 names `0009` under `schema.migrations` until the table exists.
+
+---
+
+## 0010_video_views.sql
+
+Video view counts. Two additive parts, safe to run twice. **No table is
+dropped, no column rewritten, no existing post changed.**
+
+| Step | Statement | What it touches | Risk |
+| --- | --- | --- | --- |
+| 1 | `add column if not exists video_views integer not null default 0` on `posts`, a non-negative check, and an index on it | One column with a default | None. Every existing post reads as `0` until somebody watches it |
+| 2 | `create table if not exists public.video_views`, a unique index on `dedupe_key`, two lookup indexes, RLS on and the API roles revoked | A new table | None to existing data |
+
+**Why a table and not just a counter.** The counter alone cannot answer "has
+this person already been counted for this playback session?", and without that
+answer scrolling back up a feed is a dozen more views for one video. The row is
+the deduplication record; the unique index on `dedupe_key` is what holds when
+two requests race, and `posts.video_views` is the total it keeps.
+
+**`video_views` is deliberately separate from `posts.views`.** `views` counts
+the post page being opened and has since the beginning. This one counts
+watching: playback that actually ran, past a threshold, once per playback
+session. A photo post never gets one, because a photo has nothing to play.
+
+**It stores no personal data.** `identity` is the account id for somebody signed
+in and `anon:<random browser id>` for somebody who is not. No address, no IP, no
+user agent, and nothing here is shown to anybody. Nothing is granted to the API
+roles, so a leaked anon key cannot read who watched what.
+
+**The table grows.** One row per counted view, and nothing prunes it. That is
+fine at MVP scale and is the price of honest deduplication; when it matters,
+delete rows older than the cooldown window — the counter on the post is the
+total and does not depend on them.
+
+**Not running it:** video view counts switch themselves off and say so once in
+the log. Videos play, post, upload and feed exactly as before; nothing 500s and
+no count is shown. `/api/health` names `0010` under `schema.migrations` until
+the column and the table exist.

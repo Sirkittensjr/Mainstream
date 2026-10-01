@@ -137,6 +137,23 @@ checks as (
 
   union all
   select 11,
+         'Video view counts (0010)',
+         case when exists (select 1 from information_schema.columns
+                           where table_schema='public' and table_name='posts'
+                             and column_name='video_views')
+               and exists (select 1 from information_schema.tables
+                           where table_schema='public' and table_name='video_views')
+              then 'installed' else 'not installed' end,
+         case when exists (select 1 from information_schema.columns
+                           where table_schema='public' and table_name='posts'
+                             and column_name='video_views')
+               and exists (select 1 from information_schema.tables
+                           where table_schema='public' and table_name='video_views')
+              then 'Good.'
+              else 'Migration 0010 adds them (additive). Until then videos play as normal and nothing is counted.' end
+
+  union all
+  select 12,
          'Supabase Auth users',
          (select count(*) || ' total, ' || count(email_confirmed_at) || ' confirmed' from auth.users),
          'Informational.'

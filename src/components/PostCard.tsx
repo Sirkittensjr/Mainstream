@@ -25,6 +25,11 @@ export interface PostCardData {
   category: string;
   tags: string[];
   views: number;
+  /**
+   * How many times the video on this post has been watched, as the database
+   * holds it. Zero on a post with no video — a photo has nothing to play.
+   */
+  videoViews: number;
   createdAt: string;
   /** The author asked for this to stay covered until somebody taps it. */
   contentWarning?: boolean;
@@ -63,9 +68,17 @@ export function PostCard({
   const [burst, setBurst] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  /**
+   * The watch count, which the server rendered and the player updates.
+   *
+   * Only a video post has one. It is a different number from `views`, which
+   * counts the post page being opened and has always been shown here.
+   */
+  const [videoViews, setVideoViews] = useState(data.videoViews);
   const [, startTransition] = useTransition();
   const router = useRouter();
   const isOwn = viewerId === data.author.id;
+  const isVideo = data.media.some((item) => item.kind === 'video');
 
   function toggleLike() {
     if (!viewerId) {
@@ -167,7 +180,13 @@ export function PostCard({
       )}
 
       {data.media.length > 0 && (
-        <MediaStrip media={data.media} postId={data.id} warned={data.contentWarning === true} />
+        <MediaStrip
+          media={data.media}
+          postId={data.id}
+          warned={data.contentWarning === true}
+          videoViews={videoViews}
+          onVideoViews={setVideoViews}
+        />
       )}
 
       <footer className="flex items-center gap-1 px-2 py-2">
@@ -200,12 +219,27 @@ export function PostCard({
           <ShareIcon />
           {copied && <span className="text-xs">Copied</span>}
         </button>
-        {data.views > 0 && (
-          <span className="hidden items-center gap-1.5 px-2 text-xs text-white/30 sm:flex">
-            <EyeIcon width={15} height={15} />
-            {formatCount(data.views)}
-          </span>
-        )}
+        {/* A video shows how many times it has been WATCHED; everything else
+            shows how many times the post has been opened. Two different
+            questions, so never both at once, and a photo never gets a watch
+            count it could not have earned. */}
+        {isVideo
+          ? videoViews > 0 && (
+              <span
+                className="hidden items-center gap-1.5 px-2 text-xs text-white/30 sm:flex"
+                data-video-views
+                title={`${videoViews.toLocaleString()} ${videoViews === 1 ? 'view' : 'views'}`}
+              >
+                <EyeIcon width={15} height={15} />
+                {formatCount(videoViews)}
+              </span>
+            )
+          : data.views > 0 && (
+              <span className="hidden items-center gap-1.5 px-2 text-xs text-white/30 sm:flex">
+                <EyeIcon width={15} height={15} />
+                {formatCount(data.views)}
+              </span>
+            )}
 
         <span className="ml-auto flex items-center gap-1">
           {data.ratingVotes > 0 && (
@@ -271,10 +305,15 @@ function MediaStrip({
   media,
   postId,
   warned,
+  videoViews = 0,
+  onVideoViews,
 }: {
   media: Media[];
   postId: string;
   warned: boolean;
+  /** The watch count as the server rendered it, handed to the player. */
+  videoViews?: number;
+  onVideoViews?: (count: number) => void;
 }) {
   const [index, setIndex] = useState(0);
   // The cover is in front of the media rather than instead of it: the post,
@@ -306,7 +345,16 @@ function MediaStrip({
         {media.map((item, i) => (
           <div key={`${postId}-${i}`} className="w-full shrink-0 snap-center px-2">
             {item.kind === 'video' ? (
-              <VideoPlayer media={item} />
+              <VideoPlayer
+                media={item}
+                // With the post id the player reports a watch once somebody
+                // actually plays it. A covered post is mounted but never
+                // autoplays, so nothing behind a content warning can be
+                // counted as watched without a deliberate press of play.
+                postId={postId}
+                views={videoViews}
+                onViewCount={onVideoViews}
+              />
             ) : (
               // Sized to the column it lands in rather than to whatever came
               // off the camera: a feed of full-resolution phone photos is the

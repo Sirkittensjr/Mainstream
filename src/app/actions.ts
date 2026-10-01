@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { CATEGORIES, type Category } from '@/lib/types';
@@ -48,8 +49,11 @@ import {
 import { getUserByUsername } from '@/lib/services/users';
 import { submitRating } from '@/lib/services/ratings';
 import { saveTopCreators } from '@/lib/services/top-creators';
+import { normaliseTags } from '@/lib/video/hashtags';
 import { MAX_VIDEO_SECONDS, MAX_VIDEO_SECONDS_ENFORCED } from '@/lib/video/limits';
 import { setRaterTrust } from '@/lib/services/rating-integrity';
+import { recordVideoView } from '@/lib/services/video-views';
+import { sanitiseSessionKey } from '@/lib/video/views';
 import type { Reaction, RatingTarget } from '@/lib/types';
 
 export async function likeAction(postId: string) {
@@ -60,6 +64,67 @@ export async function likeAction(postId: string) {
   }
   const result = await toggleLike(postId, viewer.id);
   return { ok: true as const, liked: result.liked };
+}
+
+/**
+ * The cookie that identifies a browser nobody has signed in on.
+ *
+ * Opaque, random, and used for one thing: deduplicating video views from a
+ * visitor. Not tied to an account, not readable by script, and it carries no
+ * information about the person beyond "the same browser as last time".
+ */
+const VIEW_BROWSER_COOKIE = 'fay_viewer';
+
+/**
+ * A video was watched.
+ *
+ * The client's entire say in this is the post and an opaque key for the
+ * playback session it is reporting; everything about whether that is a view,
+ * and what the total now is, is decided in recordVideoView against the
+ * database. A caller sending a count would be sending something this does not
+ * read.
+ *
+ * Never throws at the player: a view that cannot be counted is a number that
+ * does not move, not a video that fails to play.
+ */
+export async function recordVideoViewAction(postId: string, sessionKey: string) {
+  const id = String(postId || '').slice(0, 64);
+  if (!id) return { ok: false as const };
+
+  const viewer = await getViewer();
+  const jar = await cookies();
+
+  // A signed-in viewer is identified by their account; only a visitor needs the
+  // cookie, and it is minted on their first counted view rather than on arrival.
+  let browserId = jar.get(VIEW_BROWSER_COOKIE)?.value ?? null;
+  if (!viewer && !browserId) {
+    browserId = crypto.randomUUID();
+    try {
+      jar.set(VIEW_BROWSER_COOKIE, browserId, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        path: '/',
+        maxAge: 60 * 60 * 24 * 365,
+      });
+    } catch {
+      // Nowhere to keep it. The view is still counted for this request; the
+      // next one from this browser simply looks like a different visitor.
+    }
+  }
+
+  try {
+    const result = await recordVideoView({
+      postId: id,
+      viewerId: viewer?.id ?? null,
+      browserId,
+      sessionKey: sanitiseSessionKey(sessionKey),
+    });
+    return { ok: true as const, ...result };
+  } catch (error) {
+    console.error('[faytarra] a video view could not be counted', error);
+    return { ok: false as const };
+  }
 }
 
 export async function followAction(userId: string, shouldFollow: boolean) {
@@ -155,7 +220,8 @@ export interface CreateVideoPostInput {
   media: unknown;
   caption?: string;
   category?: string;
-  tags?: string;
+  /** Hashtags, as a list. A string is still accepted, split on spaces and commas. */
+  tags?: string | string[];
   contentWarning?: boolean;
 }
 
@@ -193,10 +259,11 @@ export async function createVideoPostAction(input: CreateVideoPostInput) {
     caption: String(input.caption || '').trim().slice(0, 1200),
     media: [media],
     category: CATEGORIES.includes(categoryInput) ? categoryInput : 'Life',
-    tags: String(input.tags || '')
-      .split(/[\s,]+/)
-      .map((tag) => tag.slice(0, 30))
-      .filter(Boolean),
+    // Structured all the way through: the posting screen collects hashtags as
+    // tags and they are stored in the post's `tags` array, which is what search
+    // and Discover read. Nothing is appended to the caption, and a string from
+    // an older client is still split. See lib/video/hashtags.ts.
+    tags: normaliseTags(input.tags),
     contentWarning: input.contentWarning === true,
   });
 

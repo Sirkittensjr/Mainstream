@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { formatSeconds } from '@/lib/video/limits';
 import type { Media } from '@/lib/types';
+import { useVideoView } from './video/useVideoView';
 import { VideoText } from './video/VideoText';
 
 /**
@@ -24,11 +25,40 @@ export function VideoPlayer({
   media,
   className = '',
   autoPlayMuted = false,
+  postId,
+  views = 0,
+  onViewCount,
 }: {
   media: Media;
   className?: string;
   autoPlayMuted?: boolean;
+  /**
+   * The post this video belongs to. Given, the player reports a watch once
+   * playback passes the threshold; left out — a preview, a draft, anything not
+   * yet a post — it counts nothing.
+   */
+  postId?: string;
+  /** The count the server rendered, so the first report has somewhere to start. */
+  views?: number;
+  /** Told the new total whenever the server returns one. */
+  onViewCount?: (count: number) => void;
 }) {
+  // Only a video post is watched, and only a real post can be. Everything else
+  // the player does — rendering, loading, seeking — is not a view and this hook
+  // is the only thing in here that could make one.
+  const watch = useVideoView({
+    postId: postId ?? '',
+    enabled: Boolean(postId) && media.kind === 'video',
+    duration: media.duration,
+    initialCount: views,
+  });
+  // Through a ref so a caller that re-creates its callback every render does
+  // not turn this into a loop, and so nothing is announced during render.
+  const notify = useRef(onViewCount);
+  notify.current = onViewCount;
+  useEffect(() => {
+    notify.current?.(watch.count);
+  }, [watch.count]);
   // Until the file says otherwise, trust what was measured at upload; 4:5 is
   // only ever a placeholder for the moment before the first frame arrives.
   const [ratio, setRatio] = useState<number | null>(
@@ -67,6 +97,10 @@ export function VideoPlayer({
             setRatio(video.videoWidth / video.videoHeight);
           }
         }}
+        onPlay={watch.onPlay}
+        onTimeUpdate={watch.onTimeUpdate}
+        onSeeked={watch.onSeeked}
+        onEnded={watch.onEnded}
         className="h-full w-full object-contain"
       />
       <VideoText media={media} />
