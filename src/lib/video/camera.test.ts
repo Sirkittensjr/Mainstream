@@ -3,12 +3,14 @@ import { describe, it } from 'node:test';
 import {
   BUDGET_SPENT_SECONDS,
   MIN_SEGMENT_SECONDS,
+  appendSegment,
   budgetLeft,
   canContinue,
   canRecordAnother,
   keepsSegment,
   recordedSeconds,
   segmentBudget,
+  segmentSpans,
   segmentSummary,
   stageAfterNext,
   stageAfterSegment,
@@ -96,5 +98,75 @@ describe('what the camera says it is holding', () => {
 
   it('ignores takes too short to have been kept', () => {
     assert.equal(segmentSummary([10, 0.05]), '1 clip · 0:10');
+  });
+});
+
+describe('appending a clip to the recording session', () => {
+  it('appends rather than replacing, however many times Record is pressed', () => {
+    // The sequence from the brief: 5s, then 8s, then 4s, one session.
+    let session: number[] = [];
+    for (const seconds of [5, 8, 4]) {
+      const result = appendSegment(session, seconds);
+      assert.equal(result.added, true);
+      session = result.segments;
+    }
+    assert.deepEqual(session, [5, 8, 4]);
+    assert.equal(recordedSeconds(session), 17);
+  });
+
+  it('keeps the clips in the order they were filmed', () => {
+    const first = appendSegment([], 5).segments;
+    const second = appendSegment(first, 8).segments;
+    const third = appendSegment(second, 4).segments;
+    assert.deepEqual(third, [5, 8, 4]);
+    // The earlier lists are untouched: nothing is mutated out from under them.
+    assert.deepEqual(first, [5]);
+    assert.deepEqual(second, [5, 8]);
+  });
+
+  it('leaves the session alone when a take was too short to keep', () => {
+    const result = appendSegment([5, 8], 0.05);
+    assert.equal(result.added, false);
+    assert.equal(result.reason, 'too-short');
+    assert.deepEqual(result.segments, [5, 8]);
+  });
+
+  it('refuses a clip that would take the video past the total limit, and keeps the rest', () => {
+    const result = appendSegment([MAX_VIDEO_SECONDS - 2], 10);
+    assert.equal(result.added, false);
+    assert.equal(result.reason, 'no-room');
+    assert.deepEqual(result.segments, [MAX_VIDEO_SECONDS - 2]);
+  });
+
+  it('allows a clip that exactly fills the budget', () => {
+    assert.equal(appendSegment([60], 60).added, true);
+  });
+
+  it('stays on the camera after each of three clips, and Next then has all three', () => {
+    let session: number[] = [];
+    for (const seconds of [5, 8, 4]) {
+      session = appendSegment(session, seconds).segments;
+      assert.equal(stageAfterSegment(session), 'camera');
+    }
+    assert.equal(session.length, 3);
+    assert.equal(stageAfterNext(session), 'edit');
+  });
+});
+
+describe('the clip bar across the top of the camera', () => {
+  it('gives one span per clip, in order, as a fraction of the budget', () => {
+    const spans = segmentSpans([30, 60], MAX_VIDEO_SECONDS);
+    assert.equal(spans.length, 2);
+    assert.equal(spans[0].seconds, 30);
+    assert.equal(spans[0].fraction, 0.25);
+    assert.equal(spans[1].fraction, 0.5);
+  });
+
+  it('leaves out a take too short to have been kept', () => {
+    assert.equal(segmentSpans([10, 0.05]).length, 1);
+  });
+
+  it('never gives a span wider than the whole bar', () => {
+    assert.equal(segmentSpans([500])[0].fraction, 1);
   });
 });
