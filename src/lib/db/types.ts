@@ -10,6 +10,7 @@ import type {
   Rating,
   Report,
   User,
+  VideoView,
 } from '@/lib/types';
 
 /** Every collection FayTarra persists. Table names match the Supabase schema. */
@@ -25,6 +26,7 @@ export interface Schema {
   reports: Report;
   messages: Message;
   moderation_events: ModerationEvent;
+  video_views: VideoView;
 }
 
 export type TableName = keyof Schema;

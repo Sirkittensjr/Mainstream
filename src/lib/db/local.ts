@@ -50,6 +50,7 @@ const EMPTY: Store = {
   reports: [],
   messages: [],
   moderation_events: [],
+  video_views: [],
 };
 
 /**

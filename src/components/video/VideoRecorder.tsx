@@ -2,84 +2,105 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  CheckIcon,
-  ChevronIcon,
   CloseIcon,
   FlashIcon,
   GalleryIcon,
   ImageIcon,
-  PauseIcon,
-  PlayIcon,
-  RecordIcon,
   SwitchCameraIcon,
+  TrashIcon,
   VolumeIcon,
 } from '@/components/Icons';
-import { settleDuration } from '@/lib/video/capture';
+import {
+  budgetLeft,
+  canContinue,
+  canRecordAnother,
+  keepsSegment,
+  segmentBudget,
+  segmentSummary,
+} from '@/lib/video/camera';
 import { RECORD_CAPS, capLabel, formatSeconds } from '@/lib/video/limits';
 import { pickMimeType } from '@/lib/video/render';
 
 /**
  * The camera.
  *
- * Two full-screen surfaces, and the picture is the whole screen on both. The
- * controls float over it — nothing is a bar that steals height from the
- * viewfinder, because on a phone the viewfinder IS the screen and a letterboxed
- * preview between two solid bars is what makes a web camera feel like a web
- * page.
+ * One full-screen surface, and the picture is the whole screen. The controls
+ * float over it — nothing is a bar that steals height from the viewfinder,
+ * because on a phone the viewfinder IS the screen and a letterboxed preview
+ * between two solid bars is what makes a web camera feel like a web page.
  *
- * Permission is asked for when this opens and not before. Stopping does not
- * commit anything: it shows the take back, full screen, with a scrubber, so the
- * whole thing can be watched before anybody decides. From there — keep it and
- * write a caption, keep it and film another, or throw it away and re-film.
- * Nothing leaves the device anywhere in here. It is a blob in this tab until the
- * posting screen uploads it.
+ * Permission is asked for when this opens and not before.
+ *
+ * STOPPING DOES NOT LEAVE THE CAMERA. A finished segment is handed up and the
+ * viewfinder is still there, live, ready for the next one — record, stop,
+ * record, stop, as many times as the two-minute budget allows. The strip above
+ * the shutter says what has been filmed so far and the last one can be thrown
+ * away from there. Leaving is a decision somebody makes with Next, never
+ * something releasing the shutter does to them.
+ *
+ * The budget is the TOTAL of every segment, not a per-clip allowance: three
+ * clips of 10, 8 and 12 seconds have spent 30 seconds of the two minutes
+ * between them. That arithmetic lives in lib/video/camera.ts.
  *
  * What this does NOT do: encode, transcode, upload, or know what a post is. It
- * hands a Blob to `onRecorded` and that is the entire contract.
+ * hands Blobs to `onRecorded` and says when somebody pressed Next. That is the
+ * entire contract.
  */
-
-interface Take {
-  blob: Blob;
-  mimeType: string;
-  seconds: number;
-  url: string;
-}
 
 /** A round glass control. One definition, so every tool on screen matches. */
 const TOOL =
   'flex h-11 w-11 items-center justify-center rounded-full bg-black/35 text-white backdrop-blur-md ' +
   'transition active:scale-95 disabled:opacity-30 [@media(max-height:520px)]:h-10 [@media(max-height:520px)]:w-10';
 
+/**
+ * How long the shutter has to be held for releasing it to stop the recording.
+ *
+ * Under this it was a tap, and a tap means "record until I tap again" — the
+ * two gestures share one button, which is how every phone camera works. A
+ * press-and-hold that released in 80ms would otherwise produce an empty clip.
+ */
+const HOLD_MS = 350;
+
 export function VideoRecorder({
-  remainingSeconds,
+  segments,
   maxSeconds,
   onRecorded,
+  onNext,
+  onDropLast,
   onClose,
   onPickFile,
   onChooseCover,
 }: {
-  remainingSeconds: number;
+  /**
+   * The lengths of what has already been filmed or imported, in seconds.
+   *
+   * Passed in rather than counted here because the clips themselves live in
+   * VideoStudio: one list, one truth, and the camera's budget is read off the
+   * same numbers the editor and the render pass use.
+   */
+  segments: readonly number[];
   /** The full budget, so the progress ring has something to fill against. */
   maxSeconds: number;
   onRecorded: (clip: { blob: Blob; mimeType: string; seconds: number }) => void;
+  /** Finished recording: on to the editor. */
+  onNext: () => void;
+  /** Throws away the most recent segment. Absent when there is nothing to throw. */
+  onDropLast?: () => void;
   onClose: () => void;
   /** Opens the camera roll. The picker itself lives with the file it produces. */
   onPickFile?: () => void;
-  /** Keeps the take and continues to the posting screen with the cover editor open. */
+  /** Leaves for the cover picker, keeping everything filmed so far. */
   onChooseCover?: () => void;
 }) {
   const preview = useRef<HTMLVideoElement>(null);
-  const playback = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const startedAt = useRef(0);
-  /** The blob URL of the take being reviewed, so it can be revoked. */
-  const takeUrl = useRef<string | null>(null);
+  /** When the shutter went down, so releasing it can tell a hold from a tap. */
+  const heldFrom = useRef(0);
 
   const [facing, setFacing] = useState<'user' | 'environment'>('user');
-  const [status, setStatus] = useState<
-    'starting' | 'ready' | 'recording' | 'reviewing' | 'denied'
-  >('starting');
+  const [status, setStatus] = useState<'starting' | 'ready' | 'recording' | 'denied'>('starting');
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [hasMic, setHasMic] = useState(true);
@@ -106,23 +127,14 @@ export function VideoRecorder({
    */
   const [cap, setCap] = useState<number>(maxSeconds);
 
-  /**
-   * What this take may run to: the chosen cap, or whatever is left of the overall
-   * budget, whichever is smaller. Declared here because the clock effect below
-   * stops on it.
-   */
-  const budget = Math.max(0, Math.min(remainingSeconds, cap));
+  /** What is left of the whole post's budget, and what this one take may run to. */
+  const remaining = budgetLeft(segments, maxSeconds);
+  const budget = segmentBudget(segments, cap, maxSeconds);
+  const roomToFilm = canRecordAnother(segments, maxSeconds);
 
   /** Torch, where the camera has one. Rear cameras sometimes do; front ones do not. */
   const [canFlash, setCanFlash] = useState(false);
   const [flashOn, setFlashOn] = useState(false);
-
-  /** The finished take, held here until it is kept or thrown away. */
-  const [take, setTake] = useState<Take | null>(null);
-  const [playing, setPlaying] = useState(false);
-  const [muted, setMuted] = useState(false);
-  const [at, setAt] = useState(0);
-  const [length, setLength] = useState(0);
 
   const stopStream = useCallback(() => {
     for (const track of streamRef.current?.getTracks() ?? []) track.stop();
@@ -131,47 +143,39 @@ export function VideoRecorder({
     setFlashOn(false);
   }, []);
 
-  /** Throws away the take being reviewed, and the blob URL holding it. */
-  const dropTake = useCallback(() => {
-    if (takeUrl.current) URL.revokeObjectURL(takeUrl.current);
-    takeUrl.current = null;
-    setTake(null);
-    setPlaying(false);
-    setAt(0);
-    setLength(0);
-  }, []);
-
   /** Opens the camera. Falls back to video-only if the microphone is refused. */
   const open = useCallback(async () => {
-    setStatus('starting');
     setError(null);
+    setStatus('starting');
+    // A second getUserMedia while the first stream is live is what makes some
+    // phones hand back a black frame. Release, then ask.
     stopStream();
+
+    const attempt = async (audio: boolean) =>
+      navigator.mediaDevices.getUserMedia({
+        video: { facingMode: facing, width: { ideal: 1080 }, height: { ideal: 1920 } },
+        audio,
+      });
+
     try {
       let stream: MediaStream;
-      let withMic = true;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: wantsMic,
-        });
-      } catch (micFailure) {
-        // A refused microphone should not cost somebody the camera as well.
-        if ((micFailure as DOMException)?.name === 'NotAllowedError') throw micFailure;
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: facing },
-          audio: false,
-        });
-        withMic = false;
+        stream = await attempt(wantsMic);
+        setHasMic(wantsMic);
+      } catch (failure) {
+        if (!wantsMic || (failure as DOMException)?.name === 'NotAllowedError') throw failure;
+        // A device with no microphone, or one in use elsewhere: the picture is
+        // still worth having.
+        stream = await attempt(false);
+        setHasMic(false);
       }
-      setHasMic(wantsMic && withMic && stream.getAudioTracks().length > 0);
-      streamRef.current = stream;
 
-      // Is there a torch on this camera? Asked of the track rather than assumed
-      // from the facing mode: it is a per-device capability, absent entirely on
-      // iOS Safari, and the control is not shown when it would do nothing.
+      streamRef.current = stream;
       const [videoTrack] = stream.getVideoTracks();
+      // Asked of the TRACK rather than guessed at from the facing mode: it is a
+      // per-device capability, absent entirely on most front cameras.
       const capabilities = videoTrack?.getCapabilities?.() as
-        | { torch?: boolean }
+        | (MediaTrackCapabilities & { torch?: boolean })
         | undefined;
       setCanFlash(Boolean(capabilities?.torch));
 
@@ -181,14 +185,11 @@ export function VideoRecorder({
       }
       setStatus('ready');
     } catch (failure) {
-      const name = (failure as DOMException)?.name;
       setStatus('denied');
       setError(
-        name === 'NotAllowedError'
-          ? 'FayTarra needs permission to use your camera and microphone. Allow it in your browser, then try again.'
-          : name === 'NotFoundError'
-            ? 'No camera was found on this device. You can upload a video instead.'
-            : 'The camera could not be opened. You can upload a video instead.',
+        (failure as DOMException)?.name === 'NotAllowedError'
+          ? 'FayTarra needs permission to use your camera. Allow it in your browser, then try again.'
+          : 'Your camera could not be opened. Another app may be using it.',
       );
     }
   }, [facing, wantsMic, stopStream]);
@@ -202,16 +203,6 @@ export function VideoRecorder({
     void open();
     return stopStream;
   }, [open, stopStream]);
-
-  // Nothing holds the camera open while a take is being watched. The recording
-  // light staying on over a playback screen looks like FayTarra is still
-  // filming, and on a phone it is also a battery and a heat cost for nothing.
-  useEffect(() => {
-    if (status === 'reviewing') stopStream();
-  }, [status, stopStream]);
-
-  // Whatever is left when this closes: the stream, and the take's blob URL.
-  useEffect(() => dropTake, [dropTake]);
 
   // The clock, and the hard stop when the time runs out.
   useEffect(() => {
@@ -257,209 +248,74 @@ export function VideoRecorder({
     recorder.addEventListener('stop', () => {
       const seconds = (Date.now() - startedAt.current) / 1000;
       setElapsed(0);
+      // Straight back to the viewfinder, every time. The stream was never
+      // released, so the picture is already live again; the segment is handed
+      // up and whoever is holding the phone decides what happens next.
+      setStatus('ready');
       if (chunks.length === 0) {
         // Nothing was captured — a camera that was pulled mid-take, or a
-        // recorder that produced no data. Back to the viewfinder rather than a
-        // review screen with nothing on it.
-        setStatus('ready');
+        // recorder that produced no data.
         setError('That take did not record. Try again.');
         return;
       }
-      const blob = new Blob(chunks, { type: mimeType });
-      const url = URL.createObjectURL(blob);
-      takeUrl.current = url;
-      setTake({ blob, mimeType, seconds, url });
-      setStatus('reviewing');
+      if (!keepsSegment(seconds)) {
+        // A shutter that went down and up in the same instant is not a clip,
+        // and a frame of nothing in the middle of somebody's video is worse
+        // than no clip at all.
+        return;
+      }
+      onRecorded({ blob: new Blob(chunks, { type: mimeType }), mimeType, seconds });
     });
     recorderRef.current = recorder;
     startedAt.current = Date.now();
     setElapsed(0);
     setStatus('recording');
+    setError(null);
     recorder.start(1000);
   }
 
   const left = Math.max(0, budget - elapsed);
   const recording = status === 'recording';
 
-  /** Keeps the take and hands it up. `then` says where the caller goes next. */
-  function keep(then: 'caption' | 'another' | 'cover') {
-    if (!take) return;
-    onRecorded({ blob: take.blob, mimeType: take.mimeType, seconds: take.seconds });
-    dropTake();
-    if (then === 'another') {
-      // The camera was released for the review, so reopen it.
-      void open();
+  /** Down on the shutter: stop if it is running, otherwise begin. */
+  function shutterDown() {
+    if (recording) {
+      recorderRef.current?.stop();
       return;
     }
-    if (then === 'cover') {
-      onChooseCover?.();
-      onClose();
-      return;
-    }
-    onClose();
+    if (status !== 'ready' || !roomToFilm) return;
+    heldFrom.current = Date.now();
+    start();
   }
 
-  /* ======================================================== the review ==== */
+  /**
+   * Up off the shutter.
+   *
+   * A hold ends the segment — press, film, release, which is what somebody
+   * holding the button means by it. A tap does not, because a tap means
+   * "record until I tap again" and both gestures share this one button.
+   */
+  const shutterUp = useCallback(() => {
+    if (status !== 'recording') return;
+    if (Date.now() - heldFrom.current < HOLD_MS) return;
+    recorderRef.current?.stop();
+  }, [status]);
 
-  if (status === 'reviewing' && take) {
-    const duration = length || take.seconds;
-    const progress = duration > 0 ? Math.min(1, at / duration) : 0;
-
-    const toggle = () => {
-      const element = playback.current;
-      if (!element) return;
-      if (!element.paused) {
-        element.pause();
-        return;
-      }
-      // Settling first, because a tap on a recording whose duration is still
-      // Infinity is a tap that does nothing. See settleDuration.
-      void settleDuration(element, 2000).then(() => element.play().catch(() => undefined));
+  // A pointer released off the edge of the shutter — a thumb that slid, or a
+  // browser that cancelled the gesture — would otherwise leave the recorder
+  // running with nobody holding it.
+  useEffect(() => {
+    if (status !== 'recording') return;
+    const release = () => shutterUp();
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
+    return () => {
+      window.removeEventListener('pointerup', release);
+      window.removeEventListener('pointercancel', release);
     };
+  }, [status, shutterUp]);
 
-    return (
-      <div className="fixed inset-0 z-50 bg-black">
-        {/* The take, full screen. `contain` rather than `cover`: this is the
-            thing being judged, so nothing about it may be cropped away. */}
-        <video
-          // `key` is not decoration. The viewfinder below is a similar shape, so
-          // React would reconcile the two branches onto the SAME DOM node and
-          // hand this one the viewfinder's element with its `srcObject` still
-          // attached — and srcObject beats src, so the take played back as a
-          // dead camera stream: duration Infinity, nothing seekable, no frames.
-          key="take-playback"
-          ref={(element) => {
-            playback.current = element;
-            // Belt and braces: correctness here should not rest on the
-            // reconciler's choices, and clearing this is free when already null.
-            if (element && element.srcObject) element.srcObject = null;
-          }}
-          src={take.url}
-          playsInline
-          controls={false}
-          muted={muted}
-          data-recorder-playback
-          onLoadedMetadata={(event) => {
-            const element = event.currentTarget;
-            void settleDuration(element).then(() => {
-              if (Number.isFinite(element.duration)) setLength(element.duration);
-            });
-          }}
-          onTimeUpdate={(event) => setAt(event.currentTarget.currentTime)}
-          onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
-          onEnded={() => setPlaying(false)}
-          className="absolute inset-0 h-full w-full object-contain"
-        />
-
-        {/* Tap anywhere to play or pause. The badge fades out while it plays so
-            the picture is not permanently covered by a control. */}
-        <button
-          type="button"
-          onClick={toggle}
-          aria-label={playing ? 'Pause' : 'Play'}
-          className="absolute inset-0 flex items-center justify-center"
-        >
-          <span
-            className={`flex h-[72px] w-[72px] items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-md transition-opacity duration-200 ${
-              playing ? 'opacity-0' : 'opacity-100'
-            }`}
-          >
-            {playing ? <PauseIcon width={28} height={28} /> : <PlayIcon width={28} height={28} />}
-          </span>
-        </button>
-
-        {/* ------------------------------------------------------- top */}
-        <div className="safe-top safe-x pointer-events-none absolute inset-x-0 top-0 bg-gradient-to-b from-black/70 to-transparent pb-10">
-          <div className="pointer-events-auto flex items-center justify-between px-4 pt-1">
-            <button
-              type="button"
-              onClick={() => {
-                dropTake();
-                setError(null);
-                void open();
-              }}
-              className={TOOL}
-              aria-label="Back to the camera"
-            >
-              <ChevronIcon direction="left" />
-            </button>
-            <span className="rounded-full bg-black/35 px-3 py-1.5 text-[13px] font-semibold tabular-nums text-white/80 backdrop-blur-md">
-              {formatSeconds(duration)}
-            </span>
-            <button
-              type="button"
-              onClick={() => setMuted((current) => !current)}
-              className={TOOL}
-              aria-label={muted ? 'Turn sound on' : 'Turn sound off'}
-              aria-pressed={muted}
-              data-review-sound={muted ? 'off' : 'on'}
-            >
-              <VolumeIcon muted={muted} />
-            </button>
-          </div>
-        </div>
-
-        {/* ---------------------------------------------------- bottom */}
-        <div className="safe-bottom safe-x absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/60 to-transparent px-4 pb-2 pt-12">
-          {/* The whole take is reachable: drag to any point in it. */}
-          <div className="flex items-center gap-3">
-            <span className="w-10 shrink-0 text-right text-[11px] tabular-nums text-white/60">
-              {formatSeconds(at)}
-            </span>
-            <input
-              type="range"
-              min={0}
-              max={Math.max(0.1, duration)}
-              step={0.05}
-              value={Math.min(at, duration)}
-              aria-label="Position in the recording"
-              data-review-scrub
-              onChange={(event) => {
-                const next = Number(event.target.value);
-                setAt(next);
-                if (playback.current) playback.current.currentTime = next;
-              }}
-              className="h-11 flex-1 accent-fay"
-            />
-            <span className="w-10 shrink-0 text-[11px] tabular-nums text-white/60">
-              {formatSeconds(duration)}
-            </span>
-          </div>
-          {/* A plain bar under it, because a range input's own track is thin and
-              differently styled in every browser. */}
-          <div className="mx-[52px] h-[3px] overflow-hidden rounded-full bg-white/15">
-            <div className="h-full rounded-full bg-fay" style={{ width: `${progress * 100}%` }} />
-          </div>
-
-          <div className="mt-4 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => keep('cover')}
-              className="btn-ghost min-h-[52px] flex-1 px-3 py-3 text-[13px]"
-            >
-              <ImageIcon width={16} height={16} /> Cover
-            </button>
-            <button
-              type="button"
-              onClick={() => keep('another')}
-              disabled={remainingSeconds - take.seconds < 0.5}
-              className="btn-ghost min-h-[52px] flex-1 px-3 py-3 text-[13px] disabled:opacity-40"
-            >
-              <RecordIcon width={16} height={16} /> Another
-            </button>
-            <button
-              type="button"
-              onClick={() => keep('caption')}
-              className="btn-primary min-h-[52px] flex-[1.4] px-3 py-3 text-[14px]"
-            >
-              Continue <CheckIcon width={16} height={16} />
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const filmed = canContinue(segments);
 
   /* ==================================================== the viewfinder ==== */
 
@@ -558,11 +414,7 @@ export function VideoRecorder({
           {/* Sound: whether the microphone is used at all. NOT the editor's Sound
               tool, which silences playback on a video that has audio — this one
               decides whether there is any audio to silence. Filming something to
-              put other audio over is a normal reason to want the picture alone.
-
-              It is not the "Add Sound" of a music-library app: FayTarra has no
-              track catalogue, and a button that looked like one and did nothing
-              would be worse than not having it. */}
+              put other audio over is a normal reason to want the picture alone. */}
           <button
             type="button"
             onClick={() => setWantsMic((current) => !current)}
@@ -574,6 +426,20 @@ export function VideoRecorder({
           >
             <VolumeIcon muted={!wantsMic} />
           </button>
+
+          {/* The cover, for somebody who wants to choose it now rather than in
+              the editor. It keeps everything filmed so far. */}
+          {onChooseCover && filmed && !recording && (
+            <button
+              type="button"
+              onClick={onChooseCover}
+              className={TOOL}
+              aria-label="Choose the cover"
+              data-camera-cover
+            >
+              <ImageIcon width={18} height={18} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -605,13 +471,38 @@ export function VideoRecorder({
       {/* Only when a microphone was WANTED and is not available. Switching sound
           off deliberately is not a problem to be told about. */}
       {wantsMic && !hasMic && status !== 'denied' && !error && (
-        <p className="absolute inset-x-0 bottom-[204px] z-10 mx-auto w-fit rounded-full bg-black/60 px-3 py-1.5 text-xs text-white/70 backdrop-blur-md">
+        <p className="absolute inset-x-0 bottom-[244px] z-10 mx-auto w-fit rounded-full bg-black/60 px-3 py-1.5 text-xs text-white/70 backdrop-blur-md">
           No microphone — this will record without sound
         </p>
       )}
 
       {/* -------------------------------------------------------- bottom */}
       <div className="safe-bottom safe-x absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/80 via-black/40 to-transparent px-6 pb-2 pt-16">
+        {/* What has been filmed, and the two things to do about it: throw the
+            last one away, or go to the editor. Only once something is on the
+            strip — an empty camera has nothing to say here. */}
+        {filmed && !recording && (
+          <div
+            className="mb-4 flex items-center justify-between gap-2"
+            data-camera-clips
+          >
+            <span className="rounded-full bg-black/45 px-3 py-1.5 text-[13px] font-semibold tabular-nums text-white/85 backdrop-blur-md">
+              {segmentSummary(segments)}
+            </span>
+            {onDropLast && (
+              <button
+                type="button"
+                onClick={onDropLast}
+                className="flex items-center gap-1.5 rounded-full bg-black/45 px-3 py-1.5 text-[13px] font-semibold text-white/75 backdrop-blur-md transition active:scale-95"
+                aria-label="Delete the last clip"
+                data-camera-drop-last
+              >
+                <TrashIcon width={15} height={15} /> Last clip
+              </button>
+            )}
+          </div>
+        )}
+
         {/* How long this one is going to be, chosen before filming and gone once
             it starts — the length of a take is not something to change mid-take.
             All three stay selectable while there is any budget left, and the clock
@@ -619,7 +510,7 @@ export function VideoRecorder({
             `budget`, which is the cap or what is left of the two minutes,
             whichever is smaller. So picking 2m on a second clip with twenty
             seconds left reads 0:20 rather than promising two minutes. */}
-        {!recording && status !== 'denied' && remainingSeconds >= 1 && (
+        {!recording && status !== 'denied' && remaining >= 1 && (
           <div className="mb-4 flex items-center justify-center gap-2" data-camera-caps>
             {RECORD_CAPS.map((option) => (
               <button
@@ -642,7 +533,7 @@ export function VideoRecorder({
 
         <div className="flex items-center justify-between">
           {/* Camera roll. Left, so the record button stays dead centre. */}
-          <div className="w-14">
+          <div className="w-20">
             {onPickFile && !recording && (
               <button
                 type="button"
@@ -659,25 +550,47 @@ export function VideoRecorder({
           <RecordButton
             recording={recording}
             disabled={status !== 'ready' && !recording}
-            spent={budget < 0.5}
+            spent={!roomToFilm}
             // Against the CHOSEN length, which is the point of choosing one.
             progress={recording ? Math.min(1, elapsed / Math.max(1, budget)) : 0}
-            onClick={() => (recording ? recorderRef.current?.stop() : start())}
+            onDown={shutterDown}
+            onUp={shutterUp}
           />
 
-          {/* Balances the record button to centre. Time left while filming, so
-              the number is next to the thumb that will stop it. */}
-          <div className="flex w-14 justify-end">
-            {recording && (
+          {/* Next: the only way out of the camera, and the reason stopping a
+              segment can safely leave somebody here. Balanced against the
+              camera roll so the shutter stays centred; the time left takes its
+              place while filming, next to the thumb that will stop it. */}
+          <div className="flex w-20 justify-end">
+            {recording ? (
               <span className="text-[13px] font-semibold tabular-nums text-white/70">
                 {formatSeconds(left)}
               </span>
+            ) : (
+              filmed && (
+                <button
+                  type="button"
+                  onClick={onNext}
+                  className="btn-primary min-h-[48px] shrink-0 px-3 py-2.5 text-[14px]"
+                  data-camera-next
+                >
+                  Next
+                </button>
+              )
             )}
           </div>
         </div>
 
         <p className="mt-3 text-center text-[11px] font-medium uppercase tracking-[0.14em] text-white/40">
-          {recording ? 'Tap to stop' : status === 'ready' ? 'Hold steady · tap to record' : ' '}
+          {recording
+            ? 'Release or tap to end the clip'
+            : status !== 'ready'
+              ? ' '
+              : !roomToFilm
+                ? 'That is the full two minutes — tap Next'
+                : filmed
+                  ? 'Hold to add another clip · Next when you are done'
+                  : 'Hold to record · tap to keep filming'}
         </p>
       </div>
     </div>
@@ -691,19 +604,26 @@ export function VideoRecorder({
  * one thing a thumb is reaching for is also the thing showing how long is left.
  * The inner shape changes rather than the button moving: a circle to start, a
  * square to stop, in the same place both times.
+ *
+ * Two gestures, one button, the way a phone camera does it: hold it to film and
+ * release to end the clip, or tap it to start and tap again to stop. `onDown`
+ * and `onUp` are both given the raw gesture; which of the two it was is decided
+ * by how long the press lasted, in the recorder.
  */
 function RecordButton({
   recording,
   disabled,
   spent,
   progress,
-  onClick,
+  onDown,
+  onUp,
 }: {
   recording: boolean;
   disabled: boolean;
   spent: boolean;
   progress: number;
-  onClick: () => void;
+  onDown: () => void;
+  onUp: () => void;
 }) {
   const size = 84;
   const stroke = 4;
@@ -713,10 +633,23 @@ function RecordButton({
   return (
     <button
       type="button"
-      onClick={onClick}
+      onPointerDown={(event) => {
+        // The gesture is the shutter's; a long press should not also select the
+        // screen or bring up a context menu over the viewfinder.
+        event.preventDefault();
+        onDown();
+      }}
+      onPointerUp={onUp}
+      onContextMenu={(event) => event.preventDefault()}
+      // Keyboard only: a click whose `detail` is 0 came from Enter or Space,
+      // not from a pointer, and a keyboard has no hold to release. Pointer
+      // clicks are already handled above and must not fire twice.
+      onClick={(event) => {
+        if (event.detail === 0) onDown();
+      }}
       disabled={disabled || (spent && !recording)}
       aria-label={recording ? 'Stop recording' : 'Start recording'}
-      className="relative flex h-[84px] w-[84px] items-center justify-center transition active:scale-95 disabled:opacity-40 [@media(max-height:520px)]:h-[68px] [@media(max-height:520px)]:w-[68px]"
+      className="relative flex h-[84px] w-[84px] touch-none select-none items-center justify-center transition active:scale-95 disabled:opacity-40 [@media(max-height:520px)]:h-[68px] [@media(max-height:520px)]:w-[68px]"
     >
       <svg
         viewBox={`0 0 ${size} ${size}`}

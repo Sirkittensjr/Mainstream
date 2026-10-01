@@ -17,10 +17,12 @@ import { FollowButton } from '@/components/FollowButton';
 import type { PostCardData } from '@/components/PostCard';
 import { RateButton } from '@/components/RateSheet';
 import { ReportDialog } from '@/components/ReportDialog';
+import { useVideoView } from './useVideoView';
 import { VideoComments, type CommenterInfo, type VideoComment } from './VideoComments';
 import { VideoText } from './VideoText';
 import {
   CommentIcon,
+  EyeIcon,
   HeartIcon,
   PlayIcon,
   ShareIcon,
@@ -270,6 +272,23 @@ function Slide({
   const router = useRouter();
   const isOwn = viewerId === data.author.id;
 
+  /**
+   * The watch count, and the one thing in this slide that reports a view.
+   *
+   * Not the IntersectionObserver, and not mounting: a slide becoming the
+   * active one is the feed deciding to try playing it, which is not the same
+   * as somebody watching it — autoplay can be refused, a scroll can pass
+   * through four slides in a second, and a slide a few away from the current
+   * one mounts its player without ever playing. Only elapsed playback counts,
+   * which is why this hangs off the player's own events.
+   */
+  const watch = useVideoView({
+    postId: data.id,
+    enabled: true,
+    duration: media.duration,
+    initialCount: data.videoViews,
+  });
+
   useEffect(() => {
     const element = video.current;
     if (!element) return;
@@ -373,11 +392,16 @@ function Slide({
             // A video posted with the sound off does not start making noise
             // because a viewer unmuted the feed.
             muted={muted || media.muted === true}
-            onPlay={() => setPlaying(true)}
+            onPlay={() => {
+              setPlaying(true);
+              watch.onPlay();
+            }}
             onPause={() => setPlaying(false)}
+            onSeeked={watch.onSeeked}
             onTimeUpdate={(event) => {
               const element = event.currentTarget;
               if (element.duration > 0) setProgress(element.currentTime / element.duration);
+              watch.onTimeUpdate(event);
             }}
             className="h-full w-full object-contain"
           />
@@ -543,6 +567,18 @@ function Slide({
             <ShareIcon width={26} height={26} />
             {copied ? 'Copied' : 'Share'}
           </button>
+          {/* How many times this has been watched. Not a button — there is
+              nothing to do with it — and silent until there is one. */}
+          {watch.count > 0 && (
+            <span
+              className="flex flex-col items-center gap-1 text-[11px] font-semibold text-white/75"
+              data-video-views
+              aria-label={`${watch.count.toLocaleString()} ${watch.count === 1 ? 'view' : 'views'}`}
+            >
+              <EyeIcon width={24} height={24} />
+              {formatCount(watch.count)}
+            </span>
+          )}
           <div className="flex flex-col items-center gap-1">
             <RateButton
               compact

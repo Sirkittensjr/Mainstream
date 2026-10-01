@@ -164,6 +164,19 @@ export interface Post {
   tags: string[];
   views: number;
   /**
+   * How many times the video on this post has actually been watched.
+   *
+   * Separate from `views` above, which counts the post page being opened and
+   * has done since the beginning. This one counts PLAYBACK — somebody watching
+   * the video past a threshold — and only video posts ever have it, because a
+   * photo has nothing to play. The number is the database's: it is written by
+   * one server-side path and never from a count a client sent.
+   *
+   * Optional because a database that has not had migration 0010 run against it
+   * does not return the column, and a post from before it has never had one.
+   */
+  video_views?: number;
+  /**
    * The author asked for this to stay covered until somebody chooses to see
    * it. Optional because a database without migration 0007 does not return
    * the column, and a post from before it has never had one.
@@ -182,6 +195,30 @@ export interface Post {
   review_expires_at?: ISODate | null;
   /** How many distinct accounts had reported it when the review started. */
   review_reports?: number;
+  created_at: ISODate;
+}
+
+/**
+ * One counted watch of one video.
+ *
+ * A row per view rather than a bare counter, because the counter alone cannot
+ * answer "has this person already been counted for this playback session?" —
+ * and without that answer a scroll back up a feed is a dozen more views. The
+ * row is the dedupe record; `posts.video_views` is the total it keeps.
+ *
+ * `identity` is who watched, as far as this can be known: the account id when
+ * somebody is signed in, and an opaque per-browser id when they are not.
+ * Nothing here is shown to anybody.
+ */
+export interface VideoView {
+  id: ID;
+  post_id: ID;
+  /** The signed-in account, or null for a visitor. */
+  viewer_id: ID | null;
+  /** Account id, or `anon:<opaque browser id>`. Dedupe and cooldown key on this. */
+  identity: string;
+  /** Identity plus the browser's playback-session key. Unique per counted view. */
+  dedupe_key: string;
   created_at: ISODate;
 }
 

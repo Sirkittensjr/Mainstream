@@ -26,6 +26,8 @@ import {
   totalDuration,
   updateClip,
 } from '@/lib/video/clips';
+import { stageAfterNext, stageAfterSegment } from '@/lib/video/camera';
+import { postCaption } from '@/lib/video/compose';
 import { grabFrame, probeLocalVideo } from '@/lib/video/capture';
 import {
   MAX_COVER_BYTES,
@@ -40,6 +42,7 @@ import { recordedFile } from '@/lib/video/recording';
 import { canRender, renderClips } from '@/lib/video/render';
 import { UploadError, contentTypeFor, discardMedia, uploadMedia } from '@/lib/video/upload-client';
 import { ClipEditor } from './ClipEditor';
+import { HashtagField } from './HashtagField';
 import { CoverPicker } from './CoverPicker';
 import { VideoEditor, type EditorTool } from './VideoEditor';
 import { VideoText } from './VideoText';
@@ -157,6 +160,23 @@ export function VideoStudio({
    */
   const [mobileStage, setMobileStage] = useState<'camera' | 'edit' | 'post'>('post');
 
+  /**
+   * Out of the camera and into the editor.
+   *
+   * CAMERA → EDIT → POST, and this is the one step that makes the first arrow.
+   * Called by Next, and by the camera running out of budget — never by a
+   * segment simply finishing.
+   */
+  const leaveCamera = useCallback(() => {
+    setRecording(false);
+    setMobileStage('edit');
+    // A fresh arrival lands on Trim, the first thing anybody does to a take.
+    // The tool is otherwise remembered, which is right while editing and wrong
+    // on arrival. Arriving to pick a cover overrides this, because that handler
+    // sets the tool after calling here.
+    setEditorTool('trim');
+  }, []);
+
   /** Playback properties of the finished post, set in the editing stage. */
   const [mutedOnPost, setMutedOnPost] = useState(false);
   /** Which editing tool is open, so arriving to pick a cover can start there. */
@@ -178,7 +198,8 @@ export function VideoStudio({
   const [title, setTitle] = useState('');
   const [caption, setCaption] = useState('');
   const [category, setCategory] = useState<Category>('Life');
-  const [tags, setTags] = useState('');
+  /** Hashtags, as tags. Collected and sent as a list, never appended to the caption. */
+  const [tags, setTags] = useState<string[]>([]);
   const [contentWarning, setContentWarning] = useState(false);
   /** Whether the folded-away fields are showing. Phones only; always open at sm+. */
   const [showMore, setShowMore] = useState(false);
@@ -258,6 +279,14 @@ export function VideoStudio({
 
   const total = totalDuration(clips);
   const left = remainingSeconds(clips);
+  /**
+   * What the camera is holding, as plain lengths.
+   *
+   * Derived from the clips rather than counted in the camera, so the budget the
+   * viewfinder shows and the budget the render pass obeys are the same number.
+   * An imported clip counts towards it exactly as a filmed one does.
+   */
+  const segments = clips.map(clipDuration);
   const editing = clips.find((clip) => clip.id === editingId) ?? null;
   /** What the compose screen plays: the combined video if there is one, else the only clip. */
   const previewUrl = finished?.previewUrl ?? (clips.length === 1 ? clips[0].src : null);
@@ -462,7 +491,7 @@ export function VideoStudio({
         // line of its caption rather than a second field in the database that
         // only videos would ever use. It is what the feed, the Videos feed,
         // search and the post page all already show.
-        caption: [title.trim(), caption.trim()].filter(Boolean).join('\n\n'),
+        caption: postCaption(title, caption),
         category,
         tags,
         contentWarning,
@@ -508,7 +537,7 @@ export function VideoStudio({
             clicks this input, so it has to exist while the camera is open. */}
         <FilePicker inputRef={fileInput} onFiles={pickFiles} />
         <VideoRecorder
-        remainingSeconds={left}
+        segments={segments}
         maxSeconds={MAX_VIDEO_SECONDS}
         onClose={() => setRecording(false)}
         onPickFile={() => fileInput.current?.click()}
@@ -516,6 +545,7 @@ export function VideoStudio({
           // On a phone the cover lives in the editing stage, so that is where
           // this goes — opened on the right tool. On a desktop there is no such
           // stage, so it scrolls the posting screen's picker into view instead.
+          leaveCamera();
           if (phone) {
             setEditorTool('cover');
             setMobileStage('edit');
@@ -532,17 +562,30 @@ export function VideoStudio({
           const index = clips.length + 1;
           const file = recordedFile(blob, mimeType, index);
           void addSource(file, `Recording ${index}`, file);
-          // Next from the camera goes to EDITING, not to the caption. The
-          // camera closes when the take is kept — and when the budget is spent
-          // there is nothing left to film either way.
-          setMobileStage('edit');
-          // A new take lands on Trim, the first thing anybody does to one. The
-          // tool is otherwise remembered, which is right while editing and wrong
-          // on arrival — coming back from the camera to whichever panel happened
-          // to be open last is disorienting. Arriving to pick a cover overrides
-          // this, because onChooseCover runs after it.
-          setEditorTool('trim');
-          if (seconds >= left - 0.5) setRecording(false);
+          // And that is all a finished segment does. The camera stays open, on
+          // the viewfinder, ready for the next one — releasing the shutter is
+          // not a decision to stop filming, and it used to be treated as one.
+          //
+          // The single exception is the budget running out: with no room for
+          // another clip there is nothing to stay for, so the editor is where
+          // somebody goes. `stageAfterSegment` is that rule, measured against
+          // the TOTAL of every segment including this one.
+          if (stageAfterSegment([...segments, seconds]) === 'edit') leaveCamera();
+        }}
+        onDropLast={
+          clips.length > 0
+            ? () => {
+                setClips((current) => current.slice(0, -1));
+                setFinished(null);
+                setError(null);
+              }
+            : undefined
+        }
+        onNext={() => {
+          // The one way out of the camera, and the reason stopping a segment can
+          // safely leave somebody in it.
+          if (stageAfterNext(segments) !== 'edit') return;
+          leaveCamera();
         }}
         />
       </>
@@ -914,6 +957,12 @@ export function VideoStudio({
         />
       </div>
 
+      {/* Hashtags, always on screen rather than folded away with the rest.
+          They are one of the five things this screen is for — video, title,
+          hashtags, cover, content warning — and they are the one that decides
+          whether anybody who is not already following finds the video. */}
+      <HashtagField tags={tags} onTags={setTags} disabled={posting} />
+
       {/* Everything else is folded away on a phone and open on a desktop.
           Nothing is removed — a mobile creator can still write a description,
           set a category and add tags — but the posting screen a phone opens on
@@ -952,36 +1001,22 @@ export function VideoStudio({
           />
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label className="label" htmlFor="video-category">
-              Category
-            </label>
-            <select
-              id="video-category"
-              value={category}
-              onChange={(event) => setCategory(event.target.value as Category)}
-              className="mt-2 w-full"
-            >
-              {CATEGORIES.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="label" htmlFor="video-tags">
-              Tags (optional)
-            </label>
-            <input
-              id="video-tags"
-              value={tags}
-              onChange={(event) => setTags(event.target.value)}
-              placeholder="firstvideo, studio"
-              className="mt-2 w-full"
-            />
-          </div>
+        <div>
+          <label className="label" htmlFor="video-category">
+            Category
+          </label>
+          <select
+            id="video-category"
+            value={category}
+            onChange={(event) => setCategory(event.target.value as Category)}
+            className="mt-2 w-full"
+          >
+            {CATEGORIES.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 

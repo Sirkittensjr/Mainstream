@@ -54,7 +54,12 @@ export function serialisePost(view: PostView) {
     category: view.post.category,
     tags: view.post.tags,
     createdAt: view.post.created_at,
-    counts: { likes: view.likes, comments: view.comments, views: view.post.views },
+    counts: {
+      likes: view.likes,
+      comments: view.comments,
+      views: view.post.views,
+      videoViews: view.post.video_views ?? 0,
+    },
     rating: {
       value: view.rating.rating,
       votes: view.rating.votes,
