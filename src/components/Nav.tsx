@@ -11,6 +11,7 @@ import {
   CompassIcon,
   HomeIcon,
   PlusIcon,
+  RecordIcon,
   ReelIcon,
   SearchIcon,
   ShieldIcon,
@@ -37,7 +38,7 @@ export interface NavUser {
 const PRIMARY = [
   { href: '/home', label: 'Home', icon: HomeIcon },
   { href: '/videos', label: 'Videos', icon: ReelIcon },
-  { href: '/create', label: 'Create', icon: PlusIcon },
+  { href: '/create/video', label: 'Record', icon: PlusIcon },
   { href: '/notifications', label: 'Alerts', icon: BellIcon },
 ] as const;
 
@@ -57,12 +58,14 @@ export function BottomNav({ user }: { user: NavUser | null }) {
       <ul className="mx-auto flex max-w-lg items-end justify-around px-2">
         {PRIMARY.map((item) => {
           const active = isActive(pathname, item.href);
-          if (item.href === '/create') {
+          if (item.href === '/create/video') {
             return (
               <li key={item.href} className="-mt-5">
+                {/* The + is a camera button, not a menu. It opens the viewfinder;
+                    photo posts are at /create and text posts on the profile. */}
                 <Link
-                  href={user ? '/create' : '/login?next=/create'}
-                  aria-label="Create"
+                  href={user ? '/create/video' : '/login?next=/create/video'}
+                  aria-label="Record a video"
                   className="flex h-14 w-14 items-center justify-center rounded-2xl shadow-glow transition active:scale-95"
                   style={{
                     backgroundImage: 'linear-gradient(135deg,#7C5CFF,#FF3D9A 55%,#FFB443)',
@@ -130,7 +133,8 @@ export function Sidebar({ user }: { user: NavUser | null }) {
     { href: '/home', label: 'Home', icon: HomeIcon as typeof HomeIcon },
     { href: '/videos', label: 'Videos', icon: ReelIcon },
     { href: '/discover', label: 'Discover', icon: CompassIcon },
-    { href: '/create', label: 'Create', icon: PlusIcon },
+    { href: '/create', label: 'New post', icon: PlusIcon },
+    { href: '/create/video', label: 'Record', icon: RecordIcon },
     { href: '/search', label: 'Search', icon: SearchIcon },
     { href: '/messages', label: 'Messages', icon: MailIcon },
     { href: '/notifications', label: 'Notifications', icon: BellIcon },

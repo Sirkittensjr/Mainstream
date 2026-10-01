@@ -49,6 +49,7 @@ const EMPTY: Store = {
   notifications: [],
   reports: [],
   messages: [],
+  moderation_events: [],
 };
 
 /**

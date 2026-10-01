@@ -56,13 +56,20 @@ async function createAccount(browser, handle, interest) {
   const link = confirmationLink(email);
   if (!link) throw new Error(`no confirmation email for ${email}`);
   await page.goto(link, { waitUntil: 'domcontentloaded' });
+  // The confirmation link exchanges a token and then redirects. Returning
+  // before that settles hands back a page that is still navigating, and the
+  // next goto races it — which shows up much later as a page that does not
+  // have the element it obviously should. The other suites already wait.
+  await page.waitForLoadState('networkidle');
   return { context, page, email, handle };
 }
 
 /** Opens Create and switches to the video tab. */
 async function openStudio(page) {
-  await page.goto('/create', { waitUntil: 'domcontentloaded' });
-  await page.locator('button[role=tab]', { hasText: 'Video' }).click();
+  await page.goto('/create/video?upload=1', { waitUntil: 'domcontentloaded' });
+  // The video route, which replaced the Create page's Post/Video toggle.
+  // `?upload=1` lands on the chooser rather than opening the camera,
+  // which is what a suite that uploads a file wants.
   await page.waitForSelector('text=Post a video', { timeout: 10000 });
 }
 
@@ -125,7 +132,15 @@ const run = async () => {
   section('CREATE — upload, record, and the clip strip');
 
   await openStudio(A.page);
-  check('the existing Post tab is still there', (await A.page.locator('button[role=tab]', { hasText: 'Post' }).count()) === 1);
+  // The Post/Video toggle is gone — + is a camera button and photo posts have
+  // their own page. What has to still be true is that the photo page is there and
+  // is NOT a video form.
+  const postPage = await A.page.request.get(`${BASE}/create`);
+  check('photo posts still have their own page', postPage.ok(), `HTTP ${postPage.status()}`);
+  check(
+    'and the Post/Video toggle is gone from it',
+    !(await postPage.text()).includes('role="tab"'),
+  );
 
   // 1. Upload a video. One video is the plain screen, so the clip strip only
   // exists once somebody goes looking for it.
@@ -164,7 +179,9 @@ const run = async () => {
   await addClip(A.page, 'square.webm');
   check('4. several clips can be added', (await clipCount(A.page)) === 3, `${await clipCount(A.page)} clips`);
 
-  // 2 + 3. Record with a microphone, twice.
+  // 2 + 3. Record with a microphone, twice. Stopping now shows the take back
+  // rather than committing it, so each one is kept with "Film another" — which
+  // is the multi-clip path this suite is exercising.
   await A.page.locator('button', { hasText: 'Record video' }).click();
   await A.page.waitForSelector('button[aria-label="Start recording"]', { timeout: 20000 });
   check('2. the camera opens and asks for permission', true);
@@ -173,8 +190,11 @@ const run = async () => {
     await A.page.waitForSelector('button[aria-label="Stop recording"]', { timeout: 10000 });
     await A.page.waitForTimeout(2200);
     await A.page.locator('button[aria-label="Stop recording"]').click();
-    await A.page.waitForTimeout(1200);
-    check(`3. clip ${take} recorded without leaving the camera`, true);
+    await A.page.waitForSelector('video[data-recorder-playback]', { timeout: 10000 });
+    check(`3. take ${take} can be watched back before it is kept`, true);
+    await A.page.locator('button', { hasText: 'Another' }).click();
+    await A.page.waitForSelector('button[aria-label="Start recording"]', { timeout: 20000 });
+    check(`3. take ${take} kept, and the camera came back for the next one`, true);
   }
   await A.page.locator('button[aria-label="Close the camera"]').click();
   await A.page.waitForTimeout(600);
@@ -373,8 +393,17 @@ const run = async () => {
   });
   check('17. and is sized to the screen', phoneShape.width > 200 && phoneShape.width <= 390, `${phoneShape.width.toFixed(0)}px wide`);
 
-  await phonePage.goto(`${BASE}/create`, { waitUntil: 'domcontentloaded' });
-  await phonePage.locator('button[role=tab]', { hasText: 'Video' }).click();
+  await phonePage.goto('/create/video?upload=1', { waitUntil: 'domcontentloaded' });
+  // The video route, which replaced the Create page's Post/Video toggle. A bare
+  // /create/video opens the camera on a phone — that is what `+` is for, and
+  // mobile-record-flow.mjs is where it is tested. `?upload=1` is the other door,
+  // the one the profile's "upload a video you already have" uses: it lands on the
+  // chooser with the camera off, which is what a suite handing over a file wants.
+  await phonePage.waitForSelector('input[type=file]', { state: 'attached', timeout: 20000 });
+  check(
+    '17. ?upload=1 gives a phone the chooser, not the camera',
+    (await phonePage.locator('button[aria-label="Close the camera"]').count()) === 0,
+  );
   await phonePage.waitForTimeout(500);
   const editorOverflow = await phonePage.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   check('17. the editor fits a phone screen', editorOverflow <= 0, `${editorOverflow}px of overflow`);
@@ -413,7 +442,17 @@ const run = async () => {
   check('23. and rated like any other post', /9\.0/.test(rated), rated.match(/\d\.\d/g)?.slice(0, 3).join(' '));
 
   // 24. Discover.
-  await B.page.goto('/discover', { waitUntil: 'domcontentloaded' });
+  //
+  // Filtered to the category this video was posted in (Music, set above), and
+  // that is not a convenience. The unfiltered /discover is a RANKED page showing
+  // the top 30 of everything recent, and its heat is likes, comments and views —
+  // so a minutes-old post with one comment sits around 90th of ~94 in the seeded
+  // dataset and cannot appear there however correct everything else is. Measured:
+  // heat 9.0 against 81.25 for the 30th place. Checking the unfiltered page was
+  // asserting the shape of the sample data. The category page's pool is single
+  // digits, so "is it discoverable" is a question it can actually answer.
+  await B.page.goto('/discover?category=Music', { waitUntil: 'domcontentloaded' });
+  await B.page.waitForLoadState('networkidle');
   await B.page.waitForTimeout(800);
   check('24. Discover shows the video post', (await B.page.locator(`text=${caption}`).count()) > 0);
   check('24. and renders it with a player', (await B.page.locator('article video').count()) > 0);

@@ -510,6 +510,7 @@ export function buildSeedStore(): Store {
     notifications: [],
     reports: [],
     messages: [],
+    moderation_events: [],
   };
   return seedInto(empty);
 }

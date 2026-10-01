@@ -2,6 +2,7 @@ import 'server-only';
 import { db } from '@/lib/db';
 import { DAY } from '@/lib/time';
 import type { Category, ID, PublicUser } from '@/lib/types';
+import { underReview } from '@/lib/auto-review-rules';
 import { ratingsIndex } from './ratings';
 import { followerCounts, toPublicUser } from './users';
 
@@ -16,6 +17,8 @@ export interface AdminStats {
     ratedPosts: number;
     untrusted: number;
     openReports: number;
+    /** Posts hidden by the automatic threshold, or held by an admin. */
+    underReview: number;
   };
   active: { dau: number; wau: number; mau: number };
   newUsers: { today: number; week: number; month: number };
@@ -67,6 +70,10 @@ export async function adminStats(): Promise<AdminStats> {
       ).size,
       untrusted: users.filter((u) => !u.trusted).length,
       openReports: reports.filter((r) => r.status === 'open').length,
+      // Counted from the posts already loaded above, so this costs nothing
+      // extra. A review with a clock running deserves a moderator's attention
+      // sooner than a report sitting in a queue, so it is worth surfacing.
+      underReview: posts.filter((p) => underReview(p)).length,
     },
     active: { dau: activeSince(1), wau: activeSince(7), mau: activeSince(30) },
     newUsers: {

@@ -284,6 +284,10 @@ const run = async () => {
 
   // --- rankings -------------------------------------------------------------
   await page.goto('/discover?show=people', { waitUntil: 'domcontentloaded' });
+  // Waited for, not counted straight away: `count()` does not auto-wait, so on a
+  // slower render it reports 0 for a page that is about to have fifty rows.
+  // Measured: this check failed once and passed on a re-run with the same seed.
+  await page.locator('ol li').first().waitFor({ timeout: 20000 }).catch(() => undefined);
   const rankHtml = await page.content();
   check('the people rankings render', (await page.locator('ol li').count()) > 0);
   check(

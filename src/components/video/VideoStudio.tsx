@@ -12,7 +12,7 @@ import {
   VideoIcon,
   VolumeIcon,
 } from '@/components/Icons';
-import { CATEGORIES, type Category, type Media } from '@/lib/types';
+import { CATEGORIES, type Category, type Media, type TextOverlay } from '@/lib/types';
 import {
   FULL_FRAME,
   type Clip,
@@ -28,7 +28,6 @@ import {
 } from '@/lib/video/clips';
 import { grabFrame, probeLocalVideo } from '@/lib/video/capture';
 import {
-  COVER_ACCEPT,
   MAX_COVER_BYTES,
   MAX_VIDEO_BYTES,
   MAX_VIDEO_SECONDS,
@@ -37,9 +36,13 @@ import {
   formatPreciseSeconds,
   formatSeconds,
 } from '@/lib/video/limits';
+import { recordedFile } from '@/lib/video/recording';
 import { canRender, renderClips } from '@/lib/video/render';
 import { UploadError, contentTypeFor, discardMedia, uploadMedia } from '@/lib/video/upload-client';
 import { ClipEditor } from './ClipEditor';
+import { CoverPicker } from './CoverPicker';
+import { VideoEditor, type EditorTool } from './VideoEditor';
+import { VideoText } from './VideoText';
 import { VideoRecorder } from './VideoRecorder';
 
 /**
@@ -68,7 +71,20 @@ interface Finished {
   previewUrl: string;
 }
 
-export function VideoStudio() {
+export function VideoStudio({
+  /**
+   * What to show first.
+   *
+   * `camera` is the + button: a viewfinder, immediately, because that is what was
+   * asked for. `chooser` is the profile's "upload a video": somebody who already
+   * has the file does not want their camera turned on to give it to us. Stated
+   * rather than inferred from the device, because the two routes mean different
+   * things on the same phone.
+   */
+  start = 'chooser',
+}: {
+  start?: 'camera' | 'chooser';
+} = {}) {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
   const objectUrls = useRef<string[]>([]);
@@ -97,6 +113,65 @@ export function VideoStudio() {
    * one failure path after that — the post itself failing — discards it
    * alongside the video.
    */
+  /**
+   * Whether the camera should open the moment the Video tab does.
+   *
+   * On a phone, tapping + and then Video is already a decision to use the
+   * camera — making somebody pass a chooser card first is a form in front of the
+   * thing they asked for. On a desktop it is not: a webcam is rarely what
+   * somebody at a desk came here for, and a camera permission prompt out of
+   * nowhere would be worse than a tap. So this is narrow AND coarse — a phone,
+   * not a small window — and it fires once, so closing the camera does not
+   * reopen it.
+   */
+  const autoOpened = useRef(false);
+  /**
+   * Whether this is a phone, decided once.
+   *
+   * Once, and not on every resize, because rotating a phone into landscape makes
+   * it 844 wide — re-reading this mid-edit would move somebody from the staged
+   * mobile flow to the desktop one while they were using it.
+   */
+  const [phone, setPhone] = useState(false);
+  useEffect(() => {
+    if (autoOpened.current) return;
+    autoOpened.current = true;
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    // Still needed after `start`: it decides whether the three mobile stages run
+    // at all, which is a question about the screen rather than about the route.
+    setPhone(window.matchMedia('(max-width: 639px) and (pointer: coarse)').matches);
+    const canRecordHere = Boolean(navigator.mediaDevices?.getUserMedia);
+    if (start === 'camera' && canRecordHere) setRecording(true);
+  }, [start]);
+
+  /**
+   * Which of the three mobile stages is showing.
+   *
+   * Deliberately not the `stage` above, which is the DESKTOP editor's
+   * compose/clips/editing state and is left alone.
+   *
+   * Camera, then editing, then posting — three decisions, three screens, because
+   * one screen asking for all of them is what made this feel like a form with a
+   * preview in it. Only consulted on a phone: the desktop flow is one page with
+   * the clip editor behind "Edit", and it is not changed by any of this.
+   */
+  const [mobileStage, setMobileStage] = useState<'camera' | 'edit' | 'post'>('post');
+
+  /** Playback properties of the finished post, set in the editing stage. */
+  const [mutedOnPost, setMutedOnPost] = useState(false);
+  /** Which editing tool is open, so arriving to pick a cover can start there. */
+  const [editorTool, setEditorTool] = useState<EditorTool>('trim');
+  const [overlays, setOverlays] = useState<TextOverlay[]>([]);
+
+  /** Set when the camera hands a take over for its cover to be chosen. */
+  const [coverWanted, setCoverWanted] = useState(false);
+  const coverSection = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!coverWanted || !coverSection.current) return;
+    coverSection.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setCoverWanted(false);
+  }, [coverWanted, clips.length]);
+
   const [customCover, setCustomCover] = useState<File | null>(null);
   const [customCoverUrl, setCustomCoverUrl] = useState<string | null>(null);
   const [coverError, setCoverError] = useState<string | null>(null);
@@ -105,6 +180,8 @@ export function VideoStudio() {
   const [category, setCategory] = useState<Category>('Life');
   const [tags, setTags] = useState('');
   const [contentWarning, setContentWarning] = useState(false);
+  /** Whether the folded-away fields are showing. Phones only; always open at sm+. */
+  const [showMore, setShowMore] = useState(false);
   const [posting, setPosting] = useState(false);
 
   const cancelled = useRef<AbortController | null>(null);
@@ -257,6 +334,11 @@ export function VideoStudio() {
           continue;
         }
         await addSource(file, file.name, file);
+        // Chosen from the camera roll: the camera has done its job, and an
+        // imported video gets the same editing stage a recorded one does —
+        // trimming, a cover, sound and text are no less useful for it.
+        setRecording(false);
+        setMobileStage('edit');
       }
     } finally {
       setBusy(null);
@@ -365,8 +447,17 @@ export function VideoStudio() {
       }
 
       setProgress({ label: 'Posting…', ratio: 1 });
+      // The playback properties chosen in the editing stage travel with the post
+      // rather than with the file. sanitiseMedia re-validates both server-side —
+      // these are a client's claim until it has.
+      const written = overlays.filter((entry) => entry.text.trim().length > 0);
       const result = await createVideoPostAction({
-        media: { ...uploaded.media, ...(poster ? { poster } : {}) },
+        media: {
+          ...uploaded.media,
+          ...(poster ? { poster } : {}),
+          ...(mutedOnPost ? { muted: true } : {}),
+          ...(written.length > 0 ? { text: written } : {}),
+        },
         // A video post is an ordinary FayTarra post, so the title is the first
         // line of its caption rather than a second field in the database that
         // only videos would ever use. It is what the feed, the Videos feed,
@@ -412,13 +503,98 @@ export function VideoStudio() {
 
   if (recording) {
     return (
-      <VideoRecorder
+      <>
+        {/* Mounted beside the camera, not instead of it: the camera-roll button
+            clicks this input, so it has to exist while the camera is open. */}
+        <FilePicker inputRef={fileInput} onFiles={pickFiles} />
+        <VideoRecorder
         remainingSeconds={left}
+        maxSeconds={MAX_VIDEO_SECONDS}
         onClose={() => setRecording(false)}
-        onRecorded={({ blob, seconds }) => {
-          void addSource(blob, `Recording ${clips.length + 1}`);
+        onPickFile={() => fileInput.current?.click()}
+        onChooseCover={() => {
+          // On a phone the cover lives in the editing stage, so that is where
+          // this goes — opened on the right tool. On a desktop there is no such
+          // stage, so it scrolls the posting screen's picker into view instead.
+          if (phone) {
+            setEditorTool('cover');
+            setMobileStage('edit');
+          } else {
+            setCoverWanted(true);
+          }
+        }}
+        onRecorded={({ blob, mimeType, seconds }) => {
+          // Wrapped as a File, which is what keeps an untouched recording OUT
+          // of the render pass: `needsRender` reads `clip.file` as "we still
+          // have the original bytes", and without one a two-minute recording
+          // was re-encoded in real time before it could be uploaded. See
+          // lib/video/recording.ts.
+          const index = clips.length + 1;
+          const file = recordedFile(blob, mimeType, index);
+          void addSource(file, `Recording ${index}`, file);
+          // Next from the camera goes to EDITING, not to the caption. The
+          // camera closes when the take is kept — and when the budget is spent
+          // there is nothing left to film either way.
+          setMobileStage('edit');
+          // A new take lands on Trim, the first thing anybody does to one. The
+          // tool is otherwise remembered, which is right while editing and wrong
+          // on arrival — coming back from the camera to whichever panel happened
+          // to be open last is disorienting. Arriving to pick a cover overrides
+          // this, because onChooseCover runs after it.
+          setEditorTool('trim');
           if (seconds >= left - 0.5) setRecording(false);
         }}
+        />
+      </>
+    );
+  }
+
+  /* ------------------------------------------------- the mobile edit stage */
+
+  // Between the camera and the caption, on a phone. The video is the screen and
+  // the only decisions here are about the video itself; posting comes next.
+  if (phone && mobileStage === 'edit' && clips.length > 0) {
+    return (
+      <VideoEditor
+        clip={clips[0]}
+        clipCount={clips.length}
+        // The combined video once one has been built, the first clip until then.
+        // Sound, text and a cover apply to the whole post either way; trimming is
+        // the only tool that needs a single clip, and its panel says so.
+        src={previewUrl ?? clips[0].src}
+        muted={mutedOnPost}
+        overlays={overlays}
+        cover={{
+          preview: coverPreview,
+          custom: customCover,
+          isCustom: Boolean(customCoverUrl),
+          at: thumbnailAt,
+          error: coverError,
+          onAt: setThumbnailAt,
+          onFile: chooseCover,
+          onClear: clearCover,
+        }}
+        tool={editorTool}
+        onTool={setEditorTool}
+        onTrim={(patch) => {
+          setClips((current) => updateClip(current, clips[0].id, patch));
+          // The rendered video is now out of date, so it is thrown away rather
+          // than posted as the pre-trim version.
+          setFinished(null);
+        }}
+        onMuted={setMutedOnPost}
+        onOverlays={setOverlays}
+        onAddClip={left > 0.5 ? () => setRecording(true) : undefined}
+        onRetake={() => {
+          // Going back past a take means that take is being redone, so it is
+          // dropped — the LAST one, which is the one just filmed. Keeping it and
+          // filming another is the other button.
+          setClips((current) => current.slice(0, -1));
+          setFinished(null);
+          setMobileStage('camera');
+          setRecording(true);
+        }}
+        onNext={() => setMobileStage('post')}
       />
     );
   }
@@ -584,24 +760,29 @@ export function VideoStudio() {
             Up to {MAX_VIDEO_SECONDS / 60} minutes and {formatMegabytes(MAX_VIDEO_BYTES)}. MP4, MOV
             or WEBM — straight off your phone is fine.
           </p>
+          {/* Recording comes first on a phone and second on a desktop, by
+              `order` rather than by rendering different things: the camera is what
+              somebody holding a phone came here for. Both buttons are always
+              present and neither is a different code path, so the desktop file
+              upload is exactly where it was. */}
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            <button
-              type="button"
-              onClick={() => fileInput.current?.click()}
-              disabled={Boolean(busy)}
-              className="btn-primary min-h-[56px] py-4"
-            >
-              <PlusIcon width={18} height={18} /> Select video
-            </button>
             <button
               type="button"
               onClick={() => {
                 setError(null);
                 setRecording(true);
               }}
-              className="btn-ghost min-h-[56px] py-4"
+              className="btn-primary order-1 min-h-[56px] py-4 sm:order-2"
             >
-              <RecordIcon width={18} height={18} /> Record
+              <RecordIcon width={18} height={18} /> Record a video
+            </button>
+            <button
+              type="button"
+              onClick={() => fileInput.current?.click()}
+              disabled={Boolean(busy)}
+              className="btn-ghost order-2 min-h-[56px] py-4 sm:order-1"
+            >
+              <PlusIcon width={18} height={18} /> Choose a file
             </button>
           </div>
         </div>
@@ -614,14 +795,38 @@ export function VideoStudio() {
 
   return (
     <div className="space-y-5">
+      {/* A phone arrived here from the editor, so it says so and offers the way
+          back. Editing is finished; this screen is for posting. */}
+      {phone && clips.length > 0 && (
+        <div className="flex items-center justify-between" data-post-stage>
+          <button
+            type="button"
+            onClick={() => setMobileStage('edit')}
+            className="btn-quiet px-3 py-2 text-sm"
+          >
+            <ChevronIcon direction="left" width={15} height={15} /> Edit
+          </button>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-white/40">
+            Post video
+          </p>
+          <span className="w-16" aria-hidden />
+        </div>
+      )}
+
       {previewUrl ? (
-        <video
-          src={previewUrl}
-          controls
-          playsInline
-          preload="metadata"
-          className="mx-auto max-h-[52vh] w-full rounded-2xl bg-black object-contain"
-        />
+        // The overlays and the sound choice are on the preview, so what is shown
+        // here is the post rather than the raw file.
+        <div className="relative mx-auto w-full">
+          <video
+            src={previewUrl}
+            controls
+            playsInline
+            muted={mutedOnPost}
+            preload="metadata"
+            className="mx-auto max-h-[52vh] w-full rounded-2xl bg-black object-contain"
+          />
+          <VideoText media={{ text: overlays.filter((entry) => entry.text.trim().length > 0) }} />
+        </div>
       ) : (
         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 text-center text-sm text-white/45">
           {clips.length} clips, {formatSeconds(total)} in total. They are put together when you
@@ -670,157 +875,113 @@ export function VideoStudio() {
       {/* ------------------------------------------------------------ cover */}
       {previewUrl && (
         <section
+          ref={coverSection}
           aria-labelledby="cover-heading"
+          data-cover-section
           className="rounded-2xl border border-white/10 bg-white/[0.03] p-4"
         >
-          <h2 id="cover-heading" className="text-sm font-semibold text-white/70">
-            Choose cover
-          </h2>
-          <p className="mt-1 text-xs text-white/40">
-            What people see before they press play. The start of the video unless you pick
-            something else.
-          </p>
-
-          <div className="mt-3 flex items-start gap-3">
-            {/* One preview, whichever kind of cover is winning. */}
-            {coverPreview ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={coverPreview}
-                alt={customCoverUrl ? 'The image chosen as this cover' : 'The frame chosen as this cover'}
-                data-cover-preview={customCoverUrl ? 'custom' : 'frame'}
-                className="h-20 w-20 shrink-0 rounded-xl bg-black object-contain"
-              />
-            ) : (
-              <div className="h-20 w-20 shrink-0 rounded-xl bg-white/[0.04]" />
-            )}
-
-            <div className="min-w-0 flex-1">
-              {customCover ? (
-                <>
-                  <p className="truncate text-xs text-white/60">
-                    Using your own image — {formatMegabytes(customCover.size)}
-                  </p>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <label
-                      htmlFor="cover-file"
-                      className="btn-quiet cursor-pointer px-3 py-2 text-xs"
-                    >
-                      Replace
-                    </label>
-                    <button type="button" onClick={clearCover} className="btn-quiet px-3 py-2 text-xs">
-                      Use a frame instead
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <label htmlFor="thumbnail" className="text-xs text-white/40">
-                    Drag to pick a frame
-                  </label>
-                  {/* Full width and 44px tall so a thumb can work it. */}
-                  <input
-                    id="thumbnail"
-                    type="range"
-                    min={0}
-                    max={Math.max(0.1, total - 0.1)}
-                    step={0.1}
-                    value={thumbnailAt}
-                    aria-label="Cover frame position"
-                    aria-valuetext={`${formatPreciseSeconds(thumbnailAt)} of ${formatSeconds(total)}`}
-                    onChange={(event) => setThumbnailAt(Number(event.target.value))}
-                    className="mt-1 h-11 w-full accent-fay"
-                  />
-                  <label
-                    htmlFor="cover-file"
-                    className="btn-quiet inline-block cursor-pointer px-3 py-2 text-xs"
-                  >
-                    Upload thumbnail
-                  </label>
-                </>
-              )}
-
-              {/* Nothing is uploaded on pick — see the note on `customCover`. */}
-              <input
-                id="cover-file"
-                type="file"
-                accept={COVER_ACCEPT}
-                className="hidden"
-                onChange={(event) => {
-                  chooseCover(event.target.files?.[0]);
-                  // Cleared so picking the SAME file again still fires.
-                  event.target.value = '';
-                }}
-              />
-
-              {coverError && (
-                <p role="alert" className="mt-2 text-xs text-fay-soft">
-                  {coverError}
-                </p>
-              )}
-            </div>
-          </div>
+          <CoverPicker
+            preview={coverPreview}
+            custom={customCover}
+            isCustom={Boolean(customCoverUrl)}
+            at={thumbnailAt}
+            max={total}
+            error={coverError}
+            onAt={setThumbnailAt}
+            onFile={chooseCover}
+            onClear={clearCover}
+          />
         </section>
       )}
 
+      {/* The one field that always shows. It is the first line of the post's
+          caption, which on a phone is simply "the caption" — so it is called
+          that there. On a desktop, where the longer description sits right
+          underneath it, "Title" is the more accurate of the two words and the
+          screen is unchanged. */}
       <div>
         <label className="label" htmlFor="video-title">
-          Title
+          <span className="sm:hidden">Caption</span>
+          <span className="hidden sm:inline">Title</span>
         </label>
         <input
           id="video-title"
           maxLength={120}
           value={title}
           onChange={(event) => setTitle(event.target.value)}
-          placeholder="What is this video?"
+          placeholder="Say something about it"
           className="mt-2 w-full text-base"
         />
       </div>
 
-      <div>
-        <label className="label" htmlFor="video-caption">
-          Description (optional)
-        </label>
-        <textarea
-          id="video-caption"
-          rows={3}
-          maxLength={1200}
-          value={caption}
-          onChange={(event) => setCaption(event.target.value)}
-          placeholder="Say more about it. @mention anyone you want to bring in."
-          className="mt-2 w-full text-base"
+      {/* Everything else is folded away on a phone and open on a desktop.
+          Nothing is removed — a mobile creator can still write a description,
+          set a category and add tags — but the posting screen a phone opens on
+          is the video, a caption, a cover, a content warning and Post, and not
+          a five-field form standing between somebody and their own video. */}
+      <button
+        type="button"
+        onClick={() => setShowMore((current) => !current)}
+        aria-expanded={showMore}
+        aria-controls="video-more"
+        data-more-options
+        className="chip w-full justify-center py-2.5 hover:bg-white/10 sm:hidden"
+      >
+        {showMore ? 'Fewer options' : 'More options'}
+        <ChevronIcon
+          direction="right"
+          width={14}
+          height={14}
+          className={`transition ${showMore ? '-rotate-90' : 'rotate-90'}`}
         />
-      </div>
+      </button>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div id="video-more" className={`space-y-4 ${showMore ? '' : 'hidden sm:block'}`}>
         <div>
-          <label className="label" htmlFor="video-category">
-            Category
+          <label className="label" htmlFor="video-caption">
+            Description (optional)
           </label>
-          <select
-            id="video-category"
-            value={category}
-            onChange={(event) => setCategory(event.target.value as Category)}
-            className="mt-2 w-full"
-          >
-            {CATEGORIES.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="label" htmlFor="video-tags">
-            Tags (optional)
-          </label>
-          <input
-            id="video-tags"
-            value={tags}
-            onChange={(event) => setTags(event.target.value)}
-            placeholder="firstvideo, studio"
-            className="mt-2 w-full"
+          <textarea
+            id="video-caption"
+            rows={3}
+            maxLength={1200}
+            value={caption}
+            onChange={(event) => setCaption(event.target.value)}
+            placeholder="Say more about it. @mention anyone you want to bring in."
+            className="mt-2 w-full text-base"
           />
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label className="label" htmlFor="video-category">
+              Category
+            </label>
+            <select
+              id="video-category"
+              value={category}
+              onChange={(event) => setCategory(event.target.value as Category)}
+              className="mt-2 w-full"
+            >
+              {CATEGORIES.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label" htmlFor="video-tags">
+              Tags (optional)
+            </label>
+            <input
+              id="video-tags"
+              value={tags}
+              onChange={(event) => setTags(event.target.value)}
+              placeholder="firstvideo, studio"
+              className="mt-2 w-full"
+            />
+          </div>
         </div>
       </div>
 
@@ -870,14 +1031,25 @@ export function VideoStudio() {
         </div>
       )}
 
-      <button
-        type="button"
-        onClick={() => void post()}
-        disabled={posting || Boolean(busy)}
-        className="btn-primary w-full py-4"
-      >
-        {posting ? 'Posting…' : 'Post video'}
-      </button>
+      {/* Sticky at the bottom on a phone: the posting screen scrolls once More
+          options is open, and the one button somebody came here to press should
+          not be the one they have to go looking for. Static from `sm:` up, where
+          the whole screen fits and a floating bar would be noise. */}
+      {/* `pointer-events-none` on the bar and `auto` on the button: the bar's
+          transparent gradient sits over whatever is scrolled underneath it, and
+          without this it swallows taps on those controls rather than letting them
+          through. Measured — it ate the More options button. */}
+      <div className="safe-bottom pointer-events-none sticky bottom-0 -mx-4 bg-gradient-to-t from-ink-950 via-ink-950/95 to-transparent px-4 pb-2 pt-4 sm:static sm:mx-0 sm:bg-none sm:p-0">
+        <button
+          type="button"
+          onClick={() => void post()}
+          disabled={posting || Boolean(busy)}
+          data-post-button
+          className="btn-primary pointer-events-auto min-h-[56px] w-full py-4"
+        >
+          {posting ? 'Posting…' : 'Post video'}
+        </button>
+      </div>
     </div>
   );
 }

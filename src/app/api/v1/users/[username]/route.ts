@@ -20,7 +20,7 @@ export async function GET(
     userRating(user.id),
     userRanks(user.id),
     getUserStats(user.id),
-    postsByAuthor(user.id),
+    postsByAuthor(user.id, viewer),
   ]);
   const views = await hydratePosts(posts.slice(0, 30), viewer?.id ?? null);
 

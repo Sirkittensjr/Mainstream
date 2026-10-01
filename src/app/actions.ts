@@ -20,10 +20,14 @@ import {
 } from '@/lib/services/posts';
 import { markAllRead } from '@/lib/services/notifications';
 import {
+  clearReportThreshold,
+  holdReviewed,
   removeComment,
   removePost,
+  removeReviewedPost,
   resolveReport,
   restorePost,
+  restoreReviewed,
   setUserStatus,
   submitReport,
 } from '@/lib/services/moderation';
@@ -438,14 +442,69 @@ export async function logoutAction() {
 // --- admin -----------------------------------------------------------------
 
 export async function adminRemovePostAction(postId: string, reason: string) {
-  await requireAdmin();
-  await removePost(postId, reason || 'Removed by a moderator');
+  const admin = await requireAdmin();
+  await removePost(postId, reason || 'Removed by a moderator', admin.id);
   revalidatePath('/admin');
 }
 
 export async function adminRestorePostAction(postId: string) {
-  await requireAdmin();
-  await restorePost(postId);
+  const admin = await requireAdmin();
+  await restorePost(postId, admin.id);
+  revalidatePath('/admin');
+}
+
+// --- automatic temporary review --------------------------------------------
+//
+// Every one of these is an ADMIN action and nothing else. `requireAdmin()` is
+// the whole authorisation story: it reads the role off the database row for the
+// signed-in session, server-side, on every call. There is no client-supplied
+// user, no client-supplied role, and no client-supplied report count anywhere
+// in this section — the counts come from counting rows.
+
+/** Reviewed and fine: the post comes back now. */
+export async function adminRestoreReviewedAction(postId: string) {
+  const admin = await requireAdmin();
+  await restoreReviewed(postId, admin.id);
+  revalidatePath('/admin');
+  revalidatePath(`/post/${postId}`);
+}
+
+/**
+ * Reviewed and not fine: removed, and the author is told why.
+ *
+ * Removing a post is NOT banning its author. Reaching the threshold is ten
+ * people clicking a button, which is not evidence of anything about a person,
+ * and account status is left exactly where it was — a suspension is a separate,
+ * deliberate decision on the Users tab.
+ */
+export async function adminRemoveReviewedAction(postId: string, reason: string) {
+  const admin = await requireAdmin();
+  await removeReviewedPost(
+    postId,
+    admin.id,
+    reason || 'Removed after review for breaking the community guidelines',
+  );
+  revalidatePath('/admin');
+  revalidatePath(`/post/${postId}`);
+}
+
+/** Needs longer than 24 hours. Stops the automatic clock, nothing else. */
+export async function adminHoldReviewedAction(postId: string) {
+  const admin = await requireAdmin();
+  await holdReviewed(postId, admin.id);
+  revalidatePath('/admin');
+}
+
+/**
+ * Clears the reports counting toward the threshold, so restoring a post does
+ * not walk straight back into the same hide. The reports stay on the record.
+ */
+export async function adminClearReportsAction(
+  targetType: 'post' | 'user' | 'comment',
+  targetId: string,
+) {
+  const admin = await requireAdmin();
+  await clearReportThreshold(targetType, targetId, admin.id);
   revalidatePath('/admin');
 }
 
@@ -471,8 +530,8 @@ export async function adminResolveReportAction(
   status: 'resolved' | 'dismissed',
   resolution: string,
 ) {
-  await requireAdmin();
-  await resolveReport(reportId, status, resolution);
+  const admin = await requireAdmin();
+  await resolveReport(reportId, status, resolution, admin.id);
   revalidatePath('/admin');
 }
 

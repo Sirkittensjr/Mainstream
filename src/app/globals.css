@@ -24,6 +24,22 @@
     padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
   }
 
+  /*
+   * Full-screen surfaces that put controls at the very top — the camera, its
+   * review screen — clear the notch and the Dynamic Island. The app is
+   * viewportFit: 'cover', so without this the close button is under the island
+   * on any recent iPhone.
+   */
+  .safe-top {
+    padding-top: max(0.5rem, env(safe-area-inset-top));
+  }
+
+  /* And the sides, which matter in landscape where the inset is left/right. */
+  .safe-x {
+    padding-left: max(0px, env(safe-area-inset-left));
+    padding-right: max(0px, env(safe-area-inset-right));
+  }
+
   ::selection {
     @apply bg-fay/40 text-white;
   }

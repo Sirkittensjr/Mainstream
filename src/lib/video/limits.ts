@@ -1,3 +1,5 @@
+import type { SniffedType } from '@/lib/file-type';
+
 /**
  * The limits on FayTarra video, in one place.
  *
@@ -35,6 +37,26 @@ export const DURATION_TOLERANCE_SECONDS = 2.5;
 export const MAX_VIDEO_SECONDS_ENFORCED = MAX_VIDEO_SECONDS + DURATION_TOLERANCE_SECONDS;
 
 /**
+ * The caps the camera offers before filming starts.
+ *
+ * A shorter cap is a decision about the video, not a restriction: picking 15
+ * seconds is how somebody commits to something short, and the ring on the
+ * shutter then means something the whole way round rather than creeping along a
+ * two-minute track. They are all bounded by MAX_VIDEO_SECONDS, which stays the
+ * only number the server enforces.
+ */
+export const RECORD_CAPS = [15, 60, MAX_VIDEO_SECONDS] as const;
+
+export type RecordCap = (typeof RECORD_CAPS)[number];
+
+/** "15s" / "60s" / "2m" — the cap as the camera labels it. */
+export function capLabel(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds % 60 === 0 && seconds > 60) return `${seconds / 60}m`;
+  return `${seconds}s`;
+}
+
+/**
  * The most a custom cover image may weigh.
  *
  * Well under the 25MB the upload route allows any image, because this one is
@@ -52,6 +74,24 @@ export const MAX_CLIPS = 12;
 
 /** What the file picker offers, and what the sniffer will accept. */
 export const VIDEO_ACCEPT = 'video/mp4,video/quicktime,video/webm,video/*';
+
+/**
+ * What may be uploaded at all, keyed by the type sniffed from the bytes.
+ *
+ * Here rather than in the server-only uploads.ts because both sides need it:
+ * the server to decide what it will store, and the browser to label a camera
+ * recording with a type that will not be refused. uploads.ts re-exports it, so
+ * there is still one list.
+ */
+export const UPLOADABLE: SniffedType[] = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+];
 
 export function formatSeconds(seconds: number): string {
   const whole = Math.max(0, Math.round(seconds));

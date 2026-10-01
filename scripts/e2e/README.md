@@ -16,7 +16,14 @@ psql -v ON_ERROR_STOP=1 -d faytarra_test -f supabase/schema.sql
 psql -d faytarra_test -f scripts/e2e/schema-checks.sql
 psql -d faytarra_test -f scripts/e2e/rls-checks.sql
 psql -d faytarra_test -f scripts/e2e/dm-checks.sql
+psql -d faytarra_test -f scripts/e2e/admin-checks.sql
+psql -d faytarra_test -f scripts/e2e/auto-review-checks.sql
 ```
+
+The shim's `storage.buckets` carries `file_size_limit` and `allowed_mime_types`
+because `schema.sql` sets them. Without those columns `schema.sql` aborts partway
+through under `ON_ERROR_STOP=1`, which silently skips everything after it — the
+grants and the RLS block included, which is most of what these files test.
 
 `rls-checks.sql` is the one to re-run after touching grants or policies. It
 proves that somebody holding only the anon key cannot read an email address,
@@ -47,8 +54,20 @@ admin, demote the admin, promote anyone else, or read the admin's email — whil
 still being able to edit their own bio in the same session. The lines marked
 "must fail" are expected to print an error; that is the check passing.
 
+`auto-review-checks.sql` proves the automatic ten-report review is enforced by
+the DATABASE and not only by the app: one account cannot report the same thing
+twice (a unique index, not a code path), `review_state` cannot be set to
+anything the app does not mean, neither API role can read *or write* the
+moderation log, and a signed-in person cannot restore a hidden post, forge a
+report count, clear the reports counting toward the threshold, mark one reviewed
+or delete one to get back under it. The lines marked "must fail" are expected to
+print an error; the five `UPDATE 0` / `DELETE 0` lines in section 4 are the
+check passing too — row level security makes them no-ops rather than errors,
+and section 5 reads everything back to prove nothing moved. It cleans up after
+itself, so it is re-runnable.
+
 ```bash
-psql -d faytarra_test -f scripts/e2e/admin-checks.sql
+psql -d faytarra_test -f scripts/e2e/auto-review-checks.sql
 ```
 
 ## 2. The app side — `gotrue-stub.mjs` + `auth-flow.mjs` + `social-flow.mjs`
@@ -209,6 +228,284 @@ checks that nothing in settings lets somebody set their own role, and that
 `ADMIN_EMAILS` is how the role is applied on sign-in locally; in production
 migration 0008 sets the same column.
 
+### 3d. The automatic ten-report review — `auto-review-flow.mjs`
+
+Ten different accounts reporting the same post hide it while somebody looks —
+for at most 24 hours, and never as a verdict.
+
+```bash
+ADMIN_EMAILS=admin@faytarra.com ADMIN_SESSION_SECRET=test-secret \
+  FAY_REVIEW_WINDOW_MINUTES=2 npm start &
+FAY_REVIEW_WINDOW_MINUTES=2 node scripts/e2e/auto-review-flow.mjs
+```
+
+`FAY_REVIEW_WINDOW_MINUTES` shortens the window so the expiry can be watched
+happening instead of waited out for a day. It may only ever **shorten** it:
+`clampWindow` in `src/lib/auto-review-rules.ts` caps it at the documented 24
+hours, and the unit tests in `auto-review-rules.test.ts` cover the default and
+the clamp. Pass the same value to the app and to the harness — the harness uses
+it to know what wording to expect and how long to wait, and skips the expiry
+section (saying so) if the window is longer than five minutes.
+
+Two minutes, not one: filing ten reports through the dialog takes most of a
+minute, and a one-minute window can lapse before the check that the post is
+*gone* has run — which reads as a product failure and is not one.
+
+Twelve accounts get created, so give it a few minutes.
+
+Covers, in order of how badly it would matter if it were wrong:
+
+- **One account is not ten.** Twelve reports from one person is one report row
+  and no hide; nine different accounts is no hide; the tenth hides it.
+- **Hidden means hidden.** Gone from the feeds, from Discover, from search,
+  from the author's public profile as others see it, from `/post/<id>` and from
+  `/api/v1/posts/<id>` — the author and an administrator still see it, because
+  the author was told it exists and an admin cannot review what they cannot see.
+- **Only an administrator can act.** `/admin` and its tabs are asked for
+  directly, not looked for in the navigation; no restore, remove, hold or clear
+  control is served to anybody else; the author cannot un-hide their own post;
+  every write method on the post API is refused, so there is no count to forge.
+- **Nothing is deleted.** Clearing the threshold leaves all ten report rows with
+  their reasons and reporters, marked `cleared_at`, and leaves the automatic hide
+  in `moderation_events`. Ten *fresh* reports hide it again, which is the proof
+  that clearing reset the count rather than switched it off.
+- **It is temporary.** The window runs out with no sweep, no cron and no admin,
+  and the post is in a feed again. Looking at the queue afterwards records it as
+  an *expiry* with no actor, not as a decision.
+- **Nobody learns who reported them.** No reporter handle or id appears in the
+  admin queue's text or its markup, or in either notification the author gets —
+  while what reporters wrote is still shown to the admin.
+- **A removal is not a ban.** After Remove permanently the author's status is
+  still `active`, and they get a notification saying it was removed.
+- **Hold** stops the clock without expiring, and the post stays hidden.
+- **A moderator can see there is something waiting** — the overview counts it
+  and the Reports tab carries its own badge, separate from the report count,
+  because a hide with a clock on it is more urgent than a queued report.
+
+The author's messages are **notifications**, not direct messages: the harness
+checks no `messages` row was created, because the mutual-follow rule that
+governs DMs is not being bent so that FayTarra can talk to somebody.
+
+**Videos need nothing of their own.** A video on FayTarra *is* a post, and the
+videos feed is `visiblePosts` filtered to posts with video media, so it is the
+same code path. The only thing the media changes is the noun in the author's
+notification, hence text fixtures here rather than a recorded clip.
+
+### 4c. Recording on a phone — `mobile-record-flow.mjs`
+
+The camera flow at phone size, from the + in the bottom navigation to the video
+being in somebody else's feed. Chromium's fake camera and microphone stand in for
+the lens, so getUserMedia, the permission prompt, MediaRecorder, the audio track,
+the upload and the post are all real code paths.
+
+```bash
+node scripts/e2e/mobile-record-flow.mjs
+```
+
+Runs at iPhone-13 viewport on a Chromium engine (the descriptor's WebKit user
+agent is dropped — a WebKit UA on a Chromium engine is a lie the app might
+behave differently for, and what is being tested here is the viewport and touch
+input).
+
+**The flow is three stages**, and the suite walks them in order:
+
+```
+camera  →  record  →  Next  →  EDIT  →  Next  →  POST
+```
+
+The editing stage is a screen of its own between the camera and the caption. Its
+four tools are Trim, Sound, Text and Cover, and the suite checks that none of the
+POSTING decisions — caption, category, tags, content warning — is reachable from
+it. Editing should feel like editing.
+
+**What each tool costs, because two of them were designed around it.** Trim
+changes the bytes, so it goes through the existing real-time render pass; the
+suite records a 6-second take, trims it to 3, and reads the finished post's own
+duration back from `/api/v1/posts/<id>` — asked of the app, not of a file, so the
+same check works on the local driver and against the Supabase stubs. Sound and
+Text do NOT change the bytes: they are stored on the post and applied by the
+player, because `needsRender` returning false for an untouched recording is the
+only thing stopping a two-minute take from costing a two-minute re-encode, and
+burning either one in would flip that for every video carrying them. The suite
+asserts both halves — the render pass runs for the trim and never runs for the
+untouched take.
+
+Covers, in the order somebody walks it:
+
+- **Getting there.** The **+ in the bottom navigation is the camera**. It is
+  labelled "Record a video", it links straight to `/create/video`, and the
+  viewfinder is what opens — there is no Create page in between and no Post/Video
+  toggle to choose from, because tapping + on a phone is already a decision to
+  film something. (The general four-way chooser lives on Home and the profile
+  instead, and is covered further down — the point of the two doors is that this
+  one has nothing in it.) The suite asserts all of that, and that the Create page was
+  demoted rather than deleted: `/create` still answers, still carries the photo
+  form, and no longer has a `role="tab"` anywhere — checked over `fetch` so the
+  camera is not torn down to find out. It also offers the camera back, through a
+  `data-to-camera` link, for somebody who landed there wanting to film something.
+  Uploading stays reachable in both directions: a camera-roll button on the
+  camera, and the file chooser behind the X.
+- **The camera screen.** The preview measured to fill the whole viewport, with
+  `object-fit: cover` and its top edge at 0 — a letterboxed preview between two
+  solid bars is the thing that makes a web camera feel like a web page. The
+  2-minute budget, front/rear switching that keeps the camera open, flash shown
+  only where the camera reports a torch, every control at least 44px, and the
+  close and record buttons clear of the top and bottom edges the notch and home
+  indicator occupy. Also the **three duration caps** — 15s, 60s and 2 minutes —
+  all three offered and labelled, the full two minutes chosen to begin with (so
+  nothing anybody could film before is out of reach), each one a tap target, the
+  chooser gone while filming, and picking one moving the budget the clock and the
+  shutter's ring are both measured against: choosing 15s makes the clock read 0:15
+  and going back makes it read 2:00 again. The budget is the cap or what is left of
+  the two minutes, whichever is smaller, so a cap never promises more than it can
+  give. And the **sound control**: recording with the microphone off is a real
+  `getUserMedia` with no audio track rather than a muted one, so the suite reads
+  the track count off the live stream and not the button's state. It is not the
+  "Add sound" of a music-library app — FayTarra has no track catalogue, and a
+  button that looked like one and did nothing would be worse than not having it.
+- **Recording.** That nothing claims to be recording before it is, that the REC
+  indicator then appears and says so in words, and that the shutter's ring is
+  partly filled — read off the SVG arc's `stroke-dashoffset`, so it is the real
+  progress and not a class name.
+- **The review.** Full screen, `object-fit: contain` (nothing about the take may
+  be cropped while it is being judged), play and pause, a scrubber that spans the
+  whole recording and moves the video when dragged, a sound control that really
+  mutes the element, the camera released while it plays, and **Cover** going to
+  the editing stage already opened on the cover tool.
+- **The editing stage.** No posting fields present; the video measured at 38% or
+  more of the screen and uncropped; the four tools in order and each at least
+  44px; a thumb-sized timeline; a new take landing on Trim; the end handle
+  shortening what is kept and the timeline following it; Reset restoring the whole
+  take; text appearing over the video as it is typed and moving up the frame;
+  sound off silencing the preview; the cover tool being the same `CoverPicker` the
+  posting screen uses; and Retake dropping the take it goes back past rather than
+  adding a second clip.
+- **The posting stage.** That it says so, offers a way back to editing, shows the
+  text on the final preview, and has a Post button at least 52px tall that is on
+  screen without scrolling for it.
+- **The posting screen.** That a phone opens on the video, a caption, a cover, a
+  content warning and Post — with the description, category and tags folded away
+  behind More options and **provably still there** when it is opened.
+- **The post.** The upload route the server chose, the video reaching the Videos
+  feed and the normal feed **as seen by a second account**, and the content
+  warning in front of it.
+- **The profile shelves.** Posts, Videos, Text and About, in that order — Posts
+  first because that is the shelf a profile opens on — each a tap target and the
+  row fitting the phone. The video that was just recorded is on **Videos**, with
+  "upload a video you already have" beside it going to `/create/video?upload=1` —
+  the chooser, not the camera. **Text** carries the writing form that used to be a
+  tab on the Create page, and a post written there lands on that shelf and
+  provably not on Videos. **Posts** points at `/create` for a photo post and does
+  not list the video. Nothing was migrated to make this work: each shelf is the
+  same list filtered by what its posts carry, so an old post lands on the right
+  one by itself.
+- **The general Create post path**, which is the other door and deliberately not
+  the `+`. Home and your own profile each carry a `data-create-post` trigger whose
+  sheet offers four kinds, and the suite checks all four are there, in order, each
+  at least 44px, with the sheet fitting the phone — and, the part that matters,
+  that every one of them points at a route that already exists:
+
+  ```
+  photo         /create?kind=photo
+  text          /create?kind=text
+  upload-video  /create/video?upload=1
+  record-video  /create/video
+  ```
+
+  Then it follows two of them: **Record video** must land on the same
+  `/create/video` the `+` lands on and show the same full-screen viewfinder — if
+  it went anywhere else there would be two cameras — and **Upload video** must
+  land on the chooser with the camera off. **Photo** and **Text** are one composer
+  leading with different halves of itself, so the suite compares the positions of
+  the picker and the caption and checks that neither kind has lost the other half.
+  It finishes by writing a post through that path and finding it on the Text
+  shelf, because a chooser nothing can be posted from is not worth offering.
+- **Desktop.** The file picker still offered and still first at desktop width,
+  reached through `/create/video?upload=1`.
+
+**Two of these checks are worth knowing about.**
+
+The first is `an untouched recording was NOT re-encoded in the browser`. The
+render pass announces itself as "Preparing your video…", and for a recording
+nobody edited it must never run — re-encoding costs a real-time pass, two more
+minutes on a two-minute video, to arrive back at bytes the upload routes already
+accept. The check watches for that label throughout the post.
+
+The second is that **both feeds are checked from somebody else's account**.
+Neither feed recommends you your own posts — `videoFeed` filters on
+`post.author_id !== viewerId` deliberately — so looking as the author is a
+question with no right answer, and a check that can only fail is not a check.
+
+**An imported video goes through the editing stage too**, which
+`video-upload-flow.mjs` had to be told about — trimming, a cover, sound and text
+are no less useful for a file than for a recording, so on a phone a chosen file
+lands in the editor and reaching the caption means tapping Next. That suite has a
+`reachPostingScreen` helper which taps it when the editor is showing and does
+nothing on a desktop, where there is no such stage.
+
+**The camera opens itself at phone width**, which is why `/create/video` has a
+second door. A bare `/create/video` opens the viewfinder on a phone; `?upload=1`
+lands on the chooser with the camera off, which is what the profile's "upload a
+video you already have" wants and what every suite handing over a file from disk
+wants. `video-flow.mjs`, `video-upload-flow.mjs`, `videos-flow.mjs` and
+`video-cover-flow.mjs` all go through that door. The phone condition is narrow AND
+coarse — `(max-width: 639px) and (pointer: coarse)`, evaluated once on mount — so
+a small desktop window is not a phone and desktop is untouched.
+
+**Why the shelf tabs are plain anchors.** They used to be `<Link>`s, and tapping
+one did nothing perhaps a third of the time. The shelf lives in a search param on
+a `force-dynamic` page, and a client-side navigation that only changes a search
+param was intermittently applied as no change at all: the click fired, the RSC
+request was answered 200, and the URL never moved. Measured by clicking all four
+shelves twice from a fresh load each time — three of eight stuck. `prefetch={false}`
+took it to one in eight; plain anchors took it to zero, because a full navigation
+cannot be swallowed. Switching shelf is a page-level view switch rather than an
+in-page interaction, so the cost is a reload the server was doing all of anyway.
+
+The same measurement on **Home's feed tabs** found one tap in six doing nothing,
+so those are plain anchors now too — it was the same bug on the same pattern, and
+it predates the Create post work rather than coming from it.
+
+**Why the profile header is `relative z-10`.** `.card` carries `backdrop-blur-xl`,
+and a backdrop-filter creates a stacking context — so the ••• menu's `z-40`
+dropdown cannot rise above anything OUTSIDE that header, and the shelf tab bar
+comes later in the document. The tab bar painted over the open menu, and once
+Posts moved to the front of the bar the Videos count badge landed on **Block** and
+made that button unclickable. Raising the header changes no layout, only paint
+order. The suite clicks Block on somebody else's profile rather than hit-testing
+it, because on a menu the click IS the bug; `videos-flow.mjs` blocks and unblocks
+an account too, which is how this was found.
+
+**A suite that crashes prints no `FAIL` line.** This one died inside
+`locator.click`, so grepping its output for `^FAIL` said zero failures and
+grepping for `ALL CHECKS PASSED` said nothing at all — an empty result that is
+easy to read as success. Check the exit code, or count `^PASS` against the
+expected total; every suite here exits non-zero when it has not passed.
+
+The suite's `openShelf` helper waits for the tab to claim `aria-current` rather
+than for `networkidle`, which is waiting for the render rather than the network.
+That mattered while these were soft navigations and is still the honest thing to
+wait for.
+
+**On TUS.** Against the local driver `/api/upload/sign` answers `post`, so the
+resumable branch does not run and the suite says so rather than claiming
+otherwise. To exercise it, run the same suite through the Supabase stubs
+(section 15) — `sign` then answers `resumable` and the checks assert the TUS
+endpoint was used:
+
+```bash
+STUB_PORT=54321 node scripts/e2e/gotrue-stub.mjs &
+STORAGE_PORT=54500 node scripts/e2e/storage-stub.mjs &
+PORT=55300 GOTRUE_PORT=54321 STORAGE_PORT=54500 node scripts/e2e/postgrest-stub.mjs &
+SUPABASE_URL=http://127.0.0.1:55300 NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:55300 \
+  SUPABASE_ANON_KEY=stub SUPABASE_SERVICE_ROLE_KEY=stub-secret npm start &
+node scripts/e2e/mobile-record-flow.mjs
+```
+
+**State matters for the video suites.** `videos-flow.mjs` asserts an exact number
+of slides, so reseed (`npm run reset`) before it — video posts left behind by
+another suite make it fail on a count, not on a fault.
+
 ### 4a. Video covers — `video-cover-flow.mjs`
 
 The picture that stands in for a video before anybody plays it: a frame picked
@@ -348,6 +645,18 @@ rotating, muting, combining, choosing a thumbnail, captioning, posting, and
 watching the result from a second account on desktop and at phone width. It
 finishes by proving that text posts, photo posts, likes, comments, ratings and
 Discover still work exactly as before.
+
+Recording here goes through the review step — a take is watched back before it
+is kept — so this suite keeps each one with "Film another", which is the
+multi-clip path it is exercising. For the phone-first camera flow, see
+`mobile-record-flow.mjs` above.
+
+Its Discover check is filtered to the category the video was posted in, on
+purpose: the unfiltered /discover is the top 30 of everything recent ranked by
+likes, comments and views, so a minutes-old post with one comment sits around
+90th of ~94 in the seeded dataset and cannot appear there however correct
+everything else is. The unfiltered check was asserting the shape of the sample
+data.
 
 There is no ffmpeg in this container and none is needed. The fixtures are made
 the same way the feature makes video — canvas plus `MediaRecorder` — so they
@@ -639,14 +948,31 @@ it:
 
 ### Which store each suite wants
 
-`auth-flow`, `video-flow`, `videos-flow`, `video-upload-flow`,
-`messaging-flow`, `profile-colours-flow`, `top-creators-flow` and
-`social-navigation` create their own accounts and want an EMPTY store
+`auth-flow`, `features-flow`, `video-flow`, `videos-flow`, `video-upload-flow`,
+`video-cover-flow`, `mobile-record-flow`, `messaging-flow`,
+`profile-colours-flow`, `top-creators-flow`, `auto-review-flow`, `admin-badge`
+and `social-navigation` create their own accounts and want an EMPTY store
 (`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and
 `social-flow` sign in as the seeded demo accounts and check against them —
 `signup-form-state` takes `tommy` as its already-taken username — so those need
 `npm run seed` first. Running them against the wrong one reports failures that
-are not failures.
+are not failures: `features-flow` against the seeded store fails three Discover
+checks, because Discover is a ranked board and a brand-new post with no ratings
+is not entitled to a place on it next to hundreds of seeded ones. That is the
+ranking working.
+
+**The admin suites need the admin's email in the environment**, and they do not
+all use the same one: `admin-badge.mjs` signs its admin up as
+`admin@faytarra.com` while the seeded store's admin is `admin@faytarra.app`.
+`ADMIN_EMAILS` takes a list, so one server can satisfy both:
+
+```bash
+ADMIN_EMAILS=admin@faytarra.com,admin@faytarra.app \
+  ADMIN_SESSION_SECRET=any-long-string npm start &
+```
+
+Without it every badge check fails at once, which looks like the badge being
+broken and is only the account never having been made an admin.
 
 ### A note on running these back to back
 

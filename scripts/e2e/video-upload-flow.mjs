@@ -133,10 +133,39 @@ async function storageBytes() {
 const resetStorageBytes = () =>
   fetch(`${STUB.replace('55300', '54500')}/__stats`, { method: 'POST' });
 
+/**
+ * Gets from a chosen file to the posting screen.
+ *
+ * On a phone an imported video now lands in the EDITING stage — trimming, a
+ * cover, sound and text are no less useful for a file than for a recording — so
+ * reaching the caption means tapping Next. On a desktop there is no such stage
+ * and the composer is already there, so this waits for whichever arrives.
+ */
+async function reachPostingScreen(page, timeout = 30000) {
+  await Promise.race([
+    page.waitForSelector('[data-editor-next]', { timeout }).catch(() => null),
+    page.waitForSelector('#video-title', { timeout }).catch(() => null),
+  ]);
+  if ((await page.locator('[data-editor-next]').count()) > 0) {
+    await page.locator('[data-editor-next]').click();
+  }
+  await page.waitForSelector('#video-title', { timeout });
+}
+
+/**
+ * Gets to the file chooser.
+ *
+ * The video studio has its own route now, and two doors into it. A bare
+ * `/create/video` opens the viewfinder on a phone — that is what the + button is
+ * — and `?upload=1` lands on the chooser with the camera off, which is the door
+ * the profile's "upload a video you already have" uses and the one a suite handing
+ * over a file wants. Returns whether the camera stayed shut, so the caller can
+ * check that this door really is the other one.
+ */
 async function openStudio(page) {
-  await page.goto('/create', { waitUntil: 'domcontentloaded' });
-  await page.locator('button[role=tab]', { hasText: 'Video' }).click();
-  await page.waitForSelector('text=Post a video', { timeout: 15000 });
+  await page.goto('/create/video?upload=1', { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('text=Post a video', { timeout: 20000 });
+  return (await page.locator('button[aria-label="Close the camera"]').count()) === 0;
 }
 
 const run = async () => {
@@ -157,19 +186,55 @@ const run = async () => {
   /* ============================== the simple UI ========================== */
   section('SIMPLE — one video, no clips anywhere');
 
-  await openStudio(A.page);
+  // This suite is about the FILE path, so it goes through `?upload=1` — the door
+  // that does not switch the camera on. That it does not is worth recording here,
+  // because a phone getting a viewfinder when it asked to hand over a file is the
+  // regression this route exists to avoid.
+  check('?upload=1 gives a phone the chooser, not the camera', await openStudio(A.page));
+
   const empty = await A.page.locator('body').innerText();
   check('the first screen says what fits', /2 minutes and 250MB/.test(empty), empty.split('\n').find((l) => /minutes and/.test(l)));
-  check('it offers Select video', (await A.page.locator('button', { hasText: 'Select video' }).count()) === 1);
+  // Renamed from "Select video" when recording became the phone-first action:
+  // the pair now reads "Record a video" / "Choose a file". The file path itself
+  // is unchanged, which is what the rest of this suite goes on to prove.
+  check(
+    'it offers a way to choose a file',
+    (await A.page.locator('button', { hasText: 'Choose a file' }).count()) === 1,
+  );
+  check(
+    'and a way to record one',
+    (await A.page.locator('button', { hasText: 'Record a video' }).count()) === 1,
+  );
 
   await A.page.locator('input[type=file]').setInputFiles(fixture('portrait.webm'));
-  await A.page.waitForSelector('#video-title', { timeout: 20000 });
+  await reachPostingScreen(A.page);
   const composing = await A.page.locator('body').innerText();
   check('the video is previewed', (await A.page.locator('video').count()) >= 1);
   check('its length is shown', /0:0[23]/.test(composing), composing.split('\n').find((l) => /^0:/.test(l)));
+  // The posting screen a PHONE opens on, which is what this context is: a
+  // caption, a cover and a content warning. The description, category and tags
+  // are folded behind More options rather than removed — proved just below by
+  // opening it — because five fields between somebody and their own video is
+  // the thing the redesign took away.
   check(
-    'the caption, tags and content warning are all there',
-    /title/i.test(composing) && /tags/i.test(composing) && /content warning/i.test(composing),
+    'the caption, cover and content warning are all there',
+    /caption/i.test(composing) &&
+      /choose cover/i.test(composing) &&
+      /content warning/i.test(composing),
+    composing.split('\n').filter((l) => /caption|cover|content warning/i.test(l)).join(' / '),
+  );
+  check(
+    'and the rest is folded away, not gone',
+    (await A.page.locator('[data-more-options]').count()) === 1 &&
+      !/tags/i.test(composing),
+  );
+  await A.page.locator('[data-more-options]').click();
+  await A.page.waitForTimeout(300);
+  check(
+    'opening it brings back the description, category and tags',
+    /description/i.test(await A.page.locator('body').innerText()) &&
+      /tags/i.test(await A.page.locator('body').innerText()) &&
+      /category/i.test(await A.page.locator('body').innerText()),
   );
   check('and nothing about clips is on screen', !/Clip 1|Combining|clip 1 of/i.test(composing));
   check('no upload has started yet', (await A.page.locator('text=Uploading').count()) === 0);
@@ -241,7 +306,7 @@ const run = async () => {
   await openStudio(A.page);
   const big = paddedFixture('portrait.webm', 9);
   await A.page.locator('input[type=file]').setInputFiles(big.path);
-  await A.page.waitForSelector('#video-title', { timeout: 30000 });
+  await reachPostingScreen(A.page);
   const bigSeen = watchRequests(A.page);
   await resetStorageBytes();
   await A.page.fill('#video-title', `big clip ${stamp}`);
@@ -299,7 +364,7 @@ const run = async () => {
     await openStudio(A.page);
     const resumeFile = paddedFixture('portrait.webm', 14);
     await A.page.locator('input[type=file]').setInputFiles(resumeFile.path);
-    await A.page.waitForSelector('#video-title', { timeout: 30000 });
+    await reachPostingScreen(A.page);
     await resetStorageBytes();
     await A.page.fill('#video-title', `resumed ${stamp}`);
     await A.page.locator('button', { hasText: /^Post video$/ }).click();
@@ -318,7 +383,7 @@ const run = async () => {
 
   await openStudio(A.page);
   await A.page.locator('input[type=file]').setInputFiles(paddedFixture('portrait.webm', 24).path);
-  await A.page.waitForSelector('#video-title', { timeout: 30000 });
+  await reachPostingScreen(A.page);
   await A.page.fill('#video-title', `cancelled ${stamp}`);
   await A.page.locator('button', { hasText: /^Post video$/ }).click();
   await A.page.waitForSelector('button:has-text("Cancel")', { timeout: 30000 });
@@ -374,7 +439,13 @@ const run = async () => {
   const needle = `phone clip ${stamp}`;
   check('it is in the normal feed', await appears(B.page, '/home?tab=recommended', needle), summarise());
   check('and in the Videos feed', await appears(B.page, '/videos', needle), summarise());
-  check('and on the creator profile', await appears(B.page, `/u/${A.handle}`, needle), summarise());
+  // The videos shelf: a profile keeps videos, photo posts and writing on three
+  // tabs now, and the default one is photo posts.
+  check(
+    'and on the creator profile',
+    await appears(B.page, `/u/${A.handle}?tab=videos`, needle),
+    summarise(),
+  );
   check(
     'and findable by its tag',
     await appears(B.page, `/search?q=phone${stamp}`, needle),

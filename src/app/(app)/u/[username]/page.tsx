@@ -16,6 +16,10 @@ import { RateButton } from '@/components/RateSheet';
 import { formatCount } from '@/lib/format';
 import { profileSkin } from '@/lib/profile-theme';
 import { formatVotes, topReactions } from '@/lib/ratings';
+import { PlusIcon } from '@/components/Icons';
+import { CreatePostMenu } from '@/components/CreatePostMenu';
+import { shelfFor, type PostShelf } from '@/lib/media';
+import { TextPostForm } from './TextPostForm';
 import { hydratePosts, postsByAuthor } from '@/lib/services/posts';
 import { myRating, userRating } from '@/lib/services/ratings';
 import { userRanks } from '@/lib/services/rankings';
@@ -42,7 +46,39 @@ export async function generateMetadata({
   return { title: user ? `${user.display_name} (@${user.username})` : 'Profile' };
 }
 
-const TABS = ['posts', 'about'] as const;
+/**
+ * The profile's shelves.
+ *
+ * Posts first, because Posts is where a profile opens — a bar whose first chip is
+ * not the one filled in reads as a bug. Each shelf is the same list filtered by
+ * what its posts carry — see `shelfFor` — so nothing was migrated and an old post
+ * lands on the right one the first time somebody looks.
+ *
+ * Their owner also gets a way to ADD to two of them here: a pre-recorded video
+ * under Videos, and a written post under Text. Both are also in the Create post
+ * sheet at the top of the page; these are the same destinations, offered next to
+ * the thing they make.
+ */
+const TABS = ['posts', 'videos', 'text', 'about'] as const;
+
+/** What an empty shelf says. Three lists deserve three answers. */
+const SHELF_EMPTY: Record<PostShelf, { title: string; mine: string; theirs: string }> = {
+  videos: {
+    title: 'No videos yet',
+    mine: 'Record one with the + button, or upload one you already have.',
+    theirs: 'has not posted a video yet. Follow to be there when they do.',
+  },
+  posts: {
+    title: 'No photo posts yet',
+    mine: 'A photo and something to say. It shows up here.',
+    theirs: 'has not posted a photo yet. Follow to be there when they do.',
+  },
+  text: {
+    title: 'Nothing written yet',
+    mine: 'Say something. No picture needed.',
+    theirs: 'has not written anything yet. Follow to be there when they do.',
+  },
+};
 
 export default async function ProfilePage({
   params,
@@ -56,6 +92,7 @@ export default async function ProfilePage({
   const tab = TABS.includes((tabParam ?? '') as (typeof TABS)[number])
     ? (tabParam as (typeof TABS)[number])
     : 'posts';
+  const shelf = tab === 'about' ? null : (tab as PostShelf);
 
   const user = await getUserByUsername(username);
   if (!user) notFound();
@@ -69,7 +106,7 @@ export default async function ProfilePage({
     await Promise.all([
       getUserStats(user.id),
       viewer && !isSelf ? isFollowing(viewer.id, user.id) : Promise.resolve(false),
-      postsByAuthor(user.id),
+      postsByAuthor(user.id, viewer),
       userRating(user.id),
       userRanks(user.id),
       myRating(viewer?.id ?? null, 'user', user.id),
@@ -81,9 +118,18 @@ export default async function ProfilePage({
 
   const requested = Number.parseInt(show ?? '', 10);
   const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 20), 200) : 20;
-  const posts = blocked ? [] : await hydratePosts(allPosts.slice(0, limit), viewer?.id ?? null);
+  // One query, three shelves. The filter is on what a post carries rather than on
+  // a column, so `postsByAuthor` — and the rule it already applies about what a
+  // given viewer may see — is untouched.
+  const shelved = shelf ? allPosts.filter((post) => shelfFor(post.media) === shelf) : [];
+  const posts = blocked ? [] : await hydratePosts(shelved.slice(0, limit), viewer?.id ?? null);
+  const counts = {
+    videos: allPosts.filter((post) => shelfFor(post.media) === 'videos').length,
+    posts: allPosts.filter((post) => shelfFor(post.media) === 'posts').length,
+    text: allPosts.filter((post) => shelfFor(post.media) === 'text').length,
+  };
   const moreHref = `/u/${user.username}?${new URLSearchParams({
-    ...(tab === 'about' ? { tab } : {}),
+    ...(tab === 'posts' ? {} : { tab }),
     show: String(Math.min(limit + 20, 200)),
   })}`;
   const rated = rating.overallVotes > 0;
@@ -101,7 +147,15 @@ export default async function ProfilePage({
         data-profile-skin={skin ? 'on' : undefined}
       >
         <div className="mx-auto max-w-2xl px-4 pt-4 lg:pt-8">
-          <header className="card p-6">
+          {/* `relative z-10`, and it is load-bearing. `.card` carries
+              `backdrop-blur-xl`, and a backdrop-filter creates a stacking
+              context — so the ••• menu's `z-40` dropdown is trapped inside this
+              header and cannot rise above anything outside it. The shelf tab bar
+              comes later in the document, so it painted OVER the open menu, and a
+              count badge landing on "Block" made that button unclickable. Raising
+              the header itself is what lets the menu inside it win; it changes no
+              layout, only paint order. */}
+          <header className="card relative z-10 p-6">
             <div className="flex items-start gap-4">
               <Avatar
                 username={user.username}
@@ -233,9 +287,10 @@ export default async function ProfilePage({
                   <Link href="/settings" className="btn-ghost px-6 py-2.5 text-sm">
                     Edit profile
                   </Link>
-                  <Link href="/create" className="btn-primary px-6 py-2.5 text-sm">
-                    Create a post
-                  </Link>
+                  {/* The general way in, beside Edit profile: Photo, Text,
+                      Upload video, Record video. Record video opens the same
+                      VideoStudio the `+` button does, by the same route. */}
+                  <CreatePostMenu variant="button" />
                 </>
               ) : (
                 <>
@@ -273,15 +328,35 @@ export default async function ProfilePage({
             </div>
           </header>
 
-          <nav className="profile-tabs mt-6 flex gap-2">
+          {/* Scrollable, because four chips and a count each do not fit across a
+              small phone — and cutting one off the end would hide a whole shelf. */}
+          <nav className="profile-tabs -mx-4 mt-6 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {TABS.map((entry) => (
-              <Link
+              // A plain anchor, not a `<Link>`, and deliberately. The shelf lives
+              // in a search param on a `force-dynamic` page, and a client-side
+              // navigation that only changes a search param was intermittently
+              // applied as no change at all: the click fired, the RSC request was
+              // answered 200, and the URL never moved — so tapping a shelf did
+              // nothing perhaps a third of the time. `prefetch={false}` reduced it
+              // without fixing it. A full navigation cannot be swallowed, and this
+              // is a page-level view switch rather than an in-page interaction, so
+              // the cost is a reload the server was doing all of anyway.
+              <a
                 key={entry}
                 href={entry === 'posts' ? `/u/${user.username}` : `/u/${user.username}?tab=${entry}`}
-                className={`chip capitalize ${tab === entry ? 'chip-active' : 'hover:bg-white/10'}`}
+                data-profile-tab={entry}
+                aria-current={tab === entry ? 'page' : undefined}
+                // A `chip`'s own padding makes a 34px-tall pill, which is fine
+                // for a filter and too small for the navigation these four are:
+                // the shelves are how somebody gets at their own videos, photos
+                // and writing, so they are given a thumb-sized target.
+                className={`chip min-h-[44px] shrink-0 px-4 text-sm capitalize ${tab === entry ? 'chip-active' : 'hover:bg-white/10'}`}
               >
                 {entry}
-              </Link>
+                {entry !== 'about' && counts[entry] > 0 && (
+                  <span className="tabular-nums opacity-60">{counts[entry]}</span>
+                )}
+              </a>
             ))}
           </nav>
 
@@ -308,22 +383,52 @@ export default async function ProfilePage({
               </section>
             ) : (
               <>
+                {/* The owner's way to ADD to this shelf. Videos and Text are the
+                    two kinds of creation that used to live behind the Create
+                    page's toggle; they are here now, next to what they make.
+                    Photos keep their own page, which is what /create is. */}
+                {isSelf && shelf === 'videos' && (
+                  <Link
+                    href="/create/video?upload=1"
+                    data-upload-video
+                    className="btn-ghost min-h-[52px] w-full py-3.5"
+                  >
+                    <PlusIcon width={17} height={17} /> Upload a video you already have
+                  </Link>
+                )}
+                {isSelf && shelf === 'posts' && (
+                  <Link
+                    href="/create"
+                    data-new-photo-post
+                    className="btn-ghost min-h-[52px] w-full py-3.5"
+                  >
+                    <PlusIcon width={17} height={17} /> New photo post
+                  </Link>
+                )}
+                {isSelf && shelf === 'text' && <TextPostForm />}
+
                 <PostList
                   posts={posts}
                   viewerId={viewer?.id ?? null}
                   empty={
                     <EmptyState
-                      title="Nothing posted yet"
+                      title={SHELF_EMPTY[shelf ?? 'posts'].title}
                       body={
                         isSelf
-                          ? 'Post a photo, a video or just a thought. It shows up here.'
-                          : `${user.display_name} has not posted yet. Follow to be there when they do.`
+                          ? SHELF_EMPTY[shelf ?? 'posts'].mine
+                          : `${user.display_name} ${SHELF_EMPTY[shelf ?? 'posts'].theirs}`
                       }
-                      cta={isSelf ? { href: '/create', label: 'Create a post' } : undefined}
+                      cta={
+                        isSelf && shelf === 'videos'
+                          ? { href: '/create/video', label: 'Record a video' }
+                          : isSelf && shelf === 'posts'
+                            ? { href: '/create', label: 'New photo post' }
+                            : undefined
+                      }
                     />
                   }
                 />
-                <LoadMore href={moreHref} hasMore={allPosts.length > posts.length} />
+                <LoadMore href={moreHref} hasMore={shelved.length > posts.length} />
               </>
             )}
           </div>

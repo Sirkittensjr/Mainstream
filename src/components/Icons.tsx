@@ -323,3 +323,30 @@ export function SwitchCameraIcon(props: IconProps) {
     </svg>
   );
 }
+
+export function FlashIcon({ off, ...props }: IconProps & { off?: boolean }) {
+  return (
+    <svg {...base(props)}>
+      <path d="M13 2.5 5.5 13.5h5l-1 8L17 10.5h-5z" />
+      {off && <path d="m3.5 3.5 17 17" />}
+    </svg>
+  );
+}
+
+export function GalleryIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="3" y="5" width="18" height="14" rx="3" />
+      <circle cx="8.5" cy="10" r="1.6" />
+      <path d="m4 17 5-4.5 4 3.5 3-2.5 4 3.5" />
+    </svg>
+  );
+}
+
+export function TextIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4.5 6.5h15M12 6.5v12M8.5 18.5h7" />
+    </svg>
+  );
+}

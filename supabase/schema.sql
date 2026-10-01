@@ -75,11 +75,29 @@ create table if not exists public.posts (
   content_warning boolean not null default false,
   removed        boolean not null default false,
   removed_reason text,
+  -- Automatic temporary review. Deliberately separate from `removed`: removed
+  -- is a decision, this is a pause. `temporary_review` expires by itself at
+  -- review_expires_at; `admin_hold` has no expiry, because an administrator
+  -- holding something is not undone by a clock.
+  review_state      text
+    check (review_state is null or review_state in ('temporary_review', 'admin_hold')),
+  review_started_at timestamptz,
+  review_expires_at timestamptz,
+  -- How many DISTINCT accounts had reported it when the review started.
+  review_reports    integer not null default 0,
   created_at     timestamptz not null default now()
 );
 
 -- Present for databases created before content warnings existed.
 alter table public.posts add column if not exists content_warning boolean not null default false;
+
+-- Present for databases created before automatic review existed (0009).
+alter table public.posts
+  add column if not exists review_state      text
+    check (review_state is null or review_state in ('temporary_review', 'admin_hold')),
+  add column if not exists review_started_at timestamptz,
+  add column if not exists review_expires_at timestamptz,
+  add column if not exists review_reports    integer not null default 0;
 
 create index if not exists posts_author_idx on public.posts (author_id);
 create index if not exists posts_created_idx on public.posts (created_at desc);
@@ -88,6 +106,8 @@ create index if not exists posts_visible_idx
   on public.posts (created_at desc) where removed = false;
 create index if not exists posts_author_visible_idx
   on public.posts (author_id, created_at desc) where removed = false;
+create index if not exists posts_review_idx
+  on public.posts (review_state, review_expires_at) where review_state is not null;
 
 -- Likes --------------------------------------------------------------------
 create table if not exists public.likes (
@@ -196,11 +216,64 @@ create table if not exists public.reports (
   details     text not null default '',
   status      text not null default 'open' check (status in ('open', 'resolved', 'dismissed')),
   resolution  text,
+  -- Set when an administrator cleared the threshold this report counted
+  -- toward. Null means it still counts. Set means it is history: still
+  -- readable, still attributable, but no longer able to re-trigger a hide.
+  cleared_at  timestamptz,
   created_at  timestamptz not null default now()
 );
 
+-- Present for databases created before automatic review existed (0009).
+alter table public.reports add column if not exists cleared_at timestamptz;
+
 create index if not exists reports_status_idx on public.reports (status, created_at desc);
 create index if not exists reports_reporter_idx on public.reports (reporter_id, created_at desc);
+
+-- ONE report per account per thing, enforced here rather than only in the
+-- application. The count that hides a post has to mean "ten people", not "one
+-- person pressing a button ten times", and a rule that lives only in code is
+-- one forgotten call site away from not existing. A repeat report updates the
+-- existing row.
+--
+-- This file is for an EMPTY project, where there is nothing to conflict. Run
+-- over a database that already has duplicate reports the index cannot be built,
+-- so rather than aborting the rest of this file it says what to do: migration
+-- 0009 folds the duplicates first, keeping the oldest of each, and then builds
+-- it. Deliberately not deduplicating here — deleting rows is not something
+-- schema.sql should do as a side effect.
+do $$
+begin
+  create unique index if not exists reports_one_per_reporter_idx
+    on public.reports (reporter_id, target_type, target_id);
+exception when unique_violation then
+  raise warning
+    'reports_one_per_reporter_idx not created: this database already has more '
+    'than one report from the same account on the same target. Run '
+    'supabase/migrations/0009_auto_review.sql, which folds those first.';
+end $$;
+create index if not exists reports_active_target_idx
+  on public.reports (target_type, target_id) where cleared_at is null;
+
+-- The moderation log ---------------------------------------------------------
+-- Append only in practice: rows are written, never updated. `actor_id` is null
+-- when FayTarra itself did it — the automatic hide and the expiry — and an
+-- administrator's id when a person did. Clearing a threshold clears what
+-- COUNTS; this is what keeps what HAPPENED.
+create table if not exists public.moderation_events (
+  id             uuid primary key default gen_random_uuid(),
+  target_type    text not null check (target_type in ('post', 'user', 'comment')),
+  target_id      uuid not null,
+  action         text not null,
+  actor_id       uuid references public.users (id) on delete set null,
+  unique_reports integer not null default 0,
+  detail         text not null default '',
+  created_at     timestamptz not null default now()
+);
+
+create index if not exists moderation_events_target_idx
+  on public.moderation_events (target_type, target_id, created_at desc);
+create index if not exists moderation_events_recent_idx
+  on public.moderation_events (created_at desc);
 
 -- 2. Direct messages --------------------------------------------------------
 create table if not exists public.messages (
@@ -296,6 +369,8 @@ alter table public.ratings       enable row level security;
 alter table public.notifications enable row level security;
 alter table public.reports       enable row level security;
 alter table public.messages      enable row level security;
+-- The moderation log is not public, and "who reported this" least of all.
+alter table public.moderation_events enable row level security;
 
 -- Storage -------------------------------------------------------------------
 -- Uploaded images and video go to this bucket. Public read so posts render.
@@ -467,6 +542,15 @@ begin
       profile_bg, profile_box, top_creators
     ) on public.users to authenticated;
   end if;
+
+  -- The moderation log: nothing granted to either API role at all. Not
+  -- readable, not writable. There is no version of a browser needing to see
+  -- who reported a post or which administrator decided what.
+  foreach api_role in array array['anon', 'authenticated'] loop
+    if exists (select 1 from pg_roles where rolname = api_role) then
+      execute format('revoke all on public.moderation_events from %I', api_role);
+    end if;
+  end loop;
 end $$;
 
 drop policy if exists "people can edit their own profile" on public.users;

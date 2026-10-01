@@ -196,8 +196,10 @@ const run = async () => {
     (await bottom.locator('a').allInnerTexts()).join(' / ').replace(/\n/g, ''),
   );
   check(
-    'with Create in the middle',
-    (await bottom.locator('a[aria-label="Create"]').count()) === 1,
+    // The middle button is the camera now: it is labelled "Record a video" and
+    // goes straight to /create/video, with no Create page in between.
+    'with the camera in the middle',
+    (await bottom.locator('a[aria-label="Record a video"][href="/create/video"]').count()) === 1,
   );
   check(
     'the tabs fit a phone without scrolling the page sideways',
@@ -350,7 +352,9 @@ const run = async () => {
   check('the account id did NOT change', after?.user?.id === before?.user?.id);
   check('the bio and profile survived', after?.user?.displayName === before?.user?.displayName);
 
-  await A.page.goto(`/u/${newHandle}`, { waitUntil: 'domcontentloaded' });
+  // The written post is on the Text shelf: a profile keeps videos, photo posts
+  // and writing on three tabs now, and the default one is photo posts.
+  await A.page.goto(`/u/${newHandle}?tab=text`, { waitUntil: 'domcontentloaded' });
   const profile = await A.page.content();
   check('the profile is at the new handle', A.page.url().includes(newHandle));
   check('their post is still on the profile', profile.includes(caption));

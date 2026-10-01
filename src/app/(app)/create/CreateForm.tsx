@@ -6,7 +6,20 @@ import { CloseIcon, ImageIcon } from '@/components/Icons';
 import { CATEGORIES, type Media } from '@/lib/types';
 import { contentTypeFor, uploadMedia } from '@/lib/video/upload-client';
 
-export function CreateForm() {
+export function CreateForm({
+  /**
+   * Which of the two things this composer makes somebody came here for.
+   *
+   * It is emphasis, not a mode: `photo` puts the picker above the caption and
+   * focuses neither, `text` focuses the words and leaves the picker underneath.
+   * Both post through the same action and NOTHING is removed either way — a text
+   * post can still gain a picture and a photo post still wants a caption. A
+   * chooser that took things away would be two composers wearing one name.
+   */
+  lead = 'text',
+}: {
+  lead?: 'photo' | 'text';
+} = {}) {
   const [state, formAction, pending] = useActionState<{ error?: string } | null, FormData>(
     createPostAction,
     null,
@@ -43,65 +56,85 @@ export function CreateForm() {
     }
   }
 
+  const words = (
+    <textarea
+      name="caption"
+      rows={4}
+      maxLength={1200}
+      autoFocus={lead === 'text'}
+      placeholder={
+        lead === 'photo'
+          ? 'Say something about it. @mention anyone you want to bring in.'
+          : 'What are you working on? @mention anyone you want to bring in.'
+      }
+      className="w-full text-base"
+    />
+  );
+
+  const attachments = (
+    <div>
+      <div className="flex flex-wrap gap-3">
+        {media.map((item, index) => (
+          <div key={item.url} className="relative h-24 w-24 overflow-hidden rounded-2xl">
+            {item.kind === 'video' ? (
+              <video src={item.url} className="h-full w-full object-cover" muted />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={item.url} alt="" className="h-full w-full object-cover" />
+            )}
+            <button
+              type="button"
+              aria-label="Remove"
+              onClick={() => setMedia((current) => current.filter((_, i) => i !== index))}
+              className="absolute right-1 top-1 rounded-full bg-black/70 p-1"
+            >
+              <CloseIcon width={14} height={14} />
+            </button>
+          </div>
+        ))}
+        {media.length < 6 && (
+          <button
+            type="button"
+            onClick={() => fileInput.current?.click()}
+            disabled={uploading}
+            className="flex h-24 w-24 flex-col items-center justify-center gap-1 rounded-2xl border border-dashed border-white/15 bg-white/[0.03] text-xs text-white/45 transition hover:bg-white/[0.06]"
+          >
+            <ImageIcon />
+            {uploading ? (progress ?? 'Uploading…') : 'Add media'}
+          </button>
+        )}
+      </div>
+      <input
+        ref={fileInput}
+        type="file"
+        accept="image/*,video/*"
+        multiple
+        className="hidden"
+        onChange={(event) => upload(event.target.files)}
+      />
+      <p className="mt-2 text-xs text-white/30">
+        Images and video, up to 6 per post. Text-only posts are fine too.
+      </p>
+      {uploadError && <p className="mt-2 text-xs text-fay">{uploadError}</p>}
+    </div>
+  );
+
   return (
     <form action={formAction} className="space-y-5">
       <input type="hidden" name="media" value={JSON.stringify(media)} />
 
-      <textarea
-        name="caption"
-        rows={4}
-        maxLength={1200}
-        autoFocus
-        placeholder="What are you working on? @mention anyone you want to bring in."
-        className="w-full text-base"
-      />
-
-      {/* Media ---------------------------------------------------------- */}
-      <div>
-        <div className="flex flex-wrap gap-3">
-          {media.map((item, index) => (
-            <div key={item.url} className="relative h-24 w-24 overflow-hidden rounded-2xl">
-              {item.kind === 'video' ? (
-                <video src={item.url} className="h-full w-full object-cover" muted />
-              ) : (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={item.url} alt="" className="h-full w-full object-cover" />
-              )}
-              <button
-                type="button"
-                aria-label="Remove"
-                onClick={() => setMedia((current) => current.filter((_, i) => i !== index))}
-                className="absolute right-1 top-1 rounded-full bg-black/70 p-1"
-              >
-                <CloseIcon width={14} height={14} />
-              </button>
-            </div>
-          ))}
-          {media.length < 6 && (
-            <button
-              type="button"
-              onClick={() => fileInput.current?.click()}
-              disabled={uploading}
-              className="flex h-24 w-24 flex-col items-center justify-center gap-1 rounded-2xl border border-dashed border-white/15 bg-white/[0.03] text-xs text-white/45 transition hover:bg-white/[0.06]"
-            >
-              <ImageIcon />
-              {uploading ? (progress ?? 'Uploading…') : 'Add media'}
-            </button>
-          )}
-        </div>
-        <input
-          ref={fileInput}
-          type="file"
-          accept="image/*,video/*"
-          multiple
-          className="hidden"
-          onChange={(event) => upload(event.target.files)}
-        />
-        <p className="mt-2 text-xs text-white/30">
-          Images and video, up to 6 per post. Text-only posts are fine too.
-        </p>
-        {uploadError && <p className="mt-2 text-xs text-fay">{uploadError}</p>}
-      </div>
+      {/* Whichever one was asked for goes first. Both are always here. */}
+      {lead === 'photo' ? (
+        <>
+          {attachments}
+          {words}
+        </>
+      ) : (
+        <>
+          {words}
+          {attachments}
+        </>
+      )}
 
       {/* Meta ----------------------------------------------------------- */}
       <div>

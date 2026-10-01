@@ -5,10 +5,17 @@ import { SectionHeader } from '@/components/EmptyState';
 import { ShieldIcon } from '@/components/Icons';
 import { adminStats, adminUsers } from '@/lib/services/admin';
 import { listReports } from '@/lib/services/moderation';
+import {
+  AUTO_REVIEW_THRESHOLD,
+  reviewQueue,
+  reviewWindowLabel,
+  sweepExpiredReviews,
+  type ReviewItem,
+} from '@/lib/services/auto-review';
 import { requireAdmin } from '@/lib/session';
-import { formatShortDate, timeAgo } from '@/lib/time';
+import { formatShortDate, timeAgo, timeLeft, timestamp } from '@/lib/time';
 import { suspiciousRaters } from '@/lib/services/rating-integrity';
-import { ReportActions, TrustActions, UserActions } from './AdminActions';
+import { ReportActions, ReviewActions, TrustActions, UserActions } from './AdminActions';
 
 export const metadata: Metadata = { title: 'Admin' };
 export const dynamic = 'force-dynamic';
@@ -27,9 +34,16 @@ export default async function AdminPage({
     : 'overview';
   const reportStatus = (params.status === 'all' ? 'all' : 'open') as 'all' | 'open';
 
-  const [stats, reports, users, raters] = await Promise.all([
+  // FayTarra has no scheduler, so the 24-hour expiry is caught up with here,
+  // where somebody is looking at the queue anyway. Nothing depends on this
+  // having run: an expired review already reads as over everywhere else. This
+  // only writes down that the clock, and not a person, ended it.
+  if (tab === 'reports') await sweepExpiredReviews();
+
+  const [stats, reports, review, users, raters] = await Promise.all([
     adminStats(),
     tab === 'reports' ? listReports(reportStatus) : Promise.resolve([]),
+    tab === 'reports' ? reviewQueue() : Promise.resolve([]),
     tab === 'users' ? adminUsers(params.q ?? '') : Promise.resolve([]),
     tab === 'integrity' ? suspiciousRaters() : Promise.resolve([]),
   ]);
@@ -64,6 +78,16 @@ export default async function AdminPage({
                   {stats.totals.openReports}
                 </span>
               )}
+              {/* Separate from the report count on purpose: something hidden
+                  with a clock on it is more urgent than a report in a queue. */}
+              {entry === 'reports' && stats.totals.underReview > 0 && (
+                <span
+                  title="Under automatic review"
+                  className="rounded-full bg-solar px-1.5 text-[10px] font-bold text-ink-950"
+                >
+                  {stats.totals.underReview}
+                </span>
+              )}
             </Link>
           ))}
         </nav>
@@ -76,9 +100,9 @@ export default async function AdminPage({
               <Metric label="Comments" value={stats.totals.comments} />
               <Metric label="Likes" value={stats.totals.likes} />
               <Metric label="Follows" value={stats.totals.follows} />
-              <Metric label="Follows" value={stats.totals.follows} />
               <Metric label="Ratings cast" value={stats.totals.ratings} />
               <Metric label="Open reports" value={stats.totals.openReports} accent />
+              <Metric label="Under review" value={stats.totals.underReview} accent />
             </div>
 
             <section>
@@ -230,6 +254,27 @@ export default async function AdminPage({
 
         {tab === 'reports' && (
           <div className="mt-6 pb-12">
+            <section className="mb-8">
+              <SectionHeader
+                title={`Automatic ${AUTO_REVIEW_THRESHOLD}-report review`}
+                subtitle={`Hidden automatically once ${AUTO_REVIEW_THRESHOLD} different accounts report the same post. Not a decision — it comes back on its own after ${reviewWindowLabel()} if nobody looks.`}
+              />
+              {review.length === 0 ? (
+                <p className="card p-6 text-center text-sm text-white/40">
+                  Nothing is under automatic review.
+                </p>
+              ) : (
+                <ul className="space-y-3">
+                  {review.map((item) => (
+                    <li key={item.postId}>
+                      <ReviewCard item={item} window={reviewWindowLabel()} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <SectionHeader title="All reports" />
             <div className="mb-4 flex gap-2">
               <Link
                 href="/admin?tab=reports"
@@ -274,6 +319,13 @@ export default async function AdminPage({
                           {entry.target.caption.slice(0, 160) || 'media only'}&rdquo;
                           {entry.target.removed && (
                             <span className="ml-2 text-fay">(already removed)</span>
+                          )}
+                          {entry.target.reviewState && (
+                            <span className="ml-2 text-solar">
+                              {entry.target.reviewState === 'admin_hold'
+                                ? '(held for review)'
+                                : '(hidden, under automatic review)'}
+                            </span>
                           )}
                         </>
                       )}
@@ -357,6 +409,99 @@ export default async function AdminPage({
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * One post waiting for a human.
+ *
+ * Shows how many DIFFERENT accounts reported it, what they picked, and what
+ * they wrote — and deliberately not who they were. Reporting has to stay
+ * something people can do without it becoming a list of names attached to
+ * somebody's post.
+ */
+function ReviewCard({ item, window: reviewWindow }: { item: ReviewItem; window: string }) {
+  const held = item.state === 'admin_hold';
+  return (
+    <div
+      // A stable hook for the tests. A post's caption also appears further down
+      // the page in the ordinary report list, so "is the caption on the page"
+      // cannot tell whether something is in the REVIEW queue — which is the
+      // thing worth asserting, and the thing a test got wrong without this.
+      data-review-card={item.postId}
+      className={`card p-5 ${held ? 'border-solar/40' : 'border-fay/40'}`}
+    >
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span
+          className={`chip ${
+            held ? 'border-solar/40 bg-solar/10 text-solar' : 'border-fay/40 bg-fay/10 text-fay'
+          }`}
+        >
+          {held ? 'Held by an admin' : 'Temporarily hidden'}
+        </span>
+        <span className="chip">
+          {item.uniqueReports} account{item.uniqueReports === 1 ? '' : 's'} reported it
+        </span>
+        <span className="chip capitalize">{item.video ? 'video' : 'post'}</span>
+        <span className="ml-auto text-white/30">
+          {held
+            ? 'No automatic expiry'
+            : item.expiresAt
+              ? timeLeft(item.expiresAt)
+              : 'No expiry recorded'}
+        </span>
+      </div>
+
+      <p className="mt-3 text-sm text-white/70">
+        <Link href={`/post/${item.postId}`} className="underline">
+          {item.video ? 'Video' : 'Post'}
+        </Link>{' '}
+        by @{item.authorUsername}: &ldquo;{item.caption.slice(0, 200) || 'media only'}&rdquo;
+      </p>
+
+      {item.startedAt && (
+        <p className="mt-1 text-xs text-white/30">
+          Reached the threshold {timeAgo(item.startedAt)} · {timestamp(item.startedAt)}
+        </p>
+      )}
+
+      {item.reasons.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {item.reasons.map((entry) => (
+            <span key={entry.reason} className="chip text-xs">
+              {entry.reason} · {entry.count}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {item.notes.length > 0 && (
+        <ul className="mt-3 space-y-1 text-sm text-white/40">
+          {item.notes.map((note, index) => (
+            <li key={index}>&ldquo;{note.slice(0, 240)}&rdquo;</li>
+          ))}
+        </ul>
+      )}
+
+      <ReviewActions postId={item.postId} state={item.state} window={reviewWindow} />
+
+      {item.history.length > 0 && (
+        <details className="mt-3">
+          <summary className="cursor-pointer text-xs text-white/40 hover:text-white/70">
+            Moderation history ({item.history.length})
+          </summary>
+          <ul className="mt-2 space-y-1 text-xs text-white/40">
+            {item.history.map((event) => (
+              <li key={event.id}>
+                <span className="text-white/60">{event.action.replace(/_/g, ' ')}</span> ·{' '}
+                {timestamp(event.created_at)}
+                {event.detail ? ` · ${event.detail}` : ''}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
   );
 }
 
