@@ -222,7 +222,7 @@ export function SignupForm() {
                 type="button"
                 onClick={() => toggle(interest)}
                 aria-pressed={active}
-                className={`chip ${active ? 'chip-active' : 'hover:bg-white/10'}`}
+                className={`chip-tab ${active ? 'chip-active' : 'hover:bg-white/10'}`}
               >
                 {interest}
               </button>
@@ -255,11 +255,13 @@ export function SignupForm() {
           </label>
 
           {/* The picker itself submits nothing — see the note on `avatar`. */}
+          {/* `sr-only` rather than `hidden`, so the keyboard can reach the
+              picker the circle opens. */}
           <input
             id="avatar"
             type="file"
             accept="image/*"
-            className="hidden"
+            className="sr-only"
             onChange={(event) => void pickAvatar(event.target.files?.[0])}
           />
           <input ref={avatarInput} name="avatar" type="file" className="hidden" tabIndex={-1} />
@@ -294,7 +296,11 @@ export function SignupForm() {
           </div>
         </div>
 
+        <label className="sr-only" htmlFor="bio">
+          Short bio
+        </label>
         <textarea
+          id="bio"
           name="bio"
           rows={2}
           maxLength={240}
@@ -303,7 +309,11 @@ export function SignupForm() {
           onChange={(event) => setBio(event.target.value)}
           className="w-full"
         />
+        <label className="sr-only" htmlFor="location">
+          Location
+        </label>
         <input
+          id="location"
           name="location"
           maxLength={60}
           placeholder="Location (city or country — never an exact address)"

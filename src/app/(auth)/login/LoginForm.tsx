@@ -45,7 +45,7 @@ export function LoginForm({ next, error }: { next: string; error?: string }) {
         />
       </div>
       {message && (
-        <p className="rounded-2xl border border-fay/40 bg-fay/10 px-4 py-3 text-sm text-fay-soft">
+        <p role="alert" className="rounded-2xl border border-fay/40 bg-fay/10 px-4 py-3 text-sm text-fay-soft">
           {message}
         </p>
       )}

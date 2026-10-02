@@ -24,6 +24,7 @@ import {
   CommentIcon,
   EyeIcon,
   HeartIcon,
+  MoreIcon,
   PlayIcon,
   ShareIcon,
   VolumeIcon,
@@ -173,7 +174,16 @@ export function VideoFeed({
       <div
         ref={scroller}
         tabIndex={-1}
-        className="hide-scrollbar h-[calc(100dvh-6rem)] snap-y snap-mandatory overflow-y-scroll overscroll-contain lg:h-[calc(100dvh-2rem)]"
+        /*
+         * The screen, less the bottom navigation — AND less the iPhone home
+         * indicator under it. The bar is `4.25rem` of controls plus
+         * `env(safe-area-inset-bottom)`, so a flat `6rem` was about 8px short
+         * on any phone with an indicator: each slide was taller than the
+         * window, so the snap never quite settled and the bottom of the
+         * overlay — the author's name and the action column — sat under the
+         * navigation.
+         */
+        className="hide-scrollbar h-[calc(100dvh-6rem-env(safe-area-inset-bottom))] snap-y snap-mandatory overflow-y-scroll overscroll-contain lg:h-[calc(100dvh-2rem)]"
       >
         {items.map((data, index) => {
           const media = firstVideo(data.media);
@@ -514,7 +524,7 @@ function Slide({
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
             <Link
               href={`/discover?category=${encodeURIComponent(data.category)}`}
-              className="chip bg-white/10 hover:bg-white/15"
+              className="chip-tab bg-white/10 hover:bg-white/15"
             >
               {data.category}
             </Link>
@@ -524,7 +534,7 @@ function Slide({
               </span>
             )}
             {last && (
-              <Link href="/home" className="chip bg-white/10 hover:bg-white/15">
+              <Link href="/home" className="chip-tab bg-white/10 hover:bg-white/15">
                 That is everything — back to the feed
               </Link>
             )}
@@ -599,10 +609,11 @@ function Slide({
             <button
               type="button"
               aria-label="More options"
+              aria-expanded={menuOpen}
               onClick={() => setMenuOpen((open) => !open)}
-              className="rounded-full px-2 py-1 text-white/70 transition hover:text-white"
+              className="flex h-11 w-11 items-center justify-center rounded-full text-white/70 transition hover:text-white"
             >
-              •••
+              <MoreIcon width={20} height={20} />
             </button>
             {menuOpen && (
               <>
@@ -616,7 +627,7 @@ function Slide({
                 <div className="absolute bottom-9 right-0 z-40 w-44 overflow-hidden rounded-2xl border border-white/10 bg-ink-850 py-1 shadow-xl">
                   <Link
                     href={`/post/${data.id}`}
-                    className="block px-4 py-2.5 text-left text-sm text-white/70 hover:bg-white/5"
+                    className="flex min-h-[44px] items-center px-4 text-left text-sm text-white/70 hover:bg-white/5"
                   >
                     Open post
                   </Link>

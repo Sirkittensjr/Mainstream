@@ -61,24 +61,36 @@ export function SettingsForm({
             'Photo'
           )}
         </label>
+        {/* `sr-only`, not `hidden`: a hidden input cannot be focused, so the
+            only way to the picker was a mouse or a thumb on the circle. This
+            way the label still opens it and the keyboard can reach it too. */}
         <input
           id="avatar-file"
           type="file"
           accept="image/*"
-          className="hidden"
+          className="sr-only"
           onChange={(event) => uploadAvatar(event.target.files?.[0])}
         />
         <div>
           <p className="text-sm font-semibold">Profile picture</p>
           <p className="text-xs text-white/40">JPG, PNG, WEBP or GIF.</p>
-          {avatarError && <p className="mt-1 text-xs text-fay">{avatarError}</p>}
+          {avatarError && (
+            <p role="alert" className="mt-1 text-xs text-fay">
+              {avatarError}
+            </p>
+          )}
+          {uploading && (
+            <p role="status" className="mt-1 text-xs text-white/40">
+              Uploading your picture…
+            </p>
+          )}
           {avatar && (
             <button
               type="button"
               onClick={() => setAvatar(null)}
-              className="mt-1 text-xs text-white/40 underline hover:text-fay"
+              className="-ml-2 mt-0.5 flex min-h-[40px] items-center rounded-full px-2 text-xs text-white/50 transition hover:bg-white/[0.06] hover:text-fay"
             >
-              Remove
+              Remove picture
             </button>
           )}
         </div>
@@ -146,7 +158,7 @@ export function SettingsForm({
                   )
                 }
                 aria-pressed={active}
-                className={`chip ${active ? 'chip-active' : 'hover:bg-white/10'}`}
+                className={`chip-tab ${active ? 'chip-active' : 'hover:bg-white/10'}`}
               >
                 {interest}
               </button>
@@ -159,12 +171,12 @@ export function SettingsForm({
       </fieldset>
 
       {state?.error && (
-        <p className="rounded-2xl border border-fay/40 bg-fay/10 px-4 py-3 text-sm text-fay-soft">
+        <p role="alert" className="rounded-2xl border border-fay/40 bg-fay/10 px-4 py-3 text-sm text-fay-soft">
           {state.error}
         </p>
       )}
       {state?.message && (
-        <p className="rounded-2xl border border-mint/30 bg-mint/10 px-4 py-3 text-sm text-mint">
+        <p role="status" className="rounded-2xl border border-mint/30 bg-mint/10 px-4 py-3 text-sm text-mint">
           {state.message}
         </p>
       )}

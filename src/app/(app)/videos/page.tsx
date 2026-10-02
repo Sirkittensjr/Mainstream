@@ -31,7 +31,9 @@ export default async function VideosPage({
         <EmptyState
           title="No videos yet"
           body="Videos posted to FayTarra show up here, full screen. Record or upload one and it is the first thing people see."
-          cta={{ href: '/create', label: 'Make a video' }}
+          // The camera, not the photo-and-caption composer: "make a video"
+          // led to a page with no camera on it.
+          cta={{ href: '/create/video', label: 'Record a video' }}
         />
       </div>
     );

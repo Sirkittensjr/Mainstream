@@ -91,10 +91,10 @@ export default async function HomePage({
 
         {/* Three tabs, and the one you are on is filled in. Scrollable rather
             than wrapped, so nothing reflows on a narrow phone. */}
-        <nav
-          aria-label="Feed"
-          className="hide-scrollbar mb-4 flex gap-2 overflow-x-auto"
-        >
+        {/* Scrollable rather than wrapped, so nothing reflows on a narrow
+            phone, and the strip keeps the page gutter at both ends so the
+            first and last tab are never shaved by the edge. */}
+        <nav aria-label="Feed" className="chip-strip mb-4">
           {(viewer ? TABS : TABS.filter((entry) => entry !== 'following')).map((entry) => (
             // Plain anchors for the same reason the profile's shelf tabs are:
             // these three live in a search param on a `force-dynamic` page, and a
@@ -109,7 +109,7 @@ export default async function HomePage({
               href={entry === 'following' ? '/home' : `/home?tab=${entry}`}
               aria-current={entry === active ? 'page' : undefined}
               data-feed-tab={entry}
-              className={`chip shrink-0 capitalize ${
+              className={`chip-tab capitalize ${
                 entry === active ? 'chip-active' : 'hover:bg-white/10'
               }`}
             >
@@ -117,7 +117,7 @@ export default async function HomePage({
             </a>
           ))}
           {active === 'discover' && (
-            <Link href="/discover" className="chip shrink-0 text-white/50 hover:bg-white/10">
+            <Link href="/discover" className="chip-tab text-white/50 hover:bg-white/10">
               Boards and people
             </Link>
           )}

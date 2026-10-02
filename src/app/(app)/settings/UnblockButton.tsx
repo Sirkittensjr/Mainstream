@@ -17,7 +17,7 @@ export function UnblockButton({ userId }: { userId: string }) {
           router.refresh();
         })
       }
-      className="btn-ghost px-4 py-1.5 text-xs"
+      className="btn-ghost min-h-[40px] px-4 py-1.5 text-xs"
     >
       {pending ? 'Unblocking…' : 'Unblock'}
     </button>

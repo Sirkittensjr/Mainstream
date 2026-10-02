@@ -146,7 +146,7 @@ export function VideoComments({
             type="button"
             onClick={onClose}
             aria-label="Close comments"
-            className="ml-auto rounded-full p-1.5 text-white/50 transition hover:text-white"
+            className="-mr-1 ml-auto flex h-11 w-11 items-center justify-center rounded-full text-white/50 transition hover:bg-white/[0.08] hover:text-white"
           >
             <CloseIcon />
           </button>
@@ -158,7 +158,9 @@ export function VideoComments({
           {loading && !comments ? (
             <p className="py-6 text-center text-sm text-white/40">Loading comments…</p>
           ) : error ? (
-            <p className="py-6 text-center text-sm text-fay-soft">{error}</p>
+            <p role="alert" className="py-6 text-center text-sm text-fay-soft">
+              {error}
+            </p>
           ) : comments && comments.length > 0 ? (
             <ul className="space-y-4">
               {comments.map((comment) => (
@@ -203,7 +205,11 @@ export function VideoComments({
         </div>
 
         <footer className="shrink-0 border-t border-white/[0.07] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-          {problem && <p className="mb-2 px-1 text-xs text-fay-soft">{problem}</p>}
+          {problem && (
+            <p role="alert" className="mb-2 px-1 text-xs text-fay-soft">
+              {problem}
+            </p>
+          )}
           {viewer ? (
             <div className="flex items-end gap-2">
               <textarea

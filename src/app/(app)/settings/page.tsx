@@ -94,17 +94,20 @@ export default async function SettingsPage() {
 
         <section className="card p-6">
           <h2 className="font-display text-xl font-bold">Account</h2>
+          {/* `min-w-0` and a break on the value: a long email address in a
+              `justify-between` row has nothing to wrap against, so it ran past
+              the card and took the whole page sideways with it. */}
           <dl className="mt-4 space-y-2 text-sm">
-            <div className="flex justify-between">
-              <dt className="text-white/40">Email</dt>
-              <dd>{viewer.email}</dd>
+            <div className="flex justify-between gap-4">
+              <dt className="shrink-0 text-white/40">Email</dt>
+              <dd className="min-w-0 break-all text-right">{viewer.email}</dd>
             </div>
-            <div className="flex justify-between">
-              <dt className="text-white/40">Username</dt>
-              <dd>@{viewer.username}</dd>
+            <div className="flex justify-between gap-4">
+              <dt className="shrink-0 text-white/40">Username</dt>
+              <dd className="min-w-0 truncate">@{viewer.username}</dd>
             </div>
-            <div className="flex justify-between">
-              <dt className="text-white/40">Storage</dt>
+            <div className="flex justify-between gap-4">
+              <dt className="shrink-0 text-white/40">Storage</dt>
               <dd>{supabaseConfigured() ? 'Supabase' : 'Local demo data'}</dd>
             </div>
           </dl>
@@ -114,7 +117,7 @@ export default async function SettingsPage() {
           </div>
 
           <form action={logoutAction} className="mt-5">
-            <button type="submit" className="btn-ghost w-full">
+            <button type="submit" className="btn-ghost min-h-[48px] w-full">
               Log out
             </button>
           </form>

@@ -12,7 +12,7 @@ export function DeletePostButton({ postId }: { postId: string }) {
       <button
         type="button"
         onClick={() => setConfirming(true)}
-        className="btn-ghost px-4 py-2 text-sm text-white/50"
+        className="btn-ghost min-h-[44px] px-4 py-2 text-sm text-white/50"
       >
         Delete post
       </button>
@@ -25,14 +25,14 @@ export function DeletePostButton({ postId }: { postId: string }) {
         type="button"
         disabled={pending}
         onClick={() => startTransition(() => deletePostAction(postId))}
-        className="btn px-4 py-2 text-sm bg-fay text-ink-950"
+        className="btn min-h-[44px] bg-fay px-4 py-2 text-sm text-ink-950"
       >
         {pending ? 'Deleting…' : 'Yes, delete'}
       </button>
       <button
         type="button"
         onClick={() => setConfirming(false)}
-        className="btn-quiet px-3 py-2 text-sm"
+        className="btn-quiet min-h-[44px] px-3 py-2 text-sm"
       >
         Cancel
       </button>

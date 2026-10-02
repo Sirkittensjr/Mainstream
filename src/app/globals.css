@@ -11,6 +11,27 @@
     -webkit-tap-highlight-color: transparent;
   }
 
+  /*
+   * Where the keyboard is.
+   *
+   * The tap highlight above is removed because it looks wrong on a dark
+   * surface, and the inputs below have their own focus ring — but every
+   * button, link and chip had nothing at all, so tabbing through the app left
+   * no trace of where you were. `:focus-visible` is only the keyboard case, so
+   * nothing appears on a tap or a click.
+   */
+  :focus-visible {
+    outline: 2px solid rgba(255, 61, 154, 0.9);
+    outline-offset: 2px;
+  }
+
+  /* The inputs draw their own, and an outline on top of it reads as two. */
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: none;
+  }
+
   body {
     @apply bg-ink-950 text-white antialiased;
     background-image:
@@ -92,6 +113,57 @@
 
   .chip-active {
     @apply border-transparent bg-white text-ink-950;
+  }
+
+  /*
+   * A chip being used as navigation rather than as a label.
+   *
+   * A plain `.chip` is a 28px pill, which is right for something that only
+   * reports a category and too small for a thumb: the feed tabs, the shelf
+   * tabs, the discover boards and the category strips are all how somebody
+   * gets somewhere, and they were all being drawn at label size. This is the
+   * same pill at a tappable height, and it is one class so the four places
+   * that need it cannot drift apart again.
+   */
+  .chip-tab {
+    @apply chip min-h-[44px] shrink-0 px-4 text-sm;
+  }
+
+  /* A horizontal strip of chips that may run off the edge: it scrolls, it
+     hides its scrollbar, and it keeps the page's 16px gutter at both ends so
+     the first and last chip are never shaved. */
+  .chip-strip {
+    @apply -mx-4 flex gap-2 overflow-x-auto px-4 pb-1;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .chip-strip::-webkit-scrollbar {
+    display: none;
+  }
+
+  /*
+   * The bottom sheet / centred dialog every modal in the app uses.
+   *
+   * `safe-bottom` is the part that was missing in places: on a phone the sheet
+   * is docked to the very bottom of the screen, so without it the last control
+   * in it sits under the iPhone home indicator.
+   */
+  .sheet-backdrop {
+    @apply fixed inset-0 z-[60] flex items-end justify-center bg-black/70 backdrop-blur-sm sm:items-center sm:p-6;
+  }
+
+  .sheet-panel {
+    @apply card relative max-h-[88dvh] w-full max-w-md animate-fade-up
+      overflow-y-auto rounded-b-none p-5 sm:rounded-3xl sm:p-6;
+    /*
+     * Written out rather than `safe-bottom`, because the two have to combine:
+     * a sheet docked to the bottom of a phone needs its own breathing room
+     * AND the home indicator's, and whichever is larger is the right answer.
+     * Taking `safe-bottom` alone left 8px under the last button on a phone
+     * with no indicator.
+     */
+    padding-bottom: calc(1.75rem + env(safe-area-inset-bottom));
   }
 
   .label {

@@ -57,18 +57,24 @@ export function CreateForm({
   }
 
   const words = (
-    <textarea
-      name="caption"
-      rows={4}
-      maxLength={1200}
-      autoFocus={lead === 'text'}
-      placeholder={
-        lead === 'photo'
-          ? 'Say something about it. @mention anyone you want to bring in.'
-          : 'What are you working on? @mention anyone you want to bring in.'
-      }
-      className="w-full text-base"
-    />
+    <div>
+      <label className="sr-only" htmlFor="caption">
+        What do you want to say?
+      </label>
+      <textarea
+        id="caption"
+        name="caption"
+        rows={4}
+        maxLength={1200}
+        autoFocus={lead === 'text'}
+        placeholder={
+          lead === 'photo'
+            ? 'Say something about it. @mention anyone you want to bring in.'
+            : 'What are you working on? @mention anyone you want to bring in.'
+        }
+        className="w-full text-base"
+      />
+    </div>
   );
 
   const attachments = (
@@ -82,13 +88,16 @@ export function CreateForm({
               // eslint-disable-next-line @next/next/no-img-element
               <img src={item.url} alt="" className="h-full w-full object-cover" />
             )}
+            {/* 32px of target rather than 22: it sits on top of the picture
+                it removes, so it has to be hittable without being hit by
+                accident. */}
             <button
               type="button"
-              aria-label="Remove"
+              aria-label="Remove this attachment"
               onClick={() => setMedia((current) => current.filter((_, i) => i !== index))}
-              className="absolute right-1 top-1 rounded-full bg-black/70 p-1"
+              className="absolute right-1 top-1 flex h-8 w-8 items-center justify-center rounded-full bg-black/70 text-white transition hover:bg-black/85"
             >
-              <CloseIcon width={14} height={14} />
+              <CloseIcon width={16} height={16} />
             </button>
           </div>
         ))}
@@ -115,7 +124,16 @@ export function CreateForm({
       <p className="mt-2 text-xs text-white/30">
         Images and video, up to 6 per post. Text-only posts are fine too.
       </p>
-      {uploadError && <p className="mt-2 text-xs text-fay">{uploadError}</p>}
+      {/* Announced, because an upload is the one thing here that takes long
+          enough for somebody to wonder whether it is happening. */}
+      <p role="status" className="sr-only">
+        {uploading ? (progress ?? 'Uploading') : ''}
+      </p>
+      {uploadError && (
+        <p role="alert" className="mt-2 text-xs text-fay">
+          {uploadError}
+        </p>
+      )}
     </div>
   );
 
@@ -177,13 +195,14 @@ export function CreateForm({
       </label>
 
       {state?.error && (
-        <p className="rounded-2xl border border-fay/40 bg-fay/10 px-4 py-3 text-sm text-fay-soft">
+        <p role="alert" className="rounded-2xl border border-fay/40 bg-fay/10 px-4 py-3 text-sm text-fay-soft">
           {state.error}
         </p>
       )}
 
+      {/* Says why it is unavailable rather than just going grey. */}
       <button type="submit" disabled={pending || uploading} className="btn-primary w-full py-4">
-        {pending ? 'Posting…' : 'Post'}
+        {pending ? 'Posting…' : uploading ? 'Waiting for the upload…' : 'Post'}
       </button>
     </form>
   );

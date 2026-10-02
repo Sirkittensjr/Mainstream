@@ -28,10 +28,18 @@ export function SkeletonTopBar({ title }: { title?: string }) {
         </Link>
       )}
       <div className="ml-auto flex items-center gap-1">
-        <Link href="/search" aria-label="Search" className="p-2 text-white/60">
+        <Link
+          href="/search"
+          aria-label="Search"
+          className="flex h-11 w-11 items-center justify-center rounded-full text-white/60"
+        >
           <SearchIcon />
         </Link>
-        <Link href="/notifications" aria-label="Notifications" className="p-2 text-white/60">
+        <Link
+          href="/notifications"
+          aria-label="Notifications"
+          className="flex h-11 w-11 items-center justify-center rounded-full text-white/60"
+        >
           <BellIcon />
         </Link>
       </div>
