@@ -444,6 +444,7 @@ export function VideoRecorder({
               type="button"
               onClick={() => keep('another')}
               disabled={remainingSeconds - take.seconds < 0.5}
+              data-review-another
               className="btn-ghost min-h-[52px] flex-1 px-3 py-3 text-[13px] disabled:opacity-40"
             >
               <RecordIcon width={16} height={16} /> Another
@@ -451,6 +452,7 @@ export function VideoRecorder({
             <button
               type="button"
               onClick={() => keep('caption')}
+              data-review-continue
               className="btn-primary min-h-[52px] flex-[1.4] px-3 py-3 text-[14px]"
             >
               Continue <CheckIcon width={16} height={16} />
