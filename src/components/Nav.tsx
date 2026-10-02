@@ -116,7 +116,7 @@ function NavTab({
     <Link
       href={href}
       aria-current={active ? 'page' : undefined}
-      className={`flex w-16 flex-col items-center gap-1 py-2 text-[10px] font-semibold tracking-wide transition ${
+      className={`flex min-h-[48px] w-16 flex-col items-center gap-1 py-2 text-[10px] font-semibold tracking-wide transition ${
         active ? 'text-white' : 'text-white/40'
       }`}
     >
@@ -153,7 +153,7 @@ export function Sidebar({ user }: { user: NavUser | null }) {
             <li key={item.href}>
               <Link
                 href={item.href}
-                className={`flex items-center gap-3 rounded-2xl px-3 py-2.5 text-[15px] font-medium transition ${
+                className={`flex min-h-[44px] items-center gap-3 rounded-2xl px-3 py-2.5 text-[15px] font-medium transition ${
                   active ? 'bg-white/[0.08] text-white' : 'text-white/55 hover:bg-white/[0.04] hover:text-white'
                 }`}
               >
@@ -216,7 +216,11 @@ export function TopBar({ user, title }: { user: NavUser | null; title?: string }
         </Link>
       )}
       <div className="ml-auto flex items-center gap-1">
-        <Link href="/search" aria-label="Search" className="p-2 text-white/60 hover:text-white">
+        <Link
+          href="/search"
+          aria-label="Search"
+          className="flex h-11 w-11 items-center justify-center rounded-full text-white/60 transition hover:bg-white/[0.06] hover:text-white"
+        >
           <SearchIcon />
         </Link>
         {/* Messages is a sidebar item on desktop; on a phone the bottom bar is
@@ -228,11 +232,11 @@ export function TopBar({ user, title }: { user: NavUser | null; title?: string }
               ? `Messages, ${user.unreadMessages} unread`
               : 'Messages'
           }
-          className="relative p-2 text-white/60 hover:text-white"
+          className="relative flex h-11 w-11 items-center justify-center rounded-full text-white/60 transition hover:bg-white/[0.06] hover:text-white"
         >
           <MailIcon />
           {user && user.unreadMessages > 0 && (
-            <span className="absolute -right-0.5 top-0.5 min-w-[18px] rounded-full bg-fay px-1 text-center text-[10px] font-bold leading-[18px] text-ink-950 ring-2 ring-ink-950">
+            <span className="absolute right-1 top-1.5 min-w-[18px] rounded-full bg-fay px-1 text-center text-[10px] font-bold leading-[18px] text-ink-950 ring-2 ring-ink-950">
               {formatUnread(user.unreadMessages)}
             </span>
           )}
@@ -240,11 +244,11 @@ export function TopBar({ user, title }: { user: NavUser | null; title?: string }
         <Link
           href={user ? '/notifications' : '/login?next=/notifications'}
           aria-label={user && user.unread > 0 ? `Notifications, ${user.unread} unread` : 'Notifications'}
-          className="relative p-2 text-white/60 hover:text-white"
+          className="relative flex h-11 w-11 items-center justify-center rounded-full text-white/60 transition hover:bg-white/[0.06] hover:text-white"
         >
           <BellIcon />
           {user && user.unread > 0 && (
-            <span className="absolute -right-0.5 top-0.5 min-w-[18px] rounded-full bg-fay px-1 text-center text-[10px] font-bold leading-[18px] text-ink-950 ring-2 ring-ink-950">
+            <span className="absolute right-1 top-1.5 min-w-[18px] rounded-full bg-fay px-1 text-center text-[10px] font-bold leading-[18px] text-ink-950 ring-2 ring-ink-950">
               {formatUnread(user.unread)}
             </span>
           )}

@@ -89,17 +89,16 @@ export async function FollowListPage({
           </div>
         </div>
 
-        <nav className="mb-4 flex gap-2" aria-label="Followers and following">
+        {/* The same tab pill the feeds and the profile shelves use. These two
+            were drawn in their own style — a pink outline rather than the
+            filled chip — which made the same control look like two. */}
+        <nav className="chip-strip mb-4" aria-label="Followers and following">
           {(['followers', 'following'] as const).map((tab) => (
             <Link
               key={tab}
               href={`/u/${user.username}/${tab}`}
               aria-current={tab === list ? 'page' : undefined}
-              className={`min-h-[44px] rounded-full border px-5 py-2.5 text-sm font-semibold transition ${
-                tab === list
-                  ? 'border-fay/60 bg-fay/15 text-white'
-                  : 'border-white/10 bg-white/[0.03] text-white/60 hover:bg-white/[0.07]'
-              }`}
+              className={`chip-tab ${tab === list ? 'chip-active' : 'hover:bg-white/10'}`}
             >
               {tab === 'followers' ? 'Followers' : 'Following'}
             </Link>

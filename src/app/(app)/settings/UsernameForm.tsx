@@ -66,7 +66,7 @@ export function UsernameForm({ current }: { current: string }) {
       <button
         type="submit"
         disabled={pending || value.trim().toLowerCase() === settled}
-        className="btn-ghost w-full py-3 text-sm"
+        className="btn-ghost min-h-[48px] w-full py-3 text-sm"
       >
         {pending ? 'Saving…' : 'Change username'}
       </button>

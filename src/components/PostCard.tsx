@@ -16,7 +16,7 @@ import { Avatar } from './Avatar';
 import { FollowButton } from './FollowButton';
 import { RateButton } from './RateSheet';
 import { ReportDialog } from './ReportDialog';
-import { CommentIcon, EyeIcon, HeartIcon, ShareIcon } from './Icons';
+import { CommentIcon, EyeIcon, HeartIcon, MoreIcon, ShareIcon } from './Icons';
 
 export interface PostCardData {
   id: string;
@@ -155,7 +155,7 @@ export function PostCard({
         <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
           <Link
             href={`/discover?category=${encodeURIComponent(data.category)}`}
-            className="chip hover:bg-white/10"
+            className="chip-tab hover:bg-white/10"
           >
             {data.category}
           </Link>
@@ -195,7 +195,7 @@ export function PostCard({
           onClick={toggleLike}
           aria-pressed={liked}
           aria-label={liked ? 'Unlike' : 'Like'}
-          className={`flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium transition ${
+          className={`flex min-h-[44px] items-center gap-2 rounded-full px-3 text-sm font-medium transition ${
             liked ? 'text-fay' : 'text-white/55 hover:text-white'
           }`}
         >
@@ -204,20 +204,25 @@ export function PostCard({
         </button>
         <Link
           href={`/post/${data.id}#comments`}
-          className="flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium text-white/55 transition hover:text-white"
+          className="flex min-h-[44px] items-center gap-2 rounded-full px-3 text-sm font-medium text-white/55 transition hover:text-white"
           aria-label="Comments"
         >
           <CommentIcon />
           {formatCount(data.comments)}
         </Link>
+        {/* The confirmation has its own reserved space. Showing "Copied"
+            inline used to widen the button and shunt every control after it
+            along, which read as the row jumping under the thumb. */}
         <button
           type="button"
           onClick={share}
           aria-label="Share"
-          className="flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium text-white/55 transition hover:text-white"
+          className="flex min-h-[44px] items-center gap-1.5 rounded-full px-3 text-sm font-medium text-white/55 transition hover:text-white"
         >
           <ShareIcon />
-          {copied && <span className="text-xs">Copied</span>}
+          <span aria-live="polite" className="w-10 text-left text-xs text-mint">
+            {copied ? 'Copied' : ''}
+          </span>
         </button>
         {/* A video shows how many times it has been WATCHED; everything else
             shows how many times the post has been opened. Two different
@@ -262,10 +267,11 @@ export function PostCard({
             <button
               type="button"
               aria-label="More options"
+              aria-expanded={menuOpen}
               onClick={() => setMenuOpen((open) => !open)}
-              className="rounded-full px-2.5 py-2 text-white/40 transition hover:text-white"
+              className="flex h-11 w-11 items-center justify-center rounded-full text-white/40 transition hover:bg-white/[0.07] hover:text-white"
             >
-              •••
+              <MoreIcon width={18} height={18} />
             </button>
             {menuOpen && (
               <>
@@ -279,14 +285,14 @@ export function PostCard({
                 <div className="absolute bottom-11 right-0 z-40 w-44 overflow-hidden rounded-2xl border border-white/10 bg-ink-850 py-1 shadow-xl">
                   <Link
                     href={`/post/${data.id}`}
-                    className="block px-4 py-2.5 text-sm text-white/70 hover:bg-white/5"
+                    className="flex min-h-[44px] items-center px-4 text-sm text-white/70 hover:bg-white/5"
                   >
                     Open post
                   </Link>
                   <button
                     type="button"
                     onClick={share}
-                    className="block w-full px-4 py-2.5 text-left text-sm text-white/70 hover:bg-white/5"
+                    className="flex min-h-[44px] w-full items-center px-4 text-left text-sm text-white/70 hover:bg-white/5"
                   >
                     Copy link
                   </button>

@@ -65,12 +65,13 @@ export default async function AdminPage({
           </div>
         </div>
 
-        <nav className="flex gap-2">
+        <nav aria-label="Admin" className="chip-strip">
           {TABS.map((entry) => (
             <Link
               key={entry}
               href={entry === 'overview' ? '/admin' : `/admin?tab=${entry}`}
-              className={`chip capitalize ${tab === entry ? 'chip-active' : 'hover:bg-white/10'}`}
+              aria-current={tab === entry ? 'page' : undefined}
+              className={`chip-tab capitalize ${tab === entry ? 'chip-active' : 'hover:bg-white/10'}`}
             >
               {entry}
               {entry === 'reports' && stats.totals.openReports > 0 && (
@@ -275,16 +276,18 @@ export default async function AdminPage({
             </section>
 
             <SectionHeader title="All reports" />
-            <div className="mb-4 flex gap-2">
+            <div className="chip-strip mb-4">
               <Link
                 href="/admin?tab=reports"
-                className={`chip ${reportStatus === 'open' ? 'chip-active' : 'hover:bg-white/10'}`}
+                aria-current={reportStatus === 'open' ? 'page' : undefined}
+                className={`chip-tab ${reportStatus === 'open' ? 'chip-active' : 'hover:bg-white/10'}`}
               >
                 Open
               </Link>
               <Link
                 href="/admin?tab=reports&status=all"
-                className={`chip ${reportStatus === 'all' ? 'chip-active' : 'hover:bg-white/10'}`}
+                aria-current={reportStatus === 'all' ? 'page' : undefined}
+                className={`chip-tab ${reportStatus === 'all' ? 'chip-active' : 'hover:bg-white/10'}`}
               >
                 All
               </Link>
@@ -370,15 +373,22 @@ export default async function AdminPage({
 
         {tab === 'users' && (
           <div className="mt-6 pb-12">
-            <form action="/admin" className="mb-4 flex gap-2">
+            <form action="/admin" role="search" className="mb-4 flex gap-2">
               <input type="hidden" name="tab" value="users" />
+              <label className="sr-only" htmlFor="admin-user-search">
+                Search username or email
+              </label>
               <input
+                id="admin-user-search"
                 name="q"
+                type="search"
+                enterKeyHint="search"
+                autoComplete="off"
                 defaultValue={params.q ?? ''}
                 placeholder="Search username or email"
-                className="flex-1"
+                className="min-w-0 flex-1"
               />
-              <button type="submit" className="btn-ghost px-5">
+              <button type="submit" className="btn-ghost min-h-[48px] shrink-0 px-5">
                 Search
               </button>
             </form>

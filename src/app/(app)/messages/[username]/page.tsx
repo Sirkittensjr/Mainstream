@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Avatar } from '@/components/Avatar';
+import { ChevronIcon } from '@/components/Icons';
 import { MessageThread } from '@/components/MessageThread';
 import { PageTopBar } from '@/components/PageTopBar';
 import { markThreadRead, thread } from '@/lib/services/messages';
@@ -43,7 +44,17 @@ export default async function ConversationPage({
     <>
       <PageTopBar title={`@${other.username}`} />
       <div className="mx-auto flex max-w-2xl flex-col px-4 pt-4 lg:pt-8">
-        <header className="card mb-4 flex items-center gap-3 p-4">
+        {/* Back first, the way the followers list does it: a conversation is
+            somewhere you went INTO, and the way out was an 11px word called
+            "All" in the far corner. */}
+        <header className="card mb-4 flex items-center gap-3 p-3 sm:p-4">
+          <Link
+            href="/messages"
+            aria-label="All conversations"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/[0.06] transition hover:bg-white/[0.12]"
+          >
+            <ChevronIcon direction="left" />
+          </Link>
           <Avatar
             username={other.username}
             displayName={other.display_name}
@@ -59,9 +70,6 @@ export default async function ConversationPage({
             </Link>
             <p className="truncate text-xs text-white/40">@{other.username}</p>
           </div>
-          <Link href="/messages" className="shrink-0 text-sm text-white/40 hover:text-white">
-            All
-          </Link>
         </header>
 
         <MessageThread

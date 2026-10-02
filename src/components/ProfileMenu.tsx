@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { blockAction } from '@/app/actions';
+import { MoreIcon } from './Icons';
 import { ReportDialog } from './ReportDialog';
 
 /** Block / report menu shown on someone else's profile. */
@@ -24,10 +25,11 @@ export function ProfileMenu({
       <button
         type="button"
         aria-label="More options"
+        aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="btn-ghost px-4 py-2.5 text-sm"
+        className="btn-ghost min-h-[44px] px-4 py-2.5 text-sm"
       >
-        •••
+        <MoreIcon width={18} height={18} />
       </button>
       {open && (
         <>
@@ -50,7 +52,7 @@ export function ProfileMenu({
                   router.refresh();
                 })
               }
-              className="block w-full px-4 py-2.5 text-left text-sm text-white/70 hover:bg-white/5"
+              className="flex min-h-[44px] w-full items-center px-4 text-left text-sm text-white/70 hover:bg-white/5"
             >
               {blocked ? `Unblock @${username}` : `Block @${username}`}
             </button>

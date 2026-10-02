@@ -11,15 +11,20 @@ export function CategoryChips({
   counts?: Map<string, number>;
 }) {
   return (
-    <div className="hide-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
-      <Link href={basePath} className={`chip ${!active ? 'chip-active' : 'hover:bg-white/10'}`}>
+    <div className="chip-strip">
+      <Link
+        href={basePath}
+        aria-current={!active ? 'page' : undefined}
+        className={`chip-tab ${!active ? 'chip-active' : 'hover:bg-white/10'}`}
+      >
         All
       </Link>
       {CATEGORIES.map((category) => (
         <Link
           key={category}
           href={`${basePath}?category=${encodeURIComponent(category)}`}
-          className={`chip ${active === category ? 'chip-active' : 'hover:bg-white/10'}`}
+          aria-current={active === category ? 'page' : undefined}
+          className={`chip-tab ${active === category ? 'chip-active' : 'hover:bg-white/10'}`}
         >
           {category}
           {counts?.get(category) ? (

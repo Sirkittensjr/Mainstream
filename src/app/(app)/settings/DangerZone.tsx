@@ -15,7 +15,7 @@ export function DangerZone({ username }: { username: string }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="text-sm text-white/40 underline hover:text-fay"
+        className="-ml-2 flex min-h-[44px] items-center rounded-full px-2 text-sm text-white/45 underline transition hover:bg-white/[0.06] hover:text-fay"
       >
         Delete my account
       </button>
@@ -35,7 +35,11 @@ export function DangerZone({ username }: { username: string }) {
         className="mt-3 w-full py-2 text-sm"
         aria-label="Confirm your username"
       />
-      {error && <p className="mt-2 text-sm text-fay">{error}</p>}
+      {error && (
+        <p role="alert" className="mt-2 text-sm text-fay">
+          {error}
+        </p>
+      )}
       <div className="mt-3 flex gap-2">
         <button
           type="button"
@@ -46,7 +50,7 @@ export function DangerZone({ username }: { username: string }) {
               if (result && !result.ok) setError(result.error);
             })
           }
-          className="btn bg-fay px-5 py-2 text-sm text-ink-950"
+          className="btn min-h-[44px] bg-fay px-5 py-2 text-sm text-ink-950"
         >
           {pending ? 'Deleting…' : 'Delete permanently'}
         </button>
@@ -57,7 +61,7 @@ export function DangerZone({ username }: { username: string }) {
             setValue('');
             setError(null);
           }}
-          className="btn-quiet px-4 py-2 text-sm"
+          className="btn-quiet min-h-[44px] px-4 py-2 text-sm"
         >
           Cancel
         </button>

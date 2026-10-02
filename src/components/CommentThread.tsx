@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useRef, useState, useTransition } from 'react';
+import { useId, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { commentAction, deleteCommentAction } from '@/app/actions';
 import { timeAgo } from '@/lib/time';
@@ -22,6 +22,9 @@ export interface CommentViewer {
   displayName: string;
   avatarUrl: string | null;
 }
+
+/** How long a comment may be. The same number the action enforces. */
+const LIMIT = 600;
 
 function countAll(items: CommentItem[]): number {
   return items.reduce((total, item) => total + 1 + item.replies.length, 0);
@@ -62,7 +65,10 @@ export function CommentThread({
       )}
 
       {error && (
-        <p className="mt-3 rounded-2xl border border-fay/40 bg-fay/10 px-4 py-2.5 text-sm text-fay-soft">
+        <p
+          role="alert"
+          className="mt-3 rounded-2xl border border-fay/40 bg-fay/10 px-4 py-2.5 text-sm text-fay-soft"
+        >
           {error}
         </p>
       )}
@@ -99,6 +105,15 @@ function CommentRow({
   onError: (message: string | null) => void;
 }) {
   const [replying, setReplying] = useState(false);
+  /**
+   * Delete asks first.
+   *
+   * It used to be an 11px word sitting a few pixels from Reply, and one tap
+   * removed a comment with nothing to undo it. Now the first tap turns it into
+   * a question and the second one does it, which is enough to stop a thumb
+   * that was aiming at Reply.
+   */
+  const [confirming, setConfirming] = useState(false);
   const [pending, startTransition] = useTransition();
   const router = useRouter();
 
@@ -127,31 +142,49 @@ function CommentRow({
           {comment.body}
         </p>
 
-        <div className="mt-1 flex items-center gap-3">
+        <div className="-ml-2 mt-0.5 flex items-center gap-1">
           {viewer && (
             <button
               type="button"
               onClick={() => setReplying((open) => !open)}
-              className="text-xs font-semibold text-white/35 transition hover:text-fay"
+              className="flex min-h-[40px] items-center rounded-full px-2 text-xs font-semibold text-white/45 transition hover:bg-white/[0.06] hover:text-fay"
             >
               {replying ? 'Cancel' : 'Reply'}
             </button>
           )}
-          {comment.mine && (
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() =>
-                startTransition(async () => {
-                  await deleteCommentAction(comment.id, postId);
-                  router.refresh();
-                })
-              }
-              className="text-xs text-white/30 transition hover:text-fay"
-            >
-              Delete
-            </button>
-          )}
+          {comment.mine &&
+            (confirming ? (
+              <>
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() =>
+                    startTransition(async () => {
+                      await deleteCommentAction(comment.id, postId);
+                      router.refresh();
+                    })
+                  }
+                  className="flex min-h-[40px] items-center rounded-full px-2 text-xs font-semibold text-fay transition hover:bg-fay/10"
+                >
+                  {pending ? 'Deleting…' : 'Delete for good'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirming(false)}
+                  className="flex min-h-[40px] items-center rounded-full px-2 text-xs text-white/45 transition hover:bg-white/[0.06] hover:text-white"
+                >
+                  Keep it
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirming(true)}
+                className="flex min-h-[40px] items-center rounded-full px-2 text-xs text-white/40 transition hover:bg-white/[0.06] hover:text-fay"
+              >
+                Delete
+              </button>
+            ))}
         </div>
 
         {replying && viewer && (
@@ -202,7 +235,9 @@ function CommentBox({
   compact?: boolean;
 }) {
   const [pending, startTransition] = useTransition();
+  const [length, setLength] = useState(0);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fieldId = useId();
   const router = useRouter();
 
   function submit(formData: FormData) {
@@ -210,12 +245,14 @@ function CommentBox({
     if (!body) return;
     onError(null);
     if (inputRef.current) inputRef.current.value = '';
+    setLength(0);
     startTransition(async () => {
       const result = await commentAction(postId, body, parentId);
       if (!result.ok) {
         onError(result.error);
         // Nothing was posted, so give them their words back.
         if (inputRef.current) inputRef.current.value = body;
+        setLength(body.length);
         return;
       }
       onDone?.();
@@ -234,23 +271,35 @@ function CommentBox({
           href={false}
         />
       )}
-      <div className="flex-1">
+      <div className="min-w-0 flex-1">
+        <label className="sr-only" htmlFor={fieldId}>
+          {placeholder}
+        </label>
         <textarea
+          id={fieldId}
           ref={inputRef}
           name="body"
           rows={compact ? 1 : 2}
-          maxLength={600}
+          maxLength={LIMIT}
           required
           placeholder={placeholder}
+          onInput={(event) => setLength(event.currentTarget.value.length)}
           className="w-full"
         />
-        <button
-          type="submit"
-          disabled={pending}
-          className={`btn-primary mt-2 text-sm ${compact ? 'px-4 py-1.5' : 'px-5 py-2'}`}
-        >
-          {pending ? 'Posting…' : compact ? 'Reply' : 'Comment'}
-        </button>
+        <div className="mt-2 flex items-center gap-3">
+          <button
+            type="submit"
+            disabled={pending}
+            className={`btn-primary min-h-[40px] text-sm ${compact ? 'px-4' : 'px-5'}`}
+          >
+            {pending ? 'Posting…' : compact ? 'Reply' : 'Comment'}
+          </button>
+          {/* Silent until it is nearly a problem, rather than counting at
+              somebody from the first keystroke. */}
+          {length > LIMIT - 100 && (
+            <span className="text-xs tabular-nums text-white/40">{LIMIT - length} left</span>
+          )}
+        </div>
       </div>
     </form>
   );

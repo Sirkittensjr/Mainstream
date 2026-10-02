@@ -25,6 +25,16 @@ const LEADS = {
     title: 'Write something',
     blurb: 'Just words. Add a picture if you want one.',
   },
+  /*
+   * Nobody said which — an empty state's "Create a post", an old link, a
+   * bookmark. It used to land on "Write something", which reads as the wrong
+   * page when the button that got you here said post, so it says what it
+   * actually is: the composer, with both halves on it.
+   */
+  post: {
+    title: 'New post',
+    blurb: 'Words, pictures, or both. Say what you are into.',
+  },
 } as const;
 
 export default async function CreatePage({
@@ -33,8 +43,11 @@ export default async function CreatePage({
   searchParams: Promise<{ kind?: string }>;
 }) {
   const { kind } = await searchParams;
+  // Which half leads the composer, and which heading it is given. They are not
+  // the same question: with nothing asked for, the words lead and the heading
+  // stays neutral.
   const lead = kind === 'photo' ? 'photo' : 'text';
-  const copy = LEADS[lead];
+  const copy = LEADS[kind === 'photo' ? 'photo' : kind === 'text' ? 'text' : 'post'];
   const viewer = await requireViewer('/create');
 
   return (
