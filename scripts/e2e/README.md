@@ -506,6 +506,77 @@ node scripts/e2e/mobile-record-flow.mjs
 of slides, so reseed (`npm run reset`) before it — video posts left behind by
 another suite make it fail on a count, not on a fault.
 
+### 4d. Several clips, one video — `multi-clip-flow.mjs`
+
+Record a clip, tap **Another**, record a second, tap **Continue**, and the editor
+must treat the two as ONE project: clip 1 plays, clip 2 takes over by itself, each
+clip trims on its own, and the posted file is both trimmed clips in order.
+
+```bash
+OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
+  node scripts/e2e/multi-clip-flow.mjs
+```
+
+**What was wrong, and why the bug was invisible from the backend.**
+`renderClips` has always walked `clips` in order, seeking to each one's
+`trimStart` and playing to its `trimEnd`, so the FILE that got posted was always
+correct. The editor was the problem:
+
+```
+previewUrl = finished?.previewUrl ?? (clips.length === 1 ? clips[0].src : null)
+```
+
+With two or more clips and no render yet that is `null`, the editor fell back to
+`clips[0].src`, and trimming only ever patched `clips[0]`. So a three-clip project
+played its first clip on a loop, offered one set of trim handles, and the panel
+said as much — "trimming a single clip is on the desktop editor".
+
+**Why not just render first and preview that.** The render pass is real time. A
+90-second project would cost 90 seconds of waiting before the first frame, and
+again after every trim. So the clips are played in sequence instead, from their
+own object URLs, and `lib/video/playlist.ts` does the arithmetic between PROJECT
+time (how far into the finished video) and SOURCE time (where that is inside one
+clip's file). That module is unit-tested on its own — the join belonging to the
+clip that is starting rather than the one that ended is what makes playback
+advance instead of stalling on a frame.
+
+**Two video elements, taking turns.** One plays while the other holds the next
+clip, already seeked to its first kept frame; at the join they swap and the
+waiting one is told to play. One element re-pointing its `src` would show black
+for as long as the decode took, which is the gap this exists to avoid. The suite
+reads `data-clip-slot` to prove the handover is a real swap to a different file
+rather than the same clip replayed, and that it happens near the join:
+
+```
+PASS  the second clip takes over on its own  — slot 0 -> 1
+PASS  and it is a different file, not the same one replayed  — b3eb9f86 -> b3700d5e
+PASS  the handover happens near the join rather than late  — crossed at 4.05s
+```
+
+Also covered: the editor filling the viewport with the video `object-contain` so
+nothing is stretched; the controls overlaying the lower part rather than pushing
+the video into a box; per-clip selection and trimming, with the whole project
+getting shorter each time (measured 7.1s → 5.1s → 3.6s); text appearing over the
+video as it is typed and staying clear of the controls; a true 9:16 preview on the
+posting screen; and the posted file's own duration matching the kept clips
+(`stored 3.62s against 3.60s`) with the overlay preserved. Then the same editor on
+a smaller Android viewport, and Retake on the only clip going back to the camera
+rather than leaving an editor with nothing in it.
+
+**The tappable part of the video is a flex sibling, not a percentage.** A
+tap-to-play region of `inset-0` put its own centre underneath the editing panel,
+so tapping the middle of the screen hit a trim label — measured with the panel's
+top edge 230px down a 664px screen. It is now the `flex-1` space between the top
+bar and the controls, which is right at any screen size, and the suite asserts
+that region ends exactly where the controls begin.
+
+**Text is drawn inside that free zone** in the editor, which makes the zone the
+safe area structurally rather than by guessing how tall whichever panel is open
+happens to be. The trade-off, stated in the component too: a bottom-anchored line
+sits a little higher in the editor than in the finished video, where it is drawn
+over the whole frame. The posting screen and the post itself both use the full-frame
+variant, so the faithful preview is the last thing seen before posting.
+
 ### 4a. Video covers — `video-cover-flow.mjs`
 
 The picture that stands in for a video before anybody plays it: a frame picked
@@ -949,7 +1020,7 @@ it:
 ### Which store each suite wants
 
 `auth-flow`, `features-flow`, `video-flow`, `videos-flow`, `video-upload-flow`,
-`video-cover-flow`, `mobile-record-flow`, `messaging-flow`,
+`video-cover-flow`, `mobile-record-flow`, `multi-clip-flow`, `messaging-flow`,
 `profile-colours-flow`, `top-creators-flow`, `auto-review-flow`, `admin-badge`
 and `social-navigation` create their own accounts and want an EMPTY store
 (`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and

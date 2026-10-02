@@ -503,7 +503,7 @@ async function run() {
     (await page.locator('button', { hasText: 'Cover' }).count()) >= 1,
   );
   await page.locator('button', { hasText: 'Cover' }).click();
-  await page.waitForSelector('[data-editor-preview]', { timeout: 20000 });
+  await page.waitForSelector('[data-editor-fullscreen]', { timeout: 20000 });
   check(
     'tapping Cover goes to the editing stage, opened on the cover tool',
     (await page.locator('[data-editor-panel="cover"]').count()) === 1 &&
@@ -539,7 +539,7 @@ async function run() {
   check('and a second take can be made', (await playback.count()) === 1);
 
   await page.locator('button', { hasText: 'Continue' }).click();
-  await page.waitForSelector('[data-editor-preview]', { timeout: 20000 });
+  await page.waitForSelector('[data-editor-fullscreen]', { timeout: 20000 });
   check('Continue leaves the camera for the editing stage', true);
   // Retake dropped the take it went back past, so this is one clip and not two.
   check(
@@ -563,13 +563,20 @@ async function run() {
     postingFields.join(', ') || 'none present',
   );
 
-  const editPreview = await page.locator('[data-editor-preview]').evaluate((v) => {
-    const box = v.getBoundingClientRect();
-    return { height: box.height, vh: window.innerHeight, fit: getComputedStyle(v).objectFit };
+  // The editor plays the project through two video elements, swapping at each
+  // join, so "the preview" is whichever one is currently shown.
+  const editPreview = await page.evaluate(() => {
+    const shown = [...document.querySelectorAll('[data-clip-slot]')].find(
+      (v) => Number(getComputedStyle(v).opacity) > 0.5,
+    );
+    const box = shown.getBoundingClientRect();
+    return { height: box.height, vh: window.innerHeight, fit: getComputedStyle(shown).objectFit };
   });
   check(
+    // It is the whole screen now, with the controls laid over it rather than
+    // stacked under it.
     'the video is the biggest thing on the screen',
-    editPreview.height >= editPreview.vh * 0.38,
+    editPreview.height >= editPreview.vh - 1,
     `${Math.round(editPreview.height)}px of ${editPreview.vh}`,
   );
   check('and is not cropped while being edited', editPreview.fit === 'contain');
@@ -651,12 +658,15 @@ async function run() {
 
   // --- sound ---
   await page.locator('[data-editor-tool="sound"]').click();
-  check('sound is on to begin with', !(await page.locator('[data-editor-preview]').evaluate((v) => v.muted)));
+  check(
+    'sound is on to begin with',
+    !(await page.locator('[data-clip-slot="0"]').evaluate((v) => v.muted)),
+  );
   await page.locator('[data-editor-sound="off"]').click();
   await wait(300);
   check(
     'turning it off silences the preview too',
-    await page.locator('[data-editor-preview]').evaluate((v) => v.muted),
+    await page.locator('[data-clip-slot="0"]').evaluate((v) => v.muted),
   );
 
   // --- cover ---

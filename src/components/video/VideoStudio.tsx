@@ -6,6 +6,8 @@ import { createVideoPostAction } from '@/app/actions';
 import {
   ChevronIcon,
   CloseIcon,
+  PauseIcon,
+  PlayIcon,
   PlusIcon,
   RecordIcon,
   TrashIcon,
@@ -29,6 +31,7 @@ import {
 import { stageAfterNext, stageAfterSegment } from '@/lib/video/camera';
 import { postCaption } from '@/lib/video/compose';
 import { grabFrame, probeLocalVideo } from '@/lib/video/capture';
+import { locate, timeline } from '@/lib/video/playlist';
 import {
   MAX_COVER_BYTES,
   MAX_VIDEO_BYTES,
@@ -42,6 +45,7 @@ import { recordedFile } from '@/lib/video/recording';
 import { canRender, renderClips } from '@/lib/video/render';
 import { UploadError, contentTypeFor, discardMedia, uploadMedia } from '@/lib/video/upload-client';
 import { ClipEditor } from './ClipEditor';
+import { ClipPlayer, type ClipPlayerHandle } from './ClipPlayer';
 import { HashtagField } from './HashtagField';
 import { CoverPicker } from './CoverPicker';
 import { VideoEditor, type EditorTool } from './VideoEditor';
@@ -73,6 +77,25 @@ interface Finished {
   media: Media;
   previewUrl: string;
 }
+
+/**
+ * The posting screen's preview frame: a real 9:16 window.
+ *
+ * Driven by HEIGHT, with the width following from the ratio. Setting
+ * `aspectRatio` and a `maxHeight` together does not give a 9:16 box — the cap
+ * wins and the frame comes out whatever shape is left, measured at 0.84 on a
+ * phone when 0.5625 was asked for. So the height is the knob and the ratio does
+ * the rest; `maxWidth` keeps it inside a narrow column.
+ *
+ * Shorter than the viewport on purpose: this screen is a form as well as a
+ * preview, and a full-height video would push the caption, the cover and the Post
+ * button below the fold. The editor is where the video gets the whole screen.
+ */
+const POST_FRAME = {
+  aspectRatio: '9 / 16',
+  height: '56vh',
+  maxWidth: '100%',
+} as const;
 
 export function VideoStudio({
   /**
@@ -179,6 +202,9 @@ export function VideoStudio({
 
   /** Playback properties of the finished post, set in the editing stage. */
   const [mutedOnPost, setMutedOnPost] = useState(false);
+  /** The posting screen's own preview, for a project with no rendered file yet. */
+  const postPlayer = useRef<ClipPlayerHandle>(null);
+  const [postPlaying, setPostPlaying] = useState(false);
   /** Which editing tool is open, so arriving to pick a cover can start there. */
   const [editorTool, setEditorTool] = useState<EditorTool>('trim');
   const [overlays, setOverlays] = useState<TextOverlay[]>([]);
@@ -257,11 +283,24 @@ export function VideoStudio({
   // no poster still works, it just costs the Videos feed a download.
   useEffect(() => {
     // A supplied image is the cover, so there is no frame to keep in step.
-    if (!previewUrl || customCover) return;
+    if (customCover) return;
+    // Where that moment of the finished video actually lives. With one clip, or
+    // once a render exists, it is the preview file at that second. With several
+    // unrendered clips there is no combined file yet, so the frame is taken from
+    // whichever clip is on screen at that point — which is the same frame the
+    // render will produce there. Without this the cover picker was blank for
+    // every multi-clip video until the render ran.
+    const grabFrom = previewUrl
+      ? { src: previewUrl, at: thumbnailAt }
+      : (() => {
+          const found = locate(timeline(clips), thumbnailAt);
+          return found ? { src: found.segment.clip.src, at: found.sourceTime } : null;
+        })();
+    if (!grabFrom) return;
     let cancelledHere = false;
     void (async () => {
       try {
-        const frame = await grabFrame(previewUrl, thumbnailAt);
+        const frame = await grabFrame(grabFrom.src, grabFrom.at);
         if (cancelledHere) return;
         setThumbnail((previous) => {
           if (previous) URL.revokeObjectURL(previous);
@@ -599,12 +638,11 @@ export function VideoStudio({
   if (phone && mobileStage === 'edit' && clips.length > 0) {
     return (
       <VideoEditor
-        clip={clips[0]}
-        clipCount={clips.length}
-        // The combined video once one has been built, the first clip until then.
-        // Sound, text and a cover apply to the whole post either way; trimming is
-        // the only tool that needs a single clip, and its panel says so.
-        src={previewUrl ?? clips[0].src}
+        // The whole project. The editor plays it as one video by running the
+        // clips in sequence — see ClipPlayer — so nothing has to be rendered
+        // before somebody can watch back what they are about to post, and each
+        // clip keeps its own trim handles.
+        clips={clips}
         muted={mutedOnPost}
         overlays={overlays}
         cover={{
@@ -619,8 +657,8 @@ export function VideoStudio({
         }}
         tool={editorTool}
         onTool={setEditorTool}
-        onTrim={(patch) => {
-          setClips((current) => updateClip(current, clips[0].id, patch));
+        onTrimClip={(id, patch) => {
+          setClips((current) => updateClip(current, id, patch));
           // The rendered video is now out of date, so it is thrown away rather
           // than posted as the pre-trim version.
           setFinished(null);
@@ -856,24 +894,64 @@ export function VideoStudio({
         </div>
       )}
 
+      {/* The post's own preview. The overlays and the sound choice are applied,
+          so what is shown is the POST rather than the raw file.
+
+          Tall and full width rather than a short card: short-form video is
+          vertical, and a 9:16 frame is the shape the thing being posted actually
+          is. `object-contain` inside it, so a landscape clip letterboxes instead
+          of being stretched or cropped — the frame is a stage, not a crop. */}
       {previewUrl ? (
-        // The overlays and the sound choice are on the preview, so what is shown
-        // here is the post rather than the raw file.
-        <div className="relative mx-auto w-full">
+        <div
+          className="relative mx-auto overflow-hidden rounded-2xl bg-black"
+          style={POST_FRAME}
+          data-post-preview="file"
+        >
           <video
             src={previewUrl}
             controls
             playsInline
             muted={mutedOnPost}
             preload="metadata"
-            className="mx-auto max-h-[52vh] w-full rounded-2xl bg-black object-contain"
+            className="absolute inset-0 h-full w-full object-contain"
           />
           <VideoText media={{ text: overlays.filter((entry) => entry.text.trim().length > 0) }} />
         </div>
       ) : (
-        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 text-center text-sm text-white/45">
-          {clips.length} clips, {formatSeconds(total)} in total. They are put together when you
-          post.
+        // Several clips and no render yet. Played in sequence rather than
+        // described in a sentence: "they are put together when you post" asked
+        // somebody to post something they had never seen.
+        <div
+          className="relative mx-auto overflow-hidden rounded-2xl bg-black"
+          style={POST_FRAME}
+          data-post-preview="clips"
+        >
+          <ClipPlayer
+            ref={postPlayer}
+            clips={clips}
+            muted={mutedOnPost}
+            onPlayingChange={setPostPlaying}
+            className="absolute inset-0"
+          />
+          <VideoText media={{ text: overlays.filter((entry) => entry.text.trim().length > 0) }} />
+          <button
+            type="button"
+            onClick={() => postPlayer.current?.toggle()}
+            aria-label={postPlaying ? 'Pause' : 'Play'}
+            data-post-preview-playpause
+            className="absolute inset-0 flex items-center justify-center"
+          >
+            <span
+              className={`flex h-14 w-14 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur-md transition-opacity ${
+                postPlaying ? 'opacity-0' : 'opacity-100'
+              }`}
+            >
+              {postPlaying ? <PauseIcon width={22} height={22} /> : <PlayIcon width={22} height={22} />}
+            </span>
+          </button>
+          <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold text-white/85 backdrop-blur">
+            {clips.length} clips · {formatSeconds(total)}
+          </span>
         </div>
       )}
 
