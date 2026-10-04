@@ -136,18 +136,51 @@ export interface Media {
   text?: TextOverlay[];
 }
 
-/** One line of text over a video. Positions and tones are fixed, not free-form. */
+/** One line of text over a video: where it sits, when it shows, how it looks. */
 export interface TextOverlay {
   text: string;
-  /** Where down the frame it sits. Three stops rather than a drag: a thumb on a
-   *  phone is not a precise instrument, and a caption that lands under the feed's
-   *  own controls is worse than one of three sensible places. */
-  at: 'top' | 'middle' | 'bottom';
+  /**
+   * The centre of the line, as fractions of the frame — 0.5, 0.5 is the middle.
+   *
+   * Free placement, dragged on the video itself. This used to be three stops
+   * (top, middle, bottom) on the reasoning that a thumb is not a precise
+   * instrument; in practice the three stops were the imprecise part, because the
+   * one place somebody wants a line is beside the thing they are pointing at.
+   * Kept away from the very edges when dragged, so a line cannot be lost off the
+   * frame — see `clampOverlay`.
+   */
+  x: number;
+  y: number;
   size: 'm' | 'l';
   /** From FayTarra's palette. Not a colour picker — an unbounded colour is how
    *  text ends up invisible on its own video. */
   tone: 'light' | 'dark' | 'fay';
+  /**
+   * When it appears and disappears, in seconds of the finished video.
+   *
+   * Both absent means the whole video, which is what every overlay made before
+   * this existed means too. Drawn by the player rather than burnt into the file,
+   * so a line that shows for three seconds still costs no render.
+   */
+  from?: number;
+  to?: number;
+  /**
+   * The old three-stop position.
+   *
+   * Still read, never written: posts made before free placement carry it and no
+   * `x`/`y`, and they have to keep looking the way their author left them. The
+   * sanitiser turns it into coordinates on the way in, so there is one way to
+   * draw an overlay rather than two.
+   */
+  at?: 'top' | 'middle' | 'bottom';
 }
+
+/** Where the three old stops sit, as coordinates. */
+export const LEGACY_TEXT_SPOTS: Record<'top' | 'middle' | 'bottom', number> = {
+  top: 0.16,
+  middle: 0.5,
+  bottom: 0.84,
+};
 
 /** The most overlays one video may carry. */
 export const MAX_TEXT_OVERLAYS = 4;

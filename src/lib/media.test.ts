@@ -125,18 +125,53 @@ describe('playback properties on a video', () => {
 
   it('keeps a text overlay, normalised', () => {
     const [overlay] = video({
-      text: [{ text: '  hello   there  ', at: 'top', size: 'l', tone: 'fay' }],
+      text: [{ text: '  hello   there  ', x: 0.25, y: 0.75, size: 'l', tone: 'fay' }],
     })!.text!;
-    assert.deepEqual(overlay, { text: 'hello there', at: 'top', size: 'l', tone: 'fay' });
+    assert.deepEqual(overlay, { text: 'hello there', x: 0.25, y: 0.75, size: 'l', tone: 'fay' });
+  });
+
+  it('turns the old three-stop position into coordinates on the way in', () => {
+    // Clients and drafts made before free placement still send `at`, and the
+    // line has to land where its author put it rather than in the middle.
+    const [overlay] = video({ text: [{ text: 'old', at: 'top', size: 'm', tone: 'light' }] })!
+      .text!;
+    assert.equal(overlay.x, 0.5);
+    assert.ok(overlay.y < 0.3, `${overlay.y}`);
+    assert.equal(overlay.at, undefined);
   });
 
   it('falls back to safe values rather than trusting an unknown one', () => {
-    // An arbitrary position or colour is how text ends up off-screen or
-    // invisible on its own video.
+    // An arbitrary colour is how text ends up invisible on its own video, and an
+    // arbitrary offset is how it ends up off-screen.
     const [overlay] = video({
-      text: [{ text: 'x', at: 'floating', size: 'enormous', tone: '#000000' }],
+      text: [{ text: 'x', x: 42, y: -9, size: 'enormous', tone: '#000000' }],
     })!.text!;
-    assert.deepEqual(overlay, { text: 'x', at: 'bottom', size: 'm', tone: 'light' });
+    assert.deepEqual(overlay, { text: 'x', x: 1, y: 0, size: 'm', tone: 'light' });
+  });
+
+  it('centres a line that says nothing about where it goes', () => {
+    const [overlay] = video({ text: [{ text: 'x' }] })!.text!;
+    assert.deepEqual([overlay.x, overlay.y], [0.5, 0.5]);
+  });
+
+  it('keeps a text window when it is a real one', () => {
+    const [overlay] = video({ text: [{ text: 'x', from: 2, to: 5 }] })!.text!;
+    assert.deepEqual([overlay.from, overlay.to], [2, 5]);
+  });
+
+  it('drops a window that is backwards, empty or nonsense', () => {
+    for (const window of [
+      { from: 5, to: 2 },
+      { from: 3, to: 3 },
+      { from: 'soon', to: 'later' },
+      { from: 1 },
+      { to: 4 },
+      { from: -2, to: Number.POSITIVE_INFINITY },
+    ]) {
+      const [overlay] = video({ text: [{ text: 'x', ...window }] })!.text!;
+      assert.equal(overlay.from, undefined, JSON.stringify(window));
+      assert.equal(overlay.to, undefined, JSON.stringify(window));
+    }
   });
 
   it('caps the length of one line', () => {

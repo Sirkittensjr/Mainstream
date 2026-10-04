@@ -1,3 +1,6 @@
+'use client';
+
+import { showingAt, spotOf } from '@/lib/video/overlays';
 import type { Media, TextOverlay } from '@/lib/types';
 
 /**
@@ -12,36 +15,18 @@ import type { Media, TextOverlay } from '@/lib/types';
  * Used by every surface that plays a video, so one overlay looks the same on the
  * post page, in the feed and in the full-screen Videos feed. The editor uses it
  * too, which is what makes the preview honest.
- */
-
-/**
- * Positions, sizes and tones are fixed sets — see sanitiseMedia.
  *
- * Two sets of insets, because the same overlay has to clear different furniture
- * depending on where it is drawn. In a post or the Videos feed the bottom holds
- * a caption and the action buttons, and the top holds the status bar and the
- * notch. In the EDITOR the bottom is a panel, a clip strip, a scrubber and a
- * tool rail, which is most of the lower third — text pinned 16% up from the
- * bottom there would sit behind the controls while somebody is positioning it,
- * which is the one moment it has to be visible.
+ * PLACED FREELY, as a fraction of the frame. Each line is absolutely positioned
+ * on its own centre, so the same numbers mean the same place at any size — a
+ * 200px editor preview and a full-screen feed slide put a line in the same spot
+ * relative to the picture. This used to be three stops down the frame; see
+ * `TextOverlay`.
+ *
+ * TIMED, where the surface knows the time. `now` is the playhead in seconds of
+ * the finished video; a line outside its own window is not drawn. Undefined
+ * means there is no playhead to ask — a poster image, say — and everything
+ * shows, because hiding a line there would lose it rather than time it.
  */
-const AT: Record<TextOverlay['at'], string> = {
-  top: 'items-start pt-[12%]',
-  middle: 'items-center',
-  bottom: 'items-end pb-[16%]',
-};
-
-/**
- * The editor draws this inside the free part of the screen — the area its
- * controls do not cover — so that region is the safe area and these only need to
- * keep text off its very edges. The percentages that used to be here were an
- * attempt to guess how tall whichever panel was open happened to be.
- */
-const AT_EDITOR: Record<TextOverlay['at'], string> = {
-  top: 'items-start pt-[6%]',
-  middle: 'items-center',
-  bottom: 'items-end pb-[6%]',
-};
 
 const SIZE: Record<TextOverlay['size'], string> = {
   m: 'text-[15px] leading-snug sm:text-base',
@@ -57,81 +42,119 @@ const TONE: Record<TextOverlay['tone'], string> = {
 export function VideoText({
   media,
   className = '',
+  /** Playhead, in seconds of the finished video. Undefined where there is none. */
+  now,
   /**
-   * `post` is a finished video anywhere it plays. `editor` insets further, to
-   * clear the editing controls overlaid on the lower part of the screen.
-   */
-  variant = 'post',
-  /**
-   * Editing a line by tapping the line itself.
+   * Editing a line by tapping or dragging the line itself.
    *
-   * Without this the only way to reach an overlay is to find its row in the tool
-   * sheet and match it up with the words on screen by reading them — which is
-   * backwards, because the words are right there. Passed only by the editor;
-   * everywhere else these stay untappable, so a tap on a post's text still
-   * reaches the player underneath.
+   * Passed only by the editor. Everywhere else these stay untappable, so a tap
+   * on a post's text still reaches the player underneath.
    */
   onPick,
+  onMove,
   selected = null,
 }: {
-  media: Pick<Media, 'text'>;
+  media: Pick<Media, 'text' | 'duration'>;
   className?: string;
-  variant?: 'post' | 'editor';
+  now?: number;
   /** Takes the overlay's index in `media.text`. */
   onPick?: (index: number) => void;
+  /** Dragged to a new centre, in frame fractions. */
+  onMove?: (index: number, x: number, y: number) => void;
   selected?: number | null;
 }) {
   const overlays = media.text;
   if (!overlays || overlays.length === 0) return null;
-  const spots = variant === 'editor' ? AT_EDITOR : AT;
-  // Index in the ORIGINAL array, which is what a caller can patch. The rows below
-  // are grouped by position, so the loop index there is not it.
-  const numbered = overlays.map((overlay, index) => ({ overlay, index }));
+  const total = media.duration ?? 0;
+  const editing = Boolean(onPick || onMove);
+
+  /** Where in the layer a pointer is, as fractions of it. */
+  function fractionsOf(layer: HTMLElement, clientX: number, clientY: number) {
+    const box = layer.getBoundingClientRect();
+    return {
+      x: (clientX - box.left) / Math.max(1, box.width),
+      y: (clientY - box.top) / Math.max(1, box.height),
+    };
+  }
+
+  function dragFrom(index: number, event: React.PointerEvent<HTMLElement>) {
+    if (!onMove) return;
+    const layer = event.currentTarget.parentElement;
+    if (!layer) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    let moved = false;
+
+    const move = (moveEvent: PointerEvent) => {
+      moved = true;
+      const { x, y } = fractionsOf(layer, moveEvent.clientX, moveEvent.clientY);
+      onMove(index, x, y);
+    };
+    const release = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', release);
+      window.removeEventListener('pointercancel', release);
+      // A tap that never moved is a tap: it opens the line for editing.
+      if (!moved) onPick?.(index);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
+  }
 
   return (
-    // Over the video and out of the way of it: nothing here takes a tap, so the
-    // player's own controls underneath still work.
+    // Over the video and out of the way of it: nothing here takes a tap unless
+    // the editor asked for it, so the player's own controls underneath work.
     <div
       aria-hidden={false}
       data-video-text
-      data-video-text-variant={variant}
-      className={`pointer-events-none absolute inset-0 z-[5] flex flex-col justify-between px-5 py-4 ${className}`}
+      data-video-text-variant={editing ? 'editor' : 'post'}
+      className={`pointer-events-none absolute inset-0 z-[5] ${className}`}
     >
-      {(['top', 'middle', 'bottom'] as const).map((position) => {
-        const here = numbered.filter((entry) => entry.overlay.at === position);
-        if (here.length === 0) return <span key={position} />;
+      {overlays.map((overlay, index) => {
+        // A line with nothing in it yet is not drawn, but it keeps its place in
+        // the array: the editor addresses overlays by index, so filtering them
+        // out here would move every line after it under somebody's finger.
+        if (!overlay.text.trim()) return null;
+        if (!showingAt(overlay, now, total)) return null;
+        const { x, y } = spotOf(overlay);
+        const words = (
+          <span
+            className={`block max-w-full break-words rounded-2xl px-3 py-1.5 text-center font-display font-bold backdrop-blur-sm ${SIZE[overlay.size]} ${TONE[overlay.tone]}`}
+          >
+            {overlay.text}
+          </span>
+        );
+        const place = {
+          left: `${x * 100}%`,
+          top: `${y * 100}%`,
+          transform: 'translate(-50%, -50%)',
+          maxWidth: '86%',
+        } as const;
+
+        if (!editing) {
+          return (
+            <span key={index} data-video-text-line={index} className="absolute" style={place}>
+              {words}
+            </span>
+          );
+        }
         return (
-          <div key={position} className={`flex flex-1 justify-center ${spots[position]}`}>
-            <div className="flex max-w-full flex-col items-center gap-1.5">
-              {here.map(({ overlay, index }) => {
-                const words = (
-                  <p
-                    className={`max-w-full break-words rounded-2xl px-3 py-1.5 text-center font-display font-bold backdrop-blur-sm ${SIZE[overlay.size]} ${TONE[overlay.tone]}`}
-                  >
-                    {overlay.text}
-                  </p>
-                );
-                if (!onPick) return <span key={`${position}-${index}`}>{words}</span>;
-                return (
-                  <button
-                    key={`${position}-${index}`}
-                    type="button"
-                    onClick={() => onPick(index)}
-                    aria-label={`Edit the text “${overlay.text}”`}
-                    data-video-text-pick={index}
-                    // The wrapper takes the tap; the container above is
-                    // `pointer-events-none` so everything else still falls
-                    // through to the player.
-                    className={`pointer-events-auto max-w-full rounded-2xl transition ${
-                      selected === index ? 'ring-2 ring-white/90' : 'ring-1 ring-white/0'
-                    }`}
-                  >
-                    {words}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          <button
+            key={index}
+            type="button"
+            onPointerDown={(event) => dragFrom(index, event)}
+            onClick={() => onPick?.(index)}
+            aria-label={`Move the text “${overlay.text}”`}
+            data-video-text-pick={index}
+            data-video-text-line={index}
+            style={place}
+            className={`pointer-events-auto absolute touch-none rounded-2xl transition-[box-shadow] ${
+              selected === index ? 'ring-2 ring-white/90' : 'ring-1 ring-white/0'
+            }`}
+          >
+            {words}
+          </button>
         );
       })}
     </div>

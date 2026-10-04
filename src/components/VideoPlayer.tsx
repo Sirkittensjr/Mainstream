@@ -61,6 +61,8 @@ export function VideoPlayer({
   }, [watch.count]);
   // Until the file says otherwise, trust what was measured at upload; 4:5 is
   // only ever a placeholder for the moment before the first frame arrives.
+  /** Playhead, for text that only shows for part of the video. */
+  const [now, setNow] = useState(0);
   const [ratio, setRatio] = useState<number | null>(
     media.width && media.height ? media.width / media.height : null,
   );
@@ -98,12 +100,17 @@ export function VideoPlayer({
           }
         }}
         onPlay={watch.onPlay}
-        onTimeUpdate={watch.onTimeUpdate}
+        onTimeUpdate={(event) => {
+          watch.onTimeUpdate(event);
+          // Drives timed text. `timeupdate` is about four a second, which is as
+          // precise as a line appearing needs to be and costs nothing extra.
+          setNow(event.currentTarget.currentTime);
+        }}
         onSeeked={watch.onSeeked}
         onEnded={watch.onEnded}
         className="h-full w-full object-contain"
       />
-      <VideoText media={media} />
+      <VideoText media={media} now={now} />
       {media.duration != null && (
         <span className="pointer-events-none absolute right-2 top-2 rounded-full bg-black/70 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-white/90 backdrop-blur">
           {formatSeconds(media.duration)}

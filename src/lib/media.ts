@@ -17,6 +17,7 @@
  */
 
 import {
+  LEGACY_TEXT_SPOTS,
   MAX_TEXT_OVERLAYS,
   MAX_TEXT_OVERLAY_LENGTH,
   type Media,
@@ -99,6 +100,18 @@ const TEXT_POSITIONS = new Set(['top', 'middle', 'bottom']);
 const TEXT_SIZES = new Set(['m', 'l']);
 const TEXT_TONES = new Set(['light', 'dark', 'fay']);
 
+/** A coordinate in the frame, or undefined when the client sent nonsense. */
+const fraction = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value)
+    ? Math.round(Math.min(Math.max(value, 0), 1) * 1000) / 1000
+    : undefined;
+
+/** A moment in the finished video, in seconds. */
+const moment = (value: unknown): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 24 * 3600
+    ? Math.round(value * 100) / 100
+    : undefined;
+
 /**
  * The text overlays on one video, from whatever the client sent.
  *
@@ -107,8 +120,9 @@ const TEXT_TONES = new Set(['light', 'dark', 'fay']);
  * still somebody's words on a page: the length is capped so one overlay cannot
  * paper over a video, the count is capped so four cannot become four hundred,
  * and anything blank after trimming is dropped rather than stored as an empty
- * box. Position, size and tone are enumerations because an arbitrary colour or
- * offset is how text ends up unreadable or off-screen.
+ * box. Size and tone are enumerations because an arbitrary colour is how text
+ * ends up invisible on its own video, and the coordinates are clamped into the
+ * frame because an arbitrary offset is how it ends up off-screen.
  */
 function sanitiseTextOverlays(input: unknown): TextOverlay[] | undefined {
   if (!Array.isArray(input)) return undefined;
@@ -122,17 +136,33 @@ function sanitiseTextOverlays(input: unknown): TextOverlay[] | undefined {
         ? candidate.text.replace(/\s+/g, ' ').trim().slice(0, MAX_TEXT_OVERLAY_LENGTH)
         : '';
     if (!text) continue;
+
+    // Coordinates, with the old three-stop position as the fallback so a client
+    // that still sends `at` — or a post being edited again after being made
+    // before free placement — lands where its author put it.
+    const legacy = TEXT_POSITIONS.has(candidate.at as string)
+      ? (candidate.at as 'top' | 'middle' | 'bottom')
+      : null;
+    const x = fraction(candidate.x) ?? 0.5;
+    const y = fraction(candidate.y) ?? (legacy ? LEGACY_TEXT_SPOTS[legacy] : 0.5);
+
+    // A window, only when it is a real one. Nothing, or a backwards pair, means
+    // the whole video — the same thing an overlay made before timing means.
+    const from = moment(candidate.from);
+    const to = moment(candidate.to);
+    const timed = from !== undefined && to !== undefined && to > from;
+
     out.push({
       text,
-      at: TEXT_POSITIONS.has(candidate.at as string)
-        ? (candidate.at as TextOverlay['at'])
-        : 'bottom',
+      x,
+      y,
       size: TEXT_SIZES.has(candidate.size as string)
         ? (candidate.size as TextOverlay['size'])
         : 'm',
       tone: TEXT_TONES.has(candidate.tone as string)
         ? (candidate.tone as TextOverlay['tone'])
         : 'light',
+      ...(timed ? { from, to } : {}),
     });
   }
   return out.length > 0 ? out : undefined;

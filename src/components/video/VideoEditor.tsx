@@ -19,6 +19,13 @@ import { CoverPicker } from './CoverPicker';
 import { VideoText } from './VideoText';
 import { cropForRatio } from './ClipEditor';
 import { useClipFrames } from './useClipFrames';
+import { projectFrames } from '@/lib/video/thumbnails';
+import {
+  clampOverlay,
+  newOverlay,
+  trimOverlay,
+  windowOf,
+} from '@/lib/video/overlays';
 import { clipDuration, outputFrame, type Clip, type Rotation } from '@/lib/video/clips';
 import { timeline, timelineDuration } from '@/lib/video/playlist';
 import { formatPreciseSeconds, formatSeconds } from '@/lib/video/limits';
@@ -162,6 +169,8 @@ export function VideoEditor({
   const [selected, setSelected] = useState(0);
   /** Which line of text is being edited, if any. */
   const [pickedText, setPickedText] = useState<number | null>(null);
+  /** The clip Delete is asking about. Null when it is not asking. */
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   /** The same fit the finished video is rendered with. See the note above. */
   const fit = outputFrame(clips).fit;
@@ -186,8 +195,17 @@ export function VideoEditor({
 
   function addOverlay() {
     if (overlays.length >= MAX_TEXT_OVERLAYS) return;
-    onOverlays([...overlays, { text: '', at: 'bottom', size: 'l', tone: 'light' }]);
+    // The middle of the frame, and selected, so the next thing somebody does is
+    // type into it and drag it where they meant.
+    onOverlays([...overlays, newOverlay()]);
     setPickedText(overlays.length);
+  }
+
+  /** Dragged on the video. The index is into `overlays`, not into what is drawn. */
+  function moveOverlay(position: number, x: number, y: number) {
+    onOverlays(
+      overlays.map((entry, i) => (i === position ? clampOverlay(entry, x, y) : entry)),
+    );
   }
 
   function patchOverlay(position: number, patch: Partial<TextOverlay>) {
@@ -199,24 +217,36 @@ export function VideoEditor({
     setPickedText(null);
   }
 
-  /** Only the ones with words in them get previewed or posted. */
-  const written = overlays.filter((entry) => entry.text.trim().length > 0);
-
   /* --------------------------------------------------------- the filmstrip */
 
   const strip = useRef<HTMLDivElement>(null);
 
-  /** Where a clientX falls in the selected clip's own source, in seconds. */
-  function sourceAt(clientX: number): number {
+  /** How far along the strip a pointer is, 0 to 1. */
+  function acrossStrip(clientX: number): number {
     const rail = strip.current;
-    if (!rail || clip.sourceDuration <= 0) return 0;
+    if (!rail) return 0;
     const box = rail.getBoundingClientRect();
-    const across = (clientX - box.left) / Math.max(1, box.width);
-    return Math.min(Math.max(across, 0), 1) * clip.sourceDuration;
+    return Math.min(Math.max((clientX - box.left) / Math.max(1, box.width), 0), 1);
   }
 
-  /** Puts the preview where the finger is, clamped to what the clip keeps. */
+  /** Where a clientX falls in the selected clip's own source, in seconds. */
+  function sourceAt(clientX: number): number {
+    return acrossStrip(clientX) * clip.sourceDuration;
+  }
+
+  /**
+   * Puts the preview where the finger is.
+   *
+   * The strip means one of two things and the scrub follows it: the open clip's
+   * own source normally, and the whole project while a line of text is being
+   * timed — because the question then is "when in the finished video", which a
+   * single clip's strip cannot answer.
+   */
   function scrubTo(clientX: number) {
+    if (timing) {
+      player.current?.seek(acrossStrip(clientX) * total);
+      return;
+    }
     const segment = segments[index];
     if (!segment) return;
     const source = Math.min(Math.max(sourceAt(clientX), clip.trimStart), clip.trimEnd);
@@ -246,6 +276,39 @@ export function VideoEditor({
    * dragged and the grip would run away from the thumb. Pointer capture so a
    * finger that slides off the strip keeps hold of the grip.
    */
+  /** Dragging one end of the open line's window, along the project strip. */
+  function dragTextHandle(edge: 'from' | 'to', event: React.PointerEvent<HTMLElement>) {
+    if (pickedText === null || total <= 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+    event.stopPropagation();
+    const position = pickedText;
+
+    const move = (moveEvent: PointerEvent) => {
+      const seconds = acrossStrip(moveEvent.clientX) * total;
+      onOverlays(
+        overlays.map((entry, i) =>
+          i === position ? trimOverlay(entry, edge, seconds, total) : entry,
+        ),
+      );
+    };
+    const release = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', release);
+      window.removeEventListener('pointercancel', release);
+      // Park the playhead inside the window that was just set, so the line being
+      // timed is the line on screen.
+      const entry = overlays[position];
+      if (entry) {
+        const span = windowOf(entry, total);
+        player.current?.seek(edge === 'from' ? span.from : Math.max(span.from, span.to - 0.1));
+      }
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
+  }
+
   function dragHandle(edge: 'start' | 'end', event: React.PointerEvent<HTMLElement>) {
     if (clip.sourceDuration <= 0) return;
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -302,8 +365,23 @@ export function VideoEditor({
         clip.sourceDuration
       : 0;
   const onStrip = Boolean(segment && at >= segment.startsAt && at <= segment.endsAt);
-  const stripFrames = frames.strips[clip.id] ?? [];
   const trimming = tool === 'trim';
+
+  /** The line being timed, if the Text tool has one open. */
+  const timedText = tool === 'text' && pickedText !== null ? overlays[pickedText] : undefined;
+  const timing = Boolean(timedText);
+  const textWindow = timedText ? windowOf(timedText, total) : null;
+
+  /**
+   * What the strip is showing. One clip's own frames, or the whole project's —
+   * assembled from the per-clip strips already in hand rather than grabbed again.
+   */
+  const stripFrames = timing
+    ? projectFrames(segments, frames.strips, 10)
+    : (frames.strips[clip.id] ?? []);
+  /** The playhead's place along whichever of those the strip is showing. */
+  const headAt = timing ? (total > 0 ? Math.min(Math.max(at / total, 0), 1) : 0) : head;
+  const headShown = timing || onStrip;
 
   return (
     // Five bands, and the video is one of them rather than the floor they sit
@@ -358,7 +436,63 @@ export function VideoEditor({
             ))}
           </span>
 
-          {trimming && (
+          {timing && textWindow && (
+            <>
+              {/* When the line is NOT on screen. */}
+              <span
+                className="pointer-events-none absolute inset-y-0 left-0 bg-ink-950/75"
+                style={{ width: `${(textWindow.from / Math.max(0.01, total)) * 100}%` }}
+              />
+              <span
+                className="pointer-events-none absolute inset-y-0 right-0 bg-ink-950/75"
+                style={{ width: `${(1 - textWindow.to / Math.max(0.01, total)) * 100}%` }}
+              />
+              {/* When it is. */}
+              <span
+                className="pointer-events-none absolute inset-y-0 flex items-center justify-center border-y-2 border-aura bg-aura/20"
+                style={{
+                  left: `${(textWindow.from / Math.max(0.01, total)) * 100}%`,
+                  right: `${(1 - textWindow.to / Math.max(0.01, total)) * 100}%`,
+                }}
+              >
+                <span className="truncate px-2 text-[9px] font-bold uppercase tracking-wide text-white/90">
+                  Text
+                </span>
+              </span>
+              {(['from', 'to'] as const).map((edge) => (
+                <span
+                  key={edge}
+                  role="slider"
+                  tabIndex={-1}
+                  aria-label={edge === 'from' ? 'Text starts' : 'Text ends'}
+                  aria-valuemin={0}
+                  aria-valuemax={Math.max(0.1, total)}
+                  aria-valuenow={edge === 'from' ? textWindow.from : textWindow.to}
+                  aria-valuetext={formatPreciseSeconds(
+                    edge === 'from' ? textWindow.from : textWindow.to,
+                  )}
+                  data-editor-text-handle={edge}
+                  onPointerDown={(event) => dragTextHandle(edge, event)}
+                  className="absolute inset-y-0 flex w-9 cursor-ew-resize touch-none items-center justify-center"
+                  style={
+                    edge === 'from'
+                      ? {
+                          left: `${(textWindow.from / Math.max(0.01, total)) * 100}%`,
+                          marginLeft: '-4px',
+                        }
+                      : {
+                          left: `${(textWindow.to / Math.max(0.01, total)) * 100}%`,
+                          marginLeft: '-32px',
+                        }
+                  }
+                >
+                  <span className="h-10 w-1.5 rounded-full bg-aura shadow-[0_0_0_1.5px_rgba(0,0,0,0.5)]" />
+                </span>
+              ))}
+            </>
+          )}
+
+          {trimming && !timing && (
             <>
               {/* What is being cut away. */}
               <span
@@ -405,10 +539,10 @@ export function VideoEditor({
           )}
 
           {/* The playhead. */}
-          {onStrip && (
+          {headShown && (
             <span
               className="pointer-events-none absolute inset-y-0 w-[2px] bg-white shadow-[0_0_4px_rgba(0,0,0,0.8)]"
-              style={{ left: `${head * 100}%` }}
+              style={{ left: `${headAt * 100}%` }}
             />
           )}
         </div>
@@ -490,8 +624,12 @@ export function VideoEditor({
           {/* The words sit in the frame they will be posted in, so positioning
               them here is positioning them there. */}
           <VideoText
-            media={{ text: written }}
+            // `now` is what makes the preview honest about timing: a line is on
+            // screen here exactly when it will be on screen in the post.
+            media={{ text: overlays, duration: total }}
+            now={at}
             onPick={tool === 'text' ? (position) => setPickedText(position) : undefined}
+            onMove={tool === 'text' ? moveOverlay : undefined}
             selected={tool === 'text' ? pickedText : null}
           />
         </div>
@@ -584,30 +722,83 @@ export function VideoEditor({
           )}
 
           {tool === 'sound' && (
-            <div className="flex gap-2 pt-1">
-              {[
-                { on: true, label: 'Sound on', hint: 'As recorded' },
-                { on: false, label: 'Sound off', hint: 'Watched silent' },
-              ].map((option) => (
+            // PER CLIP. `Clip.volume` has always existed and the render has
+            // always honoured it — `renderClips` routes each clip through its own
+            // gain node — but the only control was one switch over the finished
+            // post, so three clips could be loud or silent together and nothing
+            // in between. This edits the open clip and nothing else.
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center gap-2">
                 <button
-                  key={option.label}
                   type="button"
-                  onClick={() => onMuted(!option.on)}
-                  aria-pressed={muted === !option.on}
-                  data-editor-sound={option.on ? 'on' : 'off'}
-                  className={`min-h-[48px] flex-1 rounded-xl border px-3 py-2 text-left transition ${
-                    muted === !option.on
-                      ? 'border-fay bg-fay/15'
-                      : 'border-white/10 bg-white/[0.04] active:bg-white/[0.09]'
+                  onClick={() =>
+                    onPatchClip?.(clip.id, { volume: clip.volume > 0 ? 0 : 1 })
+                  }
+                  aria-pressed={clip.volume === 0}
+                  data-editor-clip-mute
+                  aria-label={clip.volume > 0 ? 'Mute this clip' : 'Unmute this clip'}
+                  className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition ${
+                    clip.volume === 0
+                      ? 'border-fay bg-fay/15 text-white'
+                      : 'border-white/10 bg-white/[0.04] text-white/70'
                   }`}
                 >
-                  <span className="flex items-center gap-2 text-[13px] font-semibold text-white">
-                    <VolumeIcon muted={!option.on} width={15} height={15} />
-                    {option.label}
-                  </span>
-                  <span className="mt-0.5 block text-[10px] text-white/45">{option.hint}</span>
+                  <VolumeIcon muted={clip.volume === 0} width={17} height={17} />
                 </button>
-              ))}
+                <label className="sr-only" htmlFor="editor-clip-volume">
+                  Volume for this clip
+                </label>
+                <input
+                  id="editor-clip-volume"
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={clip.volume}
+                  data-editor-clip-volume
+                  onChange={(event) =>
+                    onPatchClip?.(clip.id, { volume: Number(event.target.value) })
+                  }
+                  className="scrub flex-1"
+                />
+                <span
+                  data-editor-clip-volume-value
+                  className="w-10 shrink-0 text-right text-[12px] font-semibold tabular-nums text-white/70"
+                >
+                  {Math.round(clip.volume * 100)}%
+                </span>
+              </div>
+              <p className="text-[11px] text-white/45">
+                {many ? `Clip ${index + 1} of ${clips.length} only. ` : ''}
+                Each clip keeps its own level, in the preview and in the posted video.
+              </p>
+              {/* The whole post, which is a different question from how loud any
+                  one clip is: it is whether this video is watched silent. */}
+              <div className="flex gap-2">
+                {[
+                  { on: true, label: 'Sound on', hint: 'The post plays audio' },
+                  { on: false, label: 'Sound off', hint: 'The post is silent' },
+                ].map((option) => (
+                  <button
+                    key={option.label}
+                    type="button"
+                    onClick={() => onMuted(!option.on)}
+                    aria-pressed={muted === !option.on}
+                    data-editor-sound={option.on ? 'on' : 'off'}
+                    className={`min-h-[44px] flex-1 rounded-xl border px-3 py-1.5 text-left transition ${
+                      muted === !option.on
+                        ? 'border-fay bg-fay/15'
+                        : 'border-white/10 bg-white/[0.04] active:bg-white/[0.09]'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2 text-[12px] font-semibold text-white">
+                      <VolumeIcon muted={!option.on} width={14} height={14} />
+                      {option.label}
+                    </span>
+                    <span className="mt-0.5 block text-[10px] text-white/45">{option.hint}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
@@ -615,7 +806,7 @@ export function VideoEditor({
             <div className="space-y-2 pt-1">
               {overlays.length === 0 && (
                 <p className="text-[12px] text-white/50">
-                  Put a line over the video. Tap it on the video to come back to it.
+                  Put a line over the video, then drag it where you want it.
                 </p>
               )}
               {overlays.map((overlay, position) => (
@@ -651,19 +842,6 @@ export function VideoEditor({
                     </button>
                   </div>
                   <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                    {(['top', 'middle', 'bottom'] as const).map((spot) => (
-                      <button
-                        key={spot}
-                        type="button"
-                        onClick={() => patchOverlay(position, { at: spot })}
-                        aria-pressed={overlay.at === spot}
-                        data-editor-text-at={spot}
-                        className={`chip px-2.5 py-1 text-[11px] capitalize ${overlay.at === spot ? 'chip-active' : ''}`}
-                      >
-                        {spot}
-                      </button>
-                    ))}
-                    <span className="w-1" />
                     {(['m', 'l'] as const).map((size) => (
                       <button
                         key={size}
@@ -689,6 +867,21 @@ export function VideoEditor({
                       />
                     ))}
                   </div>
+                  {/* Where and when, both said plainly, because both are set by
+                      dragging something rather than by a control in this row. */}
+                  <p
+                    data-editor-text-window={position}
+                    className="mt-1.5 text-[11px] text-white/45"
+                  >
+                    {pickedText === position
+                      ? 'Drag it on the video to move it. '
+                      : 'Tap it on the video to move it. '}
+                    <span className="tabular-nums text-white/65">
+                      {formatPreciseSeconds(windowOf(overlay, total).from)}–
+                      {formatPreciseSeconds(windowOf(overlay, total).to)}
+                    </span>
+                    {pickedText === position ? ' — drag the purple handles above' : ''}
+                  </p>
                 </div>
               ))}
               {overlays.length < MAX_TEXT_OVERLAYS && (
@@ -780,7 +973,11 @@ export function VideoEditor({
               aria-label={`Clip ${position + 1} of ${clips.length}`}
               data-editor-clip={position}
               className={`relative h-14 w-12 shrink-0 overflow-hidden rounded-lg border-2 bg-ink-800 transition ${
-                chosen ? 'border-fay' : 'border-transparent opacity-70 active:opacity-100'
+                confirmDelete === each.clip.id
+                  ? 'border-red-400 ring-2 ring-red-400/60'
+                  : chosen
+                    ? 'border-fay'
+                    : 'border-transparent opacity-70 active:opacity-100'
               }`}
             >
               <span
@@ -797,12 +994,12 @@ export function VideoEditor({
           );
         })}
 
-        {onDeleteClip && many && (
+        {onDeleteClip && (
           <button
             type="button"
-            onClick={() => onDeleteClip(clip.id)}
+            onClick={() => setConfirmDelete(clip.id)}
             data-editor-delete
-            aria-label={`Delete clip ${index + 1}`}
+            aria-label={many ? `Delete clip ${index + 1}` : 'Delete this clip'}
             className="flex h-14 w-10 shrink-0 items-center justify-center rounded-lg border border-white/15 text-white/55 transition active:bg-white/10"
           >
             <TrashIcon width={16} height={16} />
@@ -821,6 +1018,65 @@ export function VideoEditor({
           </button>
         )}
       </div>
+
+      {/* ============ asking before deleting ============ */}
+      {/* Deleting used to happen on the tap. A clip is a take somebody cannot
+          film again — the moment has gone — so this asks, and says which one it
+          means: the clip in question is already the selected one, lit in the row
+          above, and named here. Small and low, so the video stays visible behind
+          it and the answer is next to the thumb that asked the question. */}
+      {confirmDelete && (
+        <div
+          data-editor-confirm-delete
+          role="dialog"
+          aria-modal="true"
+          aria-label="Delete clip?"
+          className="absolute inset-0 z-20 flex items-end justify-center"
+        >
+          {/* Dismisses on a tap outside, which is the same answer as No. */}
+          <button
+            type="button"
+            aria-label="Keep the clip"
+            data-editor-confirm-scrim
+            onClick={() => setConfirmDelete(null)}
+            className="absolute inset-0 bg-black/45"
+          />
+          <div className="safe-bottom relative mb-2 w-[min(20rem,calc(100%-1.5rem))] rounded-2xl border border-white/10 bg-ink-900/95 p-3 shadow-2xl backdrop-blur-xl">
+            <p className="text-center text-[14px] font-semibold text-white">
+              {many ? `Delete clip ${index + 1} of ${clips.length}?` : 'Delete this clip?'}
+            </p>
+            <p className="mt-0.5 text-center text-[11px] text-white/50">
+              {many
+                ? 'The other clips are not touched.'
+                : 'It is the only clip, so this goes back to the camera.'}
+            </p>
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(null)}
+                data-editor-confirm-no
+                className="btn-quiet min-h-[44px] flex-1 py-2 text-[14px]"
+              >
+                No
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const going = confirmDelete;
+                  setConfirmDelete(null);
+                  // Only the clip that was asked about, by id — not by position,
+                  // which could have moved under the question.
+                  onDeleteClip?.(going);
+                }}
+                data-editor-confirm-yes
+                className="btn-primary min-h-[44px] flex-1 py-2 text-[14px]"
+              >
+                Yes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

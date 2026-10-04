@@ -419,7 +419,14 @@ function Slide({
         {/* Whatever the creator wrote over it, on the mounted slide and on the
             poster alike — a slide that has not mounted its player yet is still
             showing this video. */}
-        <VideoText media={media} />
+        {/* `progress` is a fraction of the video, which is what this slide
+            already tracks; timed text wants it in seconds. A slide showing only
+            its poster has no playhead and shows every line, which is right: a
+            still frame is not a moment in the video. */}
+        <VideoText
+          media={media}
+          now={media.duration != null && playing ? progress * media.duration : undefined}
+        />
       </div>
 
       {covered && (
