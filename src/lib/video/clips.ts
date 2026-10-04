@@ -131,22 +131,63 @@ export function displaySize(clip: Clip): { width: number; height: number } {
 /** The longest side any FayTarra video is rendered at. */
 export const OUTPUT_LONG_EDGE = 1080;
 
+/** The vertical short-form frame: 1080x1920, 9:16. */
+export const VERTICAL_OUTPUT = { width: 1080, height: 1920 } as const;
+export const VERTICAL_RATIO = VERTICAL_OUTPUT.width / VERTICAL_OUTPUT.height;
+
 /**
- * The frame the finished video is rendered into.
+ * Whether a clip's picture is taller than it is wide, after crop and rotation.
  *
- * The first clip decides the shape, and everything after it is fitted inside
- * without being stretched or cropped further. FayTarra is not a vertical-video
- * app: somebody who starts with a landscape clip gets a landscape post, and
- * somebody who starts with a phone clip gets a tall one.
+ * Strictly taller. A square clip is not a vertical video, and pulling it into
+ * the 9:16 frame would centre-crop almost half its width away for the sake of a
+ * format it never claimed. Square stays square.
  */
-export function outputSize(clips: Clip[]): { width: number; height: number } {
+export function isUpright(clip: Clip): boolean {
+  const { width, height } = displaySize(clip);
+  return height > width;
+}
+
+/**
+ * The frame the finished video is rendered into, and how clips are fitted to it.
+ *
+ * A project that starts upright is a vertical video, and it renders to 1080x1920
+ * whatever shape its clips happen to be — which is the format a phone records in
+ * and the format every short-video feed expects. This used to scale the LONG edge
+ * to 1080, so a 1080x1920 recording came out 608x1080: a vertical post rendered
+ * at barely more than half the width it arrived with. A fixed target can upscale
+ * a 720-wide source, which costs bitrate for no extra detail, and that is the
+ * lesser of the two. Those clips FILL that frame:
+ * a 9:16 recording fills it exactly, and anything wider is centre-cropped rather
+ * than letterboxed, because bars baked down the top and bottom of a vertical post
+ * look like a mistake. Nothing is ever stretched either way; the scale is one
+ * number applied to both axes.
+ *
+ * A project that starts LANDSCAPE is left alone: its own shape, and clips
+ * letterboxed into it rather than cropped. FayTarra is still a general social
+ * network, and somebody uploading a 16:9 video from a desktop did not ask for
+ * two thirds of its width to be thrown away. Cropping is for the vertical frame,
+ * where the alternative is worse.
+ */
+export function outputFrame(clips: Clip[]): {
+  width: number;
+  height: number;
+  fit: 'cover' | 'contain';
+} {
   const first = clips[0];
-  if (!first) return { width: 720, height: 1280 };
+  if (!first) return { ...VERTICAL_OUTPUT, fit: 'cover' };
+  if (isUpright(first)) return { ...VERTICAL_OUTPUT, fit: 'cover' };
+
   const { width, height } = displaySize(first);
   const scale = Math.min(1, OUTPUT_LONG_EDGE / Math.max(width, height));
   // Even numbers: an odd dimension is rejected by some H.264 encoders.
   const even = (value: number) => Math.max(2, Math.round((value * scale) / 2) * 2);
-  return { width: even(width), height: even(height) };
+  return { width: even(width), height: even(height), fit: 'contain' };
+}
+
+/** The frame's dimensions alone, for callers that do not care how clips fit it. */
+export function outputSize(clips: Clip[]): { width: number; height: number } {
+  const { width, height } = outputFrame(clips);
+  return { width, height };
 }
 
 /**
