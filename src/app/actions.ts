@@ -5,6 +5,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { CATEGORIES, type Category } from '@/lib/types';
+import { normaliseTextPost, textKindOf } from '@/lib/text-posts';
 import { sanitiseAvatarUrl, sanitiseMedia } from '@/lib/media';
 import { PROFILE_DEFAULT, isProfileColorKey } from '@/lib/profile-theme';
 import { checkLimit } from '@/lib/services/rate-limit';
@@ -281,6 +282,40 @@ export async function createPostAction(_prev: unknown, formData: FormData) {
   }
   const limit = await checkLimit('posts', viewer.id);
   if (!limit.ok) return { error: limit.error };
+
+  /**
+   * A text post says which of the three shapes it is, and is clamped to that
+   * shape's limits HERE as well as in the composer. A `maxLength` on a textarea
+   * is a suggestion; this is the rule. A post with no `text_kind` field is an
+   * ordinary caption-and-media post and takes the path it always did.
+   */
+  const askedKind = textKindOf(formData.get('text_kind'));
+  if (askedKind) {
+    const made = normaliseTextPost(
+      askedKind,
+      formData.get('text_title'),
+      formData.get('caption'),
+    );
+    if (!made.ok) return { error: made.error };
+
+    const textCategoryInput = String(formData.get('category') || 'Life') as Category;
+    const textPost = await createPost({
+      authorId: viewer.id,
+      caption: made.body,
+      media: [],
+      category: CATEGORIES.includes(textCategoryInput) ? textCategoryInput : 'Life',
+      tags: String(formData.get('tags') || '')
+        .split(/[\s,]+/)
+        .map((tag) => tag.slice(0, 30))
+        .filter(Boolean),
+      textKind: made.kind,
+      textTitle: made.title,
+    });
+    revalidatePath('/home');
+    revalidatePath('/discover');
+    revalidatePath(`/u/${viewer.username}`);
+    redirect(`/post/${textPost.id}`);
+  }
 
   const caption = String(formData.get('caption') || '').trim().slice(0, 1200);
   // Media arrives as a hidden field, so it is untrusted: keep only the URLs

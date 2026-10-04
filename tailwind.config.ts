@@ -25,6 +25,8 @@ const config: Config = {
       fontFamily: {
         sans: ['var(--font-sans)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
         display: ['var(--font-display)', 'var(--font-sans)', 'sans-serif'],
+        // Bebas Neue, for a BIG message and nothing else.
+        statement: ['var(--font-statement)', 'var(--font-display)', 'sans-serif'],
       },
       borderRadius: {
         '4xl': '2rem',

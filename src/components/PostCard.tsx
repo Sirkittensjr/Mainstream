@@ -17,6 +17,8 @@ import { FollowButton } from './FollowButton';
 import { RateButton } from './RateSheet';
 import { ReportDialog } from './ReportDialog';
 import { CommentIcon, EyeIcon, HeartIcon, ShareIcon } from './Icons';
+import { SpeechBubble } from './SpeechBubble';
+import { drawnAs } from '@/lib/text-posts';
 
 export interface PostCardData {
   id: string;
@@ -31,6 +33,10 @@ export interface PostCardData {
    */
   videoViews: number;
   createdAt: string;
+  /** Which of the three shapes a text post is. Null for a post with media. */
+  textKind?: 'short' | 'long' | 'big' | null;
+  /** A long message's title. */
+  textTitle?: string | null;
   /** The author asked for this to stay covered until somebody taps it. */
   contentWarning?: boolean;
   likes: number;
@@ -58,16 +64,32 @@ export function PostCard({
   data,
   viewerId,
   compact = false,
+  full = false,
 }: {
   data: PostCardData;
   viewerId: string | null;
   compact?: boolean;
+  /**
+   * This is the post's own page, so a long message is shown whole.
+   *
+   * Defaulted to false rather than keyed off `compact`, which no list passes:
+   * every surface that shows a card in a list — Home, Following, Recommended,
+   * Discover, Profile, Search — gets the preview without having to ask for it,
+   * and the one page that should show everything says so.
+   */
+  full?: boolean;
 }) {
   const [liked, setLiked] = useState(data.liked);
   const [likes, setLikes] = useState(data.likes);
   const [burst, setBurst] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  /** Which bubble this post is, or null when it is a post with media. */
+  const bubble = drawnAs({
+    text_kind: data.textKind,
+    caption: data.caption,
+    media: data.media,
+  });
   /**
    * The watch count, which the server rendered and the player updates.
    *
@@ -167,16 +189,31 @@ export function PostCard({
         </div>
       )}
 
-      {data.caption && (
-        <Link href={`/post/${data.id}`} className="block px-4 pb-3">
-          <p
-            className={`whitespace-pre-wrap text-[15px] leading-relaxed text-white/90 ${
-              compact ? 'line-clamp-3' : ''
-            }`}
-          >
-            {data.caption}
-          </p>
-        </Link>
+      {/* A text post is its words in a bubble pointing at the avatar above; a
+          caption on a post that has media is still a caption. `drawnAs` decides
+          which, and answers 'short' for a text post written before kinds
+          existed — so every post already in the database gains the bubble
+          without being touched. */}
+      {bubble ? (
+        <SpeechBubble
+          kind={bubble}
+          title={data.textTitle}
+          body={data.caption}
+          preview={!full}
+          postId={data.id}
+        />
+      ) : (
+        data.caption && (
+          <Link href={`/post/${data.id}`} className="block px-4 pb-3">
+            <p
+              className={`whitespace-pre-wrap text-[15px] leading-relaxed text-white/90 ${
+                compact ? 'line-clamp-3' : ''
+              }`}
+            >
+              {data.caption}
+            </p>
+          </Link>
+        )
       )}
 
       {data.media.length > 0 && (
