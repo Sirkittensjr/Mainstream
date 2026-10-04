@@ -338,6 +338,45 @@ async function run() {
     'and the editor says how many there are',
     /3 clips/.test(await page.locator('[data-editor-fullscreen]').innerText()),
   );
+  check(
+    'with the clock over the video rather than buried in the controls',
+    /\d:\d\d(\.\d)? \/ \d:\d\d/.test(await page.locator('[data-editor-time]').innerText()),
+    (await page.locator('[data-editor-time]').innerText()).replace(/\n/g, ' '),
+  );
+
+  // The clips are drawn as their own FRAMES. A strip of numbered grey boxes is a
+  // form; this is how somebody picks the clip they mean, by recognising it.
+  const painted = await page
+    .waitForFunction(
+      () => {
+        const tiles = [...document.querySelectorAll('[data-editor-clip]')];
+        const withFrames = tiles.filter((tile) =>
+          [...tile.querySelectorAll('span')].some((span) =>
+            getComputedStyle(span).backgroundImage.startsWith('url('),
+          ),
+        );
+        return withFrames.length === tiles.length ? withFrames.length : false;
+      },
+      undefined,
+      { timeout: 25000 },
+    )
+    .then((handle) => handle.jsonValue())
+    .catch(() => 0);
+  check('every clip in the strip shows a frame of itself', painted === 3, `${painted} of 3`);
+  check(
+    // Six frames across the open clip's whole source, so the part being cut away
+    // is visible rather than implied.
+    'and the open one is a filmstrip of its whole source',
+    (await page.locator('[data-editor-track] > span:first-child > span').count()) >= 4,
+    `${await page.locator('[data-editor-track] > span:first-child > span').count()} frames`,
+  );
+
+  const plus = await page.locator('[data-editor-add-clip]').boundingBox();
+  check(
+    'another clip can be added from the timeline itself',
+    Boolean(plus) && plus.height >= 44 && plus.width >= 40,
+    plus ? `${Math.round(plus.width)}x${Math.round(plus.height)}` : 'missing',
+  );
 
   /* ===================== gapless playback ===================== */
   section('CLIP 1 RUNS STRAIGHT INTO CLIP 2');
@@ -575,10 +614,95 @@ async function run() {
   });
   check('it can be moved up the frame', moved.top < moved.vh * 0.4, `${Math.round(moved.top)}px`);
 
+  // Editing a line by tapping the line itself, which is where somebody looks.
+  check(
+    'the words on the video are tappable while Text is open',
+    (await page.locator('[data-video-text-pick]').count()) === 1,
+  );
+  await page.locator('[data-video-text-pick="0"]').click();
+  await wait(250);
+  check(
+    'and tapping one opens that line for editing',
+    (await page.locator('[data-editor-overlay="0"]').getAttribute('data-editor-overlay-picked')) ===
+      'true',
+  );
+
   check(
     'text can be removed again',
     (await page.locator('[data-editor-text-remove]').count()) === 1,
   );
+
+  /* ===================== another clip, and one less ===================== */
+  section('ADDING A CLIP FROM THE EDITOR, AND DELETING ONE');
+
+  const beforeAdding = await page.locator('[data-editor-clip]').count();
+  await page.locator('[data-editor-add-clip]').click();
+  await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 20000 });
+  check('the + on the timeline opens the camera again', true);
+  await record(page, 2);
+  await page.locator('[data-camera-next]').click();
+  await page.waitForSelector('[data-editor-fullscreen]', { timeout: 20000 });
+  const afterAdding = await page.locator('[data-editor-clip]').count();
+  check(
+    'and the new clip joins the project rather than replacing it',
+    afterAdding === beforeAdding + 1,
+    `${beforeAdding} -> ${afterAdding} clips`,
+  );
+
+  // Delete acts on the SELECTED clip, so select the one just filmed.
+  await page.locator(`[data-editor-clip="${afterAdding - 1}"]`).click();
+  await wait(300);
+  const lengthWithFour = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+  await page.locator('[data-editor-delete]').click();
+  await wait(600);
+  const afterDeleting = await page.locator('[data-editor-clip]').count();
+  check(
+    'deleting the selected clip takes it out of the project',
+    afterDeleting === beforeAdding,
+    `${afterAdding} -> ${afterDeleting} clips`,
+  );
+  const lengthWithThree = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+  check(
+    'and the video gets shorter by that clip',
+    lengthWithThree < lengthWithFour - 1,
+    `${lengthWithFour}s -> ${lengthWithThree}s`,
+  );
+  check(
+    'with the editor still on the video rather than dropped back to the camera',
+    (await page.locator('[data-editor-fullscreen]').count()) === 1,
+  );
+
+  /* ===================== the clip's own shape ===================== */
+  section('RESIZE CHANGES THE CLIP, NOT JUST A LABEL');
+
+  await page.locator('[data-editor-tool="resize"]').click();
+  await wait(250);
+  check(
+    'Resize offers the same shapes the desktop editor does',
+    (await page.locator('[data-editor-shape]').count()) === 5,
+    (await page.locator('[data-editor-shape]').allInnerTexts()).join(' / '),
+  );
+  check(
+    'a recording starts on its original shape',
+    (await page.locator('[data-editor-shape="Original"]').getAttribute('aria-pressed')) === 'true',
+  );
+  await page.locator('[data-editor-shape="1:1"]').click();
+  await wait(400);
+  check(
+    'choosing a square crops the clip',
+    (await page.locator('[data-editor-shape="1:1"]').getAttribute('aria-pressed')) === 'true' &&
+      (await page.locator('[data-editor-shape="Original"]').getAttribute('aria-pressed')) ===
+        'false',
+  );
+  // Put it back: the rest of the run is about a 9:16 project.
+  await page.locator('[data-editor-shape="Original"]').click();
+  await wait(400);
+  check(
+    'and it goes back to the original',
+    (await page.locator('[data-editor-shape="Original"]').getAttribute('aria-pressed')) === 'true',
+  );
+  await page.locator('[data-editor-tool="trim"]').click();
+  await wait(200);
 
   /* ===================== the post screen ===================== */
   section('POSTING THREE TRIMMED CLIPS');
@@ -727,6 +851,48 @@ async function run() {
       const chrome = document.querySelector('[data-editor-controls]').getBoundingClientRect();
       return Math.abs(stage.top) <= 1 && Math.abs(stage.bottom - chrome.top) <= 1;
     }),
+  );
+
+  // Two clips, on the small screen: the shortest project where choosing between
+  // clips means anything, and the one the three-clip run never passes through.
+  await android.page.locator('[data-editor-add-clip]').click();
+  await android.page.waitForSelector('button[aria-label="Start recording"]', { timeout: 20000 });
+  await record(android.page, 2);
+  await android.page.locator('[data-camera-next]').click();
+  await android.page.waitForSelector('[data-editor-fullscreen]', { timeout: 20000 });
+  check(
+    'a second clip makes a two-clip project',
+    (await android.page.locator('[data-editor-clip]').count()) === 2,
+  );
+  for (const position of [1, 0]) {
+    await android.page.locator(`[data-editor-clip="${position}"]`).click();
+    await wait(400);
+    check(
+      `clip ${position + 1} of two can be selected and carries the grips`,
+      (await android.page
+        .locator(`[data-editor-clip="${position}"]`)
+        .getAttribute('aria-pressed')) === 'true' &&
+        (await android.page.locator('[data-editor-handle]').count()) === 2,
+    );
+  }
+  check('with no sideways scroll on two clips either', (await sideways(android.page)) === 0);
+  check(
+    'and the tools still all on screen',
+    await android.page.evaluate(
+      () =>
+        document.querySelector('[data-editor-tool="resize"]').getBoundingClientRect().bottom <=
+        window.innerHeight + 1,
+    ),
+  );
+  // Back to one, so the Retake check below is still about the only clip.
+  await android.page.locator('[data-editor-clip="1"]').click();
+  await wait(300);
+  await android.page.locator('[data-editor-delete]').click();
+  await wait(500);
+  check(
+    'deleting it leaves the one clip, still in the editor',
+    (await android.page.locator('[data-editor-clip]').count()) === 1 &&
+      (await android.page.locator('[data-editor-fullscreen]').count()) === 1,
   );
 
   /* ===================== empty and error states ===================== */

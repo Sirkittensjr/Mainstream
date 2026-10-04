@@ -532,8 +532,8 @@ async function run() {
     .locator('[data-editor-tool]')
     .evaluateAll((nodes) => nodes.map((node) => node.dataset.editorTool));
   check(
-    'the four tools are Trim, Sound, Text and Cover',
-    JSON.stringify(tools) === JSON.stringify(['trim', 'sound', 'text', 'cover']),
+    'the five tools are Trim, Sound, Text, Cover and Resize',
+    JSON.stringify(tools) === JSON.stringify(['trim', 'sound', 'text', 'cover', 'resize']),
     tools.join(', '),
   );
   const toolSizes = await page

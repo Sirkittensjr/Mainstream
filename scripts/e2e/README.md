@@ -592,35 +592,60 @@ of it: the video at `390x664` in a `390x664` viewport, **4% of the frame's heigh
 lost to the crop**, `objectFit: cover`, and the free area above the controls
 reaching `0px`.
 
-Also covered: the controls sitting in the lower part rather than pushing the video
-into a box, and the open tool's sheet being a 44px strip BELOW the video rather
-than the floating panel that used to take over the middle of the screen; the
-selected clip opening out on the timeline with a draggable handle at each end
-while the other clips stay beside it (`7.6s → 6.9s` from one drag, with nothing
-opened over the video to do it); per-clip selection and trimming, with the whole
-project getting shorter each time (measured 12.1s → 10.1s → 8.6s → 7.6s); text
-appearing over the video as it is typed and staying clear of the controls; a true
-9:16 preview on the posting screen; and the posted file's own duration against the
-kept clips, read live at the moment **Next** is tapped rather than from a number
-captured before the last cut. Then the same editor on a smaller Android viewport —
-one clip still gets a timeline, because that is where its trim handles are — and
-Retake on the only clip going back to the camera rather than leaving an editor
-with nothing in it.
+**The clips are their own frames.** A row of numbered grey boxes is a form; a row
+of the actual frames is an editor, and it is how somebody picks the clip they mean
+— by recognising it, not by remembering that the cat one was third. `useClipFrames`
+reads six frames across each clip's WHOLE source, keyed on the source rather than
+on the trim so that dragging a handle never invalidates them, and the one-frame
+thumbnail for an unselected clip is just the middle frame of that same strip, so a
+clip is read once rather than twice. The suite asserts every clip in the strip
+paints a frame (`3 of 3`) and that the open one is a filmstrip (`6 frames`).
 
-**The posted duration swings, and the render is why.** `playInto` writes output
-frames on a wall-clock `setInterval` at `OUTPUT_FPS` while the source plays in
-real time, so the file's length is the WALL-CLOCK time the pass took, not the
-source time it covered. Under load the two come apart in both directions: a
-throttled timer writes fewer frames than seconds elapsed and the file comes out
-short, a stalled source gets the same frame written repeatedly and it comes out
-long. Measured on one unchanged project of 6.90s across four runs: **8.78s, 5.78s,
-5.01s, 6.05s** — 128%, 84%, 73%, 88%. The duration check's band is
-`[80%, +0.5s]`, so it fails about half the time, and the failure is the render's,
-not the editor's. The fix is to pace the output on the source's own progress
+Also covered: the controls sitting in the lower part rather than pushing the video
+into a box, and the open tool's sheet being a short strip BELOW the video rather
+than the floating panel that used to take over the middle of the screen; the
+selected clip opening out on the timeline with a draggable grip at each end while
+the other clips stay beside it (`7.6s → 6.9s` from one drag, with nothing opened
+over the video to do it); per-clip selection and trimming, with the whole project
+getting shorter each time (measured 12.1s → 10.1s → 8.6s → 7.6s); the clock over
+the video rather than buried in the controls; the **+** on the end of the timeline
+opening the camera and the new take JOINING the project (`3 → 4 clips`) rather
+than replacing it; **Delete** taking the selected clip back out again
+(`4 → 3 clips`, `9.0s → 6.9s`) without dropping out of the editor; **Resize**
+offering the desktop editor's own five shapes and really cropping the clip; text
+appearing over the video as it is typed, staying clear of the controls, and being
+tappable on the video itself to reopen that line; a true 9:16 preview on the
+posting screen; and the posted file's own duration against the kept clips, read
+live at the moment **Next** is tapped rather than from a number captured before
+the last cut. Then the same editor on a smaller Android viewport — one clip still
+gets a timeline, because that is where its trim handles are, and a second clip
+makes the two-clip project the three-clip run never passes through — and Retake on
+the only clip going back to the camera rather than leaving an editor with nothing
+in it.
+
+**The posted duration, and what makes it drift.** `playInto` writes output frames
+on a wall-clock `setInterval` at `OUTPUT_FPS` while the source plays in real time,
+so the file's length is the WALL-CLOCK time the pass took, not the source time it
+covered. Anything that competes for the decoder pulls those apart in both
+directions: a throttled timer writes fewer frames than seconds elapsed and the
+file comes out short, a stalled source gets the same frame written repeatedly and
+it comes out long. Measured on one unchanged 6.90s project, before the editor's
+frame grabs were made abortable: **8.78s, 5.78s, 5.01s, 6.05s, 9.23s, 8.65s,
+3.49s** — 128%, 84%, 73%, 88%, 134%, 124%, 51%, against a `[80%, +0.5s]` band.
+
+Most of that was the editor's own doing. `useClipFrames` reads six frames per
+clip, and leaving the editor is exactly the moment `renderClips` starts — so a
+strip still seeking in the background was competing with a real-time pass for the
+same decoder. `framesFrom` now takes an `AbortSignal`, checked between every
+frame, and the hook aborts on cleanup. Same project, same machine, afterwards:
+**7.38s and 6.75s** — 107% and 98%.
+
+What remains is the pacing itself, which is still wall-clock and so still drifts
+under load. The fix for that is to pace the output on the source's own progress
 (`round((currentTime - trimStart) * OUTPUT_FPS)` frames written so far, catching
-up on each tick) instead of on the clock, which makes the file exactly as long as
-the kept source whatever the timer does. Not applied here: this branch was asked
-to leave the render alone.
+up on each tick) instead of on the clock, which would make the file exactly as
+long as the kept source whatever the timer does. Not applied: it changes the
+render for every post, and nobody has asked for that yet.
 
 **The tappable part of the video is a flex sibling, not a percentage.** A
 tap-to-play region of `inset-0` put its own centre underneath the editing panel,

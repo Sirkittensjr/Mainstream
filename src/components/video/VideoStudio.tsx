@@ -663,9 +663,27 @@ export function VideoStudio({
           // than posted as the pre-trim version.
           setFinished(null);
         }}
+        onPatchClip={(id, patch) => {
+          setClips((current) => updateClip(current, id, patch));
+          setFinished(null);
+        }}
         onMuted={setMutedOnPost}
         onOverlays={setOverlays}
         onAddClip={left > 0.5 ? () => setRecording(true) : undefined}
+        onDeleteClip={(id) => {
+          // Computed out here rather than inside the updater: an updater can be
+          // called twice, and moving the whole screen twice is not idempotent.
+          const kept = clips.filter((entry) => entry.id !== id);
+          setClips(kept);
+          setFinished(null);
+          // Deleting the only clip leaves nothing to edit, so it goes back to the
+          // camera rather than to an empty editor — the same place Retake lands,
+          // because it is the same situation.
+          if (kept.length === 0) {
+            setMobileStage('camera');
+            setRecording(true);
+          }
+        }}
         onRetake={() => {
           // Going back past a take means that take is being redone, so it is
           // dropped — the LAST one, which is the one just filmed. Keeping it and
