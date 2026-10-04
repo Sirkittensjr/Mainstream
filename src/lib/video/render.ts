@@ -1,4 +1,4 @@
-import { type Clip, clipDuration, outputSize, totalDuration } from './clips';
+import { type Clip, clipDuration, outputFrame, totalDuration } from './clips';
 import { loadVideo, seekTo } from './capture';
 
 /**
@@ -71,6 +71,14 @@ export function canRender(): boolean {
   );
 }
 
+/**
+ * Frames per second of the finished video.
+ *
+ * The number the muxer is told and the number the render actually delivers have
+ * to be the same one, or the file comes out the wrong length — see `playInto`.
+ */
+export const OUTPUT_FPS = 30;
+
 export class RenderUnsupportedError extends Error {
   constructor() {
     super('This browser cannot combine video clips. Post a single clip, or try another browser.');
@@ -83,7 +91,7 @@ function drawFrame(
   context: CanvasRenderingContext2D,
   video: HTMLVideoElement,
   clip: Clip,
-  output: { width: number; height: number },
+  output: { width: number; height: number; fit: 'cover' | 'contain' },
 ): void {
   context.fillStyle = '#000';
   context.fillRect(0, 0, output.width, output.height);
@@ -103,9 +111,14 @@ function drawFrame(
   const boxWidth = upright ? output.width : output.height;
   const boxHeight = upright ? output.height : output.width;
 
-  // Contain, never cover: a clip that is a different shape from the first one
-  // gets bars rather than having its edges cut off without being asked.
-  const scale = Math.min(boxWidth / sourceWidth, boxHeight / sourceHeight);
+  // One scale for both axes either way, which is what "never stretched" means.
+  // `cover` fills the frame and lets the overflow fall outside it — a centre
+  // crop; `contain` fits the whole picture inside and leaves bars. Which one is
+  // the frame's own decision: see `outputFrame`.
+  const scale =
+    output.fit === 'cover'
+      ? Math.max(boxWidth / sourceWidth, boxHeight / sourceHeight)
+      : Math.min(boxWidth / sourceWidth, boxHeight / sourceHeight);
   const drawWidth = sourceWidth * scale;
   const drawHeight = sourceHeight * scale;
 
@@ -128,7 +141,7 @@ export async function renderClips(clips: Clip[], options: RenderOptions = {}): P
   const mimeType = pickMimeType();
   if (!canRender() || !mimeType) throw new RenderUnsupportedError();
 
-  const output = outputSize(clips);
+  const output = outputFrame(clips);
   const total = totalDuration(clips);
 
   const canvas = document.createElement('canvas');
@@ -147,8 +160,32 @@ export async function renderClips(clips: Clip[], options: RenderOptions = {}): P
   // Resuming needs the click that started the render, which is what we are in.
   if (audio?.state === 'suspended') await audio.resume();
 
+  /**
+   * A frame reaches the encoder when one has been DRAWN, not on a timer.
+   *
+   * `captureStream(OUTPUT_FPS)` samples the canvas on a timer whether or not
+   * a new frame is ready, and the output's length is however many frames arrived
+   * divided by that declared rate. So a canvas the machine cannot repaint thirty
+   * times a second produces a SHORT video — the same content, played fast.
+   * Measured when the vertical frame went from 608x1080 to 1080x1920: three clips
+   * totalling 7.6s posted as 5.89s, 77% of the frames and 77% of the length.
+   *
+   * `captureStream(0)` produces a frame only when asked, each stamped with the
+   * real time it was asked for, so a slow repaint costs frame rate and never
+   * duration. Where `requestFrame` is missing the old behaviour is the fallback,
+   * because a video that is slightly fast beats no video at all.
+   */
+  type OnDemandTrack = MediaStreamTrack & { requestFrame?: () => void };
+  let videoTrack = canvas.captureStream(0).getVideoTracks()[0] as OnDemandTrack | undefined;
+  const requestFrame: (() => void) | null =
+    typeof videoTrack?.requestFrame === 'function' ? () => videoTrack?.requestFrame?.() : null;
+  if (!requestFrame) {
+    videoTrack?.stop();
+    videoTrack = canvas.captureStream(OUTPUT_FPS).getVideoTracks()[0] as OnDemandTrack | undefined;
+  }
+
   const stream = new MediaStream([
-    ...canvas.captureStream(30).getVideoTracks(),
+    ...(videoTrack ? [videoTrack] : []),
     ...(audioDestination ? audioDestination.stream.getAudioTracks() : []),
   ]);
 
@@ -211,6 +248,8 @@ export async function renderClips(clips: Clip[], options: RenderOptions = {}): P
 
       await playInto(video, clip, () => {
         drawFrame(context, video, clip, output);
+        // The drawn frame is the frame: see the captureStream note above.
+        requestFrame?.();
         produced = startedAt + Math.min(length, video.currentTime - clip.trimStart);
         options.onProgress?.({
           seconds: produced,
@@ -259,40 +298,58 @@ function playInto(
     const stop = () => {
       if (stopped) return;
       stopped = true;
+      window.clearInterval(timer);
       video.removeEventListener('ended', stop);
       resolve();
     };
 
     const abort = () => {
       stopped = true;
+      window.clearInterval(timer);
       video.removeEventListener('ended', stop);
       reject(new DOMException('Cancelled', 'AbortError'));
     };
     signal?.addEventListener('abort', abort, { once: true });
 
-    const withFrameCallback = (
-      video as HTMLVideoElement & {
-        requestVideoFrameCallback?: (callback: () => void) => number;
-      }
-    ).requestVideoFrameCallback?.bind(video);
+    /**
+     * A steady OUTPUT_FPS, not one draw per source frame.
+     *
+     * This used to draw on `requestVideoFrameCallback`, which fires once per
+     * frame the SOURCE presents — so the output got as many frames per second as
+     * the source had, and no more. Chromium's MP4 muxer assumes a fixed rate, so
+     * a 22fps source produced a file 22/30ths of its real length: the whole video
+     * slightly sped up. Measured on three clips totalling 7.65s, posted as 5.74s.
+     *
+     * Sampling the element on a timer instead means a second of wall clock is
+     * always OUTPUT_FPS frames, whatever the source's rate, and the file comes
+     * out the length it was played for. Drawing the same source frame twice
+     * costs a drawImage and nothing else.
+     */
+    const period = 1000 / OUTPUT_FPS;
+    let timer = 0;
+
+    const finish = () => {
+      window.clearInterval(timer);
+      stop();
+    };
 
     const tick = () => {
       if (stopped) return;
-      if (signal?.aborted) return;
-      onFrame();
-      if (video.currentTime >= clip.trimEnd - 0.02 || video.ended) {
-        stop();
+      if (signal?.aborted) {
+        window.clearInterval(timer);
         return;
       }
-      if (withFrameCallback) withFrameCallback(tick);
-      else requestAnimationFrame(tick);
+      onFrame();
+      if (video.currentTime >= clip.trimEnd - 0.02 || video.ended) finish();
     };
 
     video.addEventListener('ended', stop);
     video.play().then(
       () => {
-        if (withFrameCallback) withFrameCallback(tick);
-        else requestAnimationFrame(tick);
+        // One frame straight away, so a clip shorter than a frame interval is
+        // still represented, then the steady rate.
+        tick();
+        timer = window.setInterval(tick, period);
       },
       () => reject(new Error('The browser would not play this clip back.')),
     );

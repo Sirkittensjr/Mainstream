@@ -10,6 +10,7 @@ import {
   moveClip,
   needsRender,
   normaliseClip,
+  outputFrame,
   outputSize,
   remainingSeconds,
   totalDuration,
@@ -128,11 +129,49 @@ describe('the shape of the finished video', () => {
     assert.deepEqual(outputSize([clip()]), { width: 1080, height: 608 });
   });
 
-  it('keeps a phone clip tall', () => {
+  /**
+   * The vertical frame, and the number that used to be wrong. Scaling the LONG
+   * edge to 1080 turned a 1080x1920 recording into a 608x1080 post — barely more
+   * than half the width it was filmed at.
+   */
+  it('renders an upright clip into the full 1080x1920 frame', () => {
     assert.deepEqual(outputSize([clip({ sourceWidth: 1080, sourceHeight: 1920 })]), {
-      width: 608,
-      height: 1080,
+      width: 1080,
+      height: 1920,
     });
+  });
+
+  it('and takes a smaller upright clip up to the same frame', () => {
+    assert.deepEqual(outputSize([clip({ sourceWidth: 720, sourceHeight: 1280 })]), {
+      width: 1080,
+      height: 1920,
+    });
+  });
+
+  it('fills the vertical frame rather than letterboxing into it', () => {
+    assert.equal(outputFrame([clip({ sourceWidth: 1080, sourceHeight: 1920 })]).fit, 'cover');
+  });
+
+  it('a 3:4 portrait clip is cropped to fit, never stretched', () => {
+    const frame = outputFrame([clip({ sourceWidth: 1080, sourceHeight: 1440 })]);
+    assert.deepEqual({ width: frame.width, height: frame.height }, { width: 1080, height: 1920 });
+    assert.equal(frame.fit, 'cover');
+  });
+
+  /** A landscape upload is somebody else's video, not a vertical post. */
+  it('leaves a landscape project its own shape, and letterboxes into it', () => {
+    const frame = outputFrame([clip()]);
+    assert.deepEqual({ width: frame.width, height: frame.height }, { width: 1080, height: 608 });
+    assert.equal(frame.fit, 'contain');
+  });
+
+  it('the first clip decides, so a landscape first clip keeps a tall one out', () => {
+    const frame = outputFrame([clip(), clip({ sourceWidth: 1080, sourceHeight: 1920 })]);
+    assert.equal(frame.height, 608);
+  });
+
+  it('an empty project is still a vertical frame', () => {
+    assert.deepEqual(outputSize([]), { width: 1080, height: 1920 });
   });
 
   it('keeps a square clip square', () => {

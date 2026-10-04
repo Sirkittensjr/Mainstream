@@ -508,28 +508,39 @@ another suite make it fail on a count, not on a fault.
 
 ### 4d. Several clips, one video — `multi-clip-flow.mjs`
 
-Record a clip, tap **Another**, record a second, tap **Continue**, and the editor
-must treat the two as ONE project: clip 1 plays, clip 2 takes over by itself, each
-clip trims on its own, and the posted file is both trimmed clips in order.
+Record 3s, stop, record 4s, stop, record 5s, tap **Next**, and the editor must
+treat the three as ONE project: all three arrive, clip 1 plays and clip 2 takes
+over by itself, each clip trims on its own while the others survive, and the
+posted file is all three trimmed clips in order at 1080x1920.
+
+The camera keeps itself open between segments, so stopping one is not a decision
+to stop filming and **Next** (`data-camera-next`) is the only way out. The suite
+asserts that too — a first segment that dropped somebody into the editor would
+make a second one impossible.
 
 ```bash
 OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
   node scripts/e2e/multi-clip-flow.mjs
 ```
 
-**What was wrong, and why the bug was invisible from the backend.**
-`renderClips` has always walked `clips` in order, seeking to each one's
-`trimStart` and playing to its `trimEnd`, so the FILE that got posted was always
-correct. The editor was the problem:
+**What was wrong, and where.** Not in the camera and not in the backend. The
+camera accumulates segments correctly — `addSource` appends with a functional
+`setClips`, so takes cannot race each other away — and `renderClips` has always
+walked `clips` in order, seeking to each one's `trimStart` and playing to its
+`trimEnd`, so the FILE that got posted was always the whole project. The handoff
+into the editor was the problem, two props wide:
 
 ```
+clip={clips[0]}                                   // one clip, not the array
+src={previewUrl ?? clips[0].src}                  // and previewUrl is...
 previewUrl = finished?.previewUrl ?? (clips.length === 1 ? clips[0].src : null)
 ```
 
-With two or more clips and no render yet that is `null`, the editor fell back to
-`clips[0].src`, and trimming only ever patched `clips[0]`. So a three-clip project
-played its first clip on a loop, offered one set of trim handles, and the panel
-said as much — "trimming a single clip is on the desktop editor".
+With two or more clips and no render yet that `previewUrl` is `null`, so the
+editor fell back to `clips[0].src` and `onTrim` only ever patched `clips[0]`. A
+three-clip project played take one on a loop, offered one set of trim handles, and
+said so in its own panel — "trimming a single clip is on the desktop editor".
+The editor takes `clips={clips}` now and trims by clip id.
 
 **Why not just render first and preview that.** The render pass is real time. A
 90-second project would cost 90 seconds of waiting before the first frame, and
@@ -552,6 +563,17 @@ PASS  the second clip takes over on its own  — slot 0 -> 1
 PASS  and it is a different file, not the same one replayed  — b3eb9f86 -> b3700d5e
 PASS  the handover happens near the join rather than late  — crossed at 4.05s
 ```
+
+**The output frame.** A project that starts upright renders to **1080x1920**, and
+the suite reads the posted media's own width and height back to prove it. This
+used to scale the LONG edge to 1080, so a 1080x1920 recording came out 608x1080 —
+a vertical post rendered at little more than half the width it was filmed at.
+Clips FILL that frame: a 9:16 recording fills it exactly, and anything wider is
+centre-cropped rather than letterboxed, because bars baked down a vertical post
+look like a mistake. A project that starts LANDSCAPE keeps its own shape and
+letterboxes into it, because somebody uploading a 16:9 video from a desktop did
+not ask for two thirds of its width to be thrown away. Either way one scale is
+applied to both axes, which is what "never stretched" means. See `outputFrame`.
 
 Also covered: the editor filling the viewport with the video `object-contain` so
 nothing is stretched; the controls overlaying the lower part rather than pushing

@@ -104,13 +104,19 @@ async function openShelf(page, shelf) {
   });
 }
 
-/** Records for `seconds`, then stops and waits for the review screen. */
+/**
+ * Records for `seconds`, then stops and comes back to the viewfinder.
+ *
+ * Stopping no longer ends the session: the camera stays open for the next
+ * segment and Next is the only way out, so there is no per-take review screen to
+ * wait for any more.
+ */
 async function record(page, seconds) {
   await page.locator('button[aria-label="Start recording"]').click();
   await page.waitForSelector('button[aria-label="Stop recording"]', { timeout: 15000 });
   await wait(seconds * 1000);
   await page.locator('button[aria-label="Stop recording"]').click();
-  await page.waitForSelector('video[data-recorder-playback]', { timeout: 15000 });
+  await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 15000 });
 }
 
 /** How far down the page anything overflows sideways — 0 on a good phone layout. */
@@ -383,126 +389,74 @@ async function run() {
     }),
   );
   await page.locator('button[aria-label="Stop recording"]').click();
-  await page.waitForSelector('video[data-recorder-playback]', { timeout: 15000 });
+  await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 15000 });
 
-  check('recording stops and the take is shown back', true);
+  check('recording stops and the camera is ready for the next segment', true);
 
-  /* ========================== the review ========================== */
-  section('WATCH IT BACK, THEN RE-RECORD');
+  /* ===================== the camera keeps the session ===================== */
+  section('STOPPING IS NOT LEAVING');
 
-  const playback = page.locator('video[data-recorder-playback]');
-  check('the take is on screen', (await playback.count()) === 1);
-  const shape = await playback.evaluate((v) => {
-    const box = v.getBoundingClientRect();
-    return {
-      width: box.width,
-      height: box.height,
-      fit: getComputedStyle(v).objectFit,
-      vw: window.innerWidth,
-      vh: window.innerHeight,
-    };
-  });
+  // There is no per-take review screen any more. Releasing the shutter ends a
+  // SEGMENT, the camera stays open, and Next is the only way out — so a second
+  // and third clip are reachable without going back for them. This section used
+  // to test that review screen; it tests the strip that replaced it.
   check(
-    'and it takes the whole screen',
-    shape.width >= shape.vw - 1 && shape.height >= shape.vh - 1,
-    `${Math.round(shape.width)}x${Math.round(shape.height)} in ${shape.vw}x${shape.vh}`,
+    'the viewfinder is still up after a take',
+    (await page.locator('button[aria-label="Start recording"]').count()) === 1 &&
+      (await page.locator('[data-editor-fullscreen]').count()) === 0,
+  );
+  const strip = await page.locator('[data-camera-clips]').innerText();
+  check('and it says what has been filmed', /clip/i.test(strip), strip.replace(/\n/g, ' '));
+  check(
+    'with a way to throw the last one away',
+    (await page.locator('[data-camera-drop-last]').count()) === 1,
   );
   check(
-    'without cropping it — this is the thing being judged',
-    shape.fit === 'contain',
-    shape.fit,
-  );
-  const takeLength = await playback.evaluate((v) => v.duration);
-  check(
-    'and it is about as long as it was recorded for',
-    !Number.isFinite(takeLength) || (takeLength > 1 && takeLength < 9),
-    String(takeLength),
+    'and a Next to leave with',
+    (await page.locator('[data-camera-next]').count()) === 1,
   );
 
-  // Play, then pause. A recording's duration is Infinity until the browser has
-  // been made to work one out, and until then the element will not play — so the
-  // tap handler settles it first and this waits for that to happen.
-  await page.locator('button[aria-label="Play"]').click();
-  await page.waitForFunction(
-    () => {
-      const video = document.querySelector('video[data-recorder-playback]');
-      return Boolean(video && !video.paused && video.currentTime > 0);
-    },
-    undefined,
-    { timeout: 10000 },
-  ).catch(() => undefined);
+  // A second segment, then drop it: the strip must go back to one clip.
+  // `addSource` probes the recording for its duration before appending, so the
+  // strip catches up a moment after the shutter — reading it straight away sees
+  // the count from before.
+  await record(page, 2);
+  const grew = await page
+    .waitForFunction(
+      () => /2 clips/i.test(document.querySelector('[data-camera-clips]')?.textContent ?? ''),
+      undefined,
+      { timeout: 15000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  const two = await page.locator('[data-camera-clips]').innerText();
   check(
-    'it plays',
-    await playback.evaluate((v) => !v.paused && v.currentTime > 0),
-    `paused=${await playback.evaluate((v) => v.paused)} t=${await playback.evaluate((v) => v.currentTime.toFixed(2))} duration=${await playback.evaluate((v) => String(v.duration))}`,
+    'a second segment is added rather than replacing the first',
+    grew,
+    two.replace(/\n/g, ' '),
   );
+  await page.locator('[data-camera-drop-last]').click();
+  await page
+    .waitForFunction(
+      () => !/2 clips/i.test(document.querySelector('[data-camera-clips]')?.textContent ?? ''),
+      undefined,
+      { timeout: 10000 },
+    )
+    .catch(() => undefined);
+  const back = await page.locator('[data-camera-clips]').innerText();
   check(
-    'and its length is known by then, not Infinity',
-    await playback.evaluate((v) => Number.isFinite(v.duration) && v.duration > 0),
-    String(await playback.evaluate((v) => v.duration)),
-  );
-  await page.locator('button[aria-label="Pause"]').click();
-  await wait(300);
-  check('and pauses', await playback.evaluate((v) => v.paused));
-
-  // The WHOLE take has to be watchable, which means somewhere to drag.
-  const scrub = page.locator('[data-review-scrub]');
-  check('there is a scrubber', (await scrub.count()) === 1);
-  check(
-    'that covers the whole recording',
-    await scrub.evaluate((input, length) => {
-      const max = Number(input.max);
-      return Number.isFinite(length) ? Math.abs(max - length) < 0.5 : max > 0;
-    }, await playback.evaluate((v) => v.duration)),
-    `max=${await scrub.getAttribute('max')}`,
-  );
-  await setRange(scrub, 2);
-  await wait(500);
-  check(
-    'and dragging it moves the video',
-    await playback.evaluate((v) => Math.abs(v.currentTime - 2) < 0.6),
-    `t=${await playback.evaluate((v) => v.currentTime.toFixed(2))}`,
-  );
-  check(
-    'the review screen does not scroll sideways',
-    (await sideways(page)) === 0,
-    `${await sideways(page)}px`,
-  );
-  check(
-    'the scrubber meets the 44px the rest of the app uses',
-    await scrub.evaluate((i) => i.getBoundingClientRect().height >= 44),
-    `${Math.round(await scrub.evaluate((i) => i.getBoundingClientRect().height))}px`,
+    'and dropping the last one leaves the first',
+    !/2 clips/i.test(back),
+    back.replace(/\n/g, ' '),
   );
 
-  // Sound. The recording has audio, so being able to silence the playback is
-  // the control that matters here.
-  const sound = page.locator('[data-review-sound]');
-  check('there is a sound control', (await sound.count()) === 1);
-  check('and it starts with sound on', (await sound.getAttribute('data-review-sound')) === 'on');
-  await sound.click();
-  await wait(300);
+  // The cover is still reachable from the camera, and still goes to the editing
+  // stage opened on the right tool.
   check(
-    'turning it off mutes the playback',
-    (await sound.getAttribute('data-review-sound')) === 'off' &&
-      (await playback.evaluate((v) => v.muted)),
+    'a cover can be chosen from the camera',
+    (await page.locator('button[aria-label="Choose the cover"]').count()) === 1,
   );
-  await sound.click();
-  await wait(300);
-  check(
-    'and it comes back on',
-    (await sound.getAttribute('data-review-sound')) === 'on' &&
-      !(await playback.evaluate((v) => v.muted)),
-  );
-
-  // Choosing a cover is offered from here, not only from the posting screen —
-  // and it has to actually land there, with the cover editor in view rather
-  // than somewhere below the fold. There is ONE cover implementation; this is a
-  // way into it, not a second copy of it.
-  check(
-    'a cover can be chosen from the review screen',
-    (await page.locator('button', { hasText: 'Cover' }).count()) >= 1,
-  );
-  await page.locator('button', { hasText: 'Cover' }).click();
+  await page.locator('button[aria-label="Choose the cover"]').click();
   await page.waitForSelector('[data-editor-fullscreen]', { timeout: 20000 });
   check(
     'tapping Cover goes to the editing stage, opened on the cover tool',
@@ -515,37 +469,19 @@ async function run() {
     'the frame scrubber is there, so there is a video to cover',
   );
 
-  // Back to the camera to carry on through the ordinary path.
+  // Retake drops the clip it goes back past, so the camera is empty again.
   await page.locator('[data-editor-retake]').click();
-  await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 25000 });
+  await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 20000 });
   check('Retake returns to the camera', true);
+
   await record(page, 3);
-  check('and a take can be made again', (await playback.count()) === 1);
-
-  // The camera light must be off while watching a take back.
-  check(
-    'the camera is released while the take is being watched',
-    await page.evaluate(() => {
-      const live = document.querySelector('video:not([data-recorder-playback])');
-      return !live || !live.srcObject;
-    }),
-  );
-
-  // Back to the camera: the first take is thrown away and a new one can be made.
-  await page.locator('button[aria-label="Back to the camera"]').click();
-  await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 25000 });
-  check('back goes to the camera to re-record', true);
-  await record(page, 3);
-  check('and a second take can be made', (await playback.count()) === 1);
-
-  await page.locator('button', { hasText: 'Continue' }).click();
+  await page.locator('[data-camera-next]').click();
   await page.waitForSelector('[data-editor-fullscreen]', { timeout: 20000 });
-  check('Continue leaves the camera for the editing stage', true);
-  // Retake dropped the take it went back past, so this is one clip and not two.
+  check('Next leaves the camera for the editing stage', true);
   check(
-    'the retaken take replaced the first rather than adding to it',
-    !/2 clips/.test(await page.locator('body').innerText()),
-    'one clip, not two',
+    'with the one clip that was filmed',
+    (await page.locator('[data-editor-clip]').count()) === 0,
+    'one clip needs no strip',
   );
 
   /* ========================= stage 2: editing ========================= */
@@ -741,10 +677,13 @@ async function run() {
     await page.locator('#thumbnail').evaluate((i) => i.getBoundingClientRect().height >= 40),
   );
 
-  // The posting screen a phone opens on: the video, a caption, a cover, a
-  // content warning, Post. Everything else is folded away rather than removed.
+  // The posting screen a phone opens on: the video, a caption, hashtags, a
+  // cover, a content warning, Post. Everything else is folded away rather than
+  // removed. Hashtags used to be in that folded set as a comma-separated string;
+  // they are a field of their own now, so they are expected to be ON SCREEN and
+  // are not in this list.
   const visibleOnArrival = await page.evaluate(() =>
-    ['#video-caption', '#video-category', '#video-tags'].filter((id) => {
+    ['#video-caption', '#video-category'].filter((id) => {
       const element = document.querySelector(id);
       return element && element.offsetParent !== null;
     }),
@@ -753,6 +692,13 @@ async function run() {
     'the extra fields are folded away on a phone',
     visibleOnArrival.length === 0,
     visibleOnArrival.join(', ') || 'none showing',
+  );
+  check(
+    'hashtags have a field of their own on the posting screen',
+    await page.evaluate(() => {
+      const field = document.querySelector('#video-tags');
+      return Boolean(field && field.offsetParent !== null);
+    }),
   );
   check(
     'and reachable, not removed',
@@ -1019,7 +965,7 @@ async function run() {
   await page.goto('/create/video', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 25000 });
   await record(page, 6);
-  await page.locator('button', { hasText: 'Continue' }).click();
+  await page.locator('[data-camera-next]').click();
   await page.waitForSelector('[data-editor-trim="end"]', { timeout: 20000 });
 
   const fullLength = Number(await page.locator('[data-editor-trim="end"]').getAttribute('max'));

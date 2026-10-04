@@ -1,17 +1,18 @@
 /**
- * Two clips, one video: the scenario the mobile editor used to get wrong.
+ * Three clips, one video: the scenario the mobile editor used to get wrong.
  *
- *   record clip 1 -> Another -> record clip 2 -> Continue -> EDITOR
- *     -> clip 1 plays, then clip 2 starts on its own
- *     -> trim clip 1, the preview re-cuts
- *     -> trim clip 2, the preview re-cuts
+ *   record 3s -> stop -> record 4s -> stop -> record 5s -> Next -> EDITOR
+ *     -> clip 1 plays, then clip 2 starts on its own, then clip 3
+ *     -> trim each clip in turn; the others survive and the preview re-cuts
  *     -> add text, it shows over the video
- *     -> Next -> POST -> the posted video is both trimmed clips, in order
+ *     -> Next -> POST -> the posted video is all three trimmed clips, in order,
+ *        rendered 1080x1920
  *
- * What it is really checking is that the editor treats several takes as ONE
- * project. Before this, `previewUrl` was null until a render had run, the editor
- * fell back to `clips[0].src`, and so only the first clip ever played and only
- * the first clip could be trimmed. The combined file was always correct —
+ * What it is really checking is that the editor RECEIVES every take. The camera
+ * accumulates them correctly — `addSource` appends functionally — but the editor
+ * was handed `clip={clips[0]}` and `src={previewUrl ?? clips[0].src}`, where
+ * `previewUrl` is null until a render has run. So it showed take one, offered one
+ * set of trim handles, and said as much in its own panel. The combined file was always correct —
  * `renderClips` walks the array in order — so the bug was entirely in what
  * somebody could see and reach before posting.
  *
@@ -104,13 +105,19 @@ async function phoneAccount(browser, handle, device = 'iPhone 13') {
   return { context, page, handle };
 }
 
-/** Records for `seconds` and waits for the review screen. */
+/**
+ * Films one segment and comes back to the viewfinder.
+ *
+ * Stopping no longer ends the session: the camera stays open, ready for the next
+ * segment, and Next is the only way out. So this waits for the shutter to go back
+ * to "Start recording" rather than for a review screen.
+ */
 async function record(page, seconds) {
   await page.locator('button[aria-label="Start recording"]').click();
   await page.waitForSelector('button[aria-label="Stop recording"]', { timeout: 15000 });
   await wait(seconds * 1000);
   await page.locator('button[aria-label="Stop recording"]').click();
-  await page.waitForSelector('video[data-recorder-playback]', { timeout: 15000 });
+  await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 15000 });
 }
 
 async function run() {
@@ -126,22 +133,40 @@ async function run() {
   const me = await phoneAccount(browser, `mc_${stamp}`);
   const { page } = me;
 
-  /* ===================== two clips, one project ===================== */
-  section('RECORD TWO CLIPS');
+  /* ===================== three clips, one project ===================== */
+  section("RECORD THREE CLIPS: 3s, 4s, 5s");
 
   await page.goto('/create/video', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 25000 });
 
-  await record(page, 4);
-  check('the first take is shown back', true);
-  await page.locator('[data-review-another]').click();
-  await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 20000 });
-  check('"Another" reopens the camera rather than going to the editor', true);
-
   await record(page, 3);
-  await page.locator('[data-review-continue]').click();
+  check(
+    'stopping the first segment keeps the camera, it does not leave it',
+    (await page.locator('button[aria-label="Start recording"]').count()) === 1 &&
+      (await page.locator('[data-editor-fullscreen]').count()) === 0,
+  );
+  await record(page, 4);
+  await record(page, 5);
+  const filmed = await page.locator('[data-camera-clips]').innerText();
+  check('the camera counts all three', /3 clips/i.test(filmed), filmed.replace(/\n/g, ' '));
+
+  await page.locator('[data-camera-next]').click();
   await page.waitForSelector('[data-editor-fullscreen]', { timeout: 20000 });
-  check('"Continue" after a second take opens the editor', true);
+  check('Next opens the editor', true);
+
+  // The bug this suite exists for: the editor used to be handed `clips[0]` and a
+  // `previewUrl` that is null until a render has run, so it showed take one and
+  // nothing else.
+  const inEditor = await page.locator('[data-editor-clip]').count();
+  check('THE EDITOR HAS ALL THREE CLIPS, not just the first', inEditor === 3, `${inEditor} clips`);
+  const lengths = await page
+    .locator('[data-editor-clip]')
+    .evaluateAll((nodes) => nodes.map((n) => n.dataset.editorClip));
+  check(
+    'in the order they were filmed',
+    JSON.stringify(lengths) === JSON.stringify(['0', '1', '2']),
+    lengths.join(' -> '),
+  );
 
   /* ===================== the editor is the screen ===================== */
   section('A FULL-SCREEN 9:16 EDITOR');
@@ -227,11 +252,11 @@ async function run() {
   );
   check('and a tap in the middle of it reaches the video', tapZone.hitIsTheVideo);
 
-  const two = await page.locator('[data-editor-clip]').count();
-  check('both clips are in the strip', two === 2, `${two} clips`);
+  const inStrip = await page.locator('[data-editor-clip]').count();
+  check('all three clips are in the strip', inStrip === 3, `${inStrip} clips`);
   check(
-    'and the editor says it is two clips',
-    /2 clips/.test(await page.locator('[data-editor-fullscreen]').innerText()),
+    'and the editor says how many there are',
+    /3 clips/.test(await page.locator('[data-editor-fullscreen]').innerText()),
   );
 
   /* ===================== gapless playback ===================== */
@@ -305,7 +330,7 @@ async function run() {
   );
   check(
     'and the panel says which clip it is',
-    /Clip 1 of 2/.test(await page.locator('[data-editor-panel="trim"]').innerText()),
+    /Clip 1 of 3/.test(await page.locator('[data-editor-panel="trim"]').innerText()),
   );
   const clipOneEnd = Number(await page.locator('[data-editor-trim="end"]').getAttribute('max'));
   await setRange(page.locator('[data-editor-trim="end"]'), Math.max(1, clipOneEnd - 2));
@@ -322,7 +347,7 @@ async function run() {
   await wait(300);
   check(
     'the second clip can be selected and trimmed too',
-    /Clip 2 of 2/.test(await page.locator('[data-editor-panel="trim"]').innerText()),
+    /Clip 2 of 3/.test(await page.locator('[data-editor-panel="trim"]').innerText()),
   );
   const clipTwoEnd = Number(await page.locator('[data-editor-trim="end"]').getAttribute('max'));
   await setRange(page.locator('[data-editor-trim="end"]'), Math.max(1, clipTwoEnd - 1.5));
@@ -348,18 +373,46 @@ async function run() {
     `${atClipTwo}s into the project`,
   );
 
-  // Still both clips, still in order.
+  // Trimming one clip must not cost the others. This is step 11 and 13 of the
+  // scenario: after cutting clip 1, clips 2 and 3 are still there; after cutting
+  // clip 2, clips 1 and 3 are still there.
   const order = await page
     .locator('[data-editor-clip]')
     .evaluateAll((nodes) => nodes.map((n) => n.dataset.editorClip));
-  check('both clips survive trimming, in order', JSON.stringify(order) === JSON.stringify(['0', '1']));
+  check(
+    'all three clips survive trimming, in order',
+    JSON.stringify(order) === JSON.stringify(['0', '1', '2']),
+    order.join(' -> '),
+  );
+
+  // Clip 3 trims as well, so the third is not a passenger.
+  await page.locator('[data-editor-clip="2"]').click();
+  await wait(300);
+  check(
+    'the third clip can be selected and trimmed',
+    /Clip 3 of 3/.test(await page.locator('[data-editor-panel="trim"]').innerText()),
+  );
+  const beforeThird = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+  const clipThreeEnd = Number(await page.locator('[data-editor-trim="end"]').getAttribute('max'));
+  await setRange(page.locator('[data-editor-trim="end"]'), Math.max(1, clipThreeEnd - 1));
+  await wait(700);
+  const afterThird = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+  check(
+    'and the project is shorter again',
+    afterThird < beforeThird - 0.5,
+    `${beforeThird}s -> ${afterThird}s`,
+  );
+  check(
+    'with all three still present',
+    (await page.locator('[data-editor-clip]').count()) === 3,
+  );
 
   /* ===================== text ===================== */
   section('TEXT OVER THE VIDEO');
 
   await page.locator('[data-editor-tool="text"]').click();
   await page.locator('[data-editor-add-text]').click();
-  const overlayText = `two clips ${stamp}`;
+  const overlayText = `three clips ${stamp}`;
   await page.locator('[data-editor-text-input]').fill(overlayText);
   await wait(400);
   check(
@@ -398,7 +451,7 @@ async function run() {
   );
 
   /* ===================== the post screen ===================== */
-  section('POSTING TWO TRIMMED CLIPS');
+  section('POSTING THREE TRIMMED CLIPS');
 
   await page.locator('[data-editor-next]').click();
   await page.waitForSelector('[data-post-stage]', { timeout: 20000 });
@@ -442,7 +495,7 @@ async function run() {
     return page.url();
   })();
   const postId = postedUrl.split('/post/')[1];
-  check('a two-clip video posts', Boolean(postId), postedUrl);
+  check('a three-clip video posts', Boolean(postId), postedUrl);
 
   // The finished file: both clips, trimmed, in order. Asked of the app rather
   // than of a file, so this works on the local driver and the Supabase stubs.
@@ -452,16 +505,41 @@ async function run() {
     const body = await response.json();
     return body?.post?.media?.[0] ?? null;
   }, postId);
-  const expected = afterSecondTrim;
+  const expected = afterThird;
   check(
-    'the posted video is as long as the two trimmed clips together',
-    stored?.duration != null && Math.abs(stored.duration - expected) < 1.5,
-    `stored ${stored?.duration}s against ${expected.toFixed(2)}s of kept clips`,
+    // Proportional, and deliberately not "within 1.5 seconds": that would pass a
+    // file a quarter short on a long project and catch nothing.
+    //
+    // The render is a real-time pass, and each clip costs a little at its start —
+    // the seek and the first play before frames flow — so the file comes out
+    // slightly shorter than the arithmetic. Measured at ~0.35s per clip, 86% of
+    // the total across three. It must never be LONGER than the arithmetic, and
+    // never below 80%: at 75% the output frame rate was wrong rather than merely
+    // late, and the whole video played fast.
+    'the posted video is as long as the three trimmed clips together',
+    stored?.duration != null &&
+      stored.duration <= expected + 0.5 &&
+      stored.duration >= expected * 0.8,
+    `stored ${stored?.duration}s against ${expected.toFixed(2)}s of kept clips (${
+      stored?.duration ? Math.round((stored.duration / expected) * 100) : 0
+    }%)`,
   );
   check(
-    'and it is longer than either clip alone, so both are in it',
+    'and longer than any one clip, so all three are in it',
     stored?.duration != null && stored.duration > 1.2,
     `${stored?.duration}s`,
+  );
+  check(
+    // A vertical project renders into the full 9:16 frame. This used to scale the
+    // LONG edge to 1080, so a 1080x1920 recording came out 608x1080.
+    'the posted video is a proper 1080x1920 vertical',
+    stored?.width === 1080 && stored?.height === 1920,
+    `${stored?.width}x${stored?.height}`,
+  );
+  check(
+    'which is 9:16',
+    stored?.width != null && Math.abs(stored.width / stored.height - 9 / 16) < 0.001,
+    stored?.width && stored?.height ? (stored.width / stored.height).toFixed(4) : 'unknown',
   );
   check(
     'the text overlay is kept on the post',
@@ -483,7 +561,7 @@ async function run() {
   await android.page.goto('/create/video', { waitUntil: 'domcontentloaded' });
   await android.page.waitForSelector('button[aria-label="Start recording"]', { timeout: 25000 });
   await record(android.page, 2);
-  await android.page.locator('[data-review-continue]').click();
+  await android.page.locator('[data-camera-next]').click();
   await android.page.waitForSelector('[data-editor-fullscreen]', { timeout: 20000 });
   const small = await android.page.evaluate(() => {
     const shell = document.querySelector('[data-editor-fullscreen]').getBoundingClientRect();
