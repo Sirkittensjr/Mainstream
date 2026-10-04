@@ -592,6 +592,32 @@ of it: the video at `390x664` in a `390x664` viewport, **4% of the frame's heigh
 lost to the crop**, `objectFit: cover`, and the free area above the controls
 reaching `0px`.
 
+**The editor is five bands, and the video is one of them.** Top bar, the open
+clip as a filmstrip of its own frames, the video, the tools, the clips. What this
+replaced put the video full-bleed behind everything and floated the controls over
+its lower third — the largest possible picture, permanently half-covered by the
+thing editing it. Laying the bands out costs width, because a 9:16 box in the
+space left over is about 200px wide on a 390x664 screen, and buys a picture
+nothing is drawn on. The suite measures the band order, that they all fit, that
+the video gets the largest one, and that it is a true 9:16 box met with `cover` —
+the same rule `renderClips` uses, so 0% of the frame is lost to the crop and what
+is on screen is the shape that gets posted.
+
+**A recording is posted at 1080x1920, whatever the sensor gave.** `recordedFile`
+wraps a recording as a File precisely so `needsRender` lets an untouched clip skip
+the render pass — and skipping it posted the camera's own dimensions as the
+finished video. An iPhone hands back **1920x1080** and Chromium's fake device
+**1216x2160**, so the viewfinder's full-screen 9:16 crop was not what got posted,
+and no CSS container downstream can turn a landscape file into a portrait one.
+Clips now carry `fromCamera`, which makes `outputFrame` return the vertical frame
+for them and `needsRender` true unless the recording already is 1080x1920. The
+saving is still taken where it can be — an upload from the camera roll keeps its
+own shape, and a camera that really does give 1080x1920 skips the pass — so it is
+only paid when the frame would otherwise be wrong. mobile-record-flow asserts the
+posted media's own width and height, which is the check that was missing: the
+three-clip suite had always covered the rendered path, and the single untouched
+recording was the one nothing measured.
+
 **The clips are their own frames.** A row of numbered grey boxes is a form; a row
 of the actual frames is an editor, and it is how somebody picks the clip they mean
 — by recognising it, not by remembering that the cat one was third. `useClipFrames`

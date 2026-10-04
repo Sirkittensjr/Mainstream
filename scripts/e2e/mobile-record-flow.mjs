@@ -506,14 +506,28 @@ async function run() {
       (v) => Number(getComputedStyle(v).opacity) > 0.5,
     );
     const box = shown.getBoundingClientRect();
-    return { height: box.height, vh: window.innerHeight, fit: getComputedStyle(shown).objectFit };
+    const tall = (selector) =>
+      document.querySelector(selector)?.getBoundingClientRect().height ?? 0;
+    return {
+      height: box.height,
+      vh: window.innerHeight,
+      fit: getComputedStyle(shown).objectFit,
+      controls: tall('[data-editor-controls]'),
+      clips: tall('[data-editor-strip]'),
+    };
   });
   check(
-    // It is the whole screen now, with the controls laid over it rather than
-    // stacked under it.
-    'the video is the biggest thing on the screen',
-    editPreview.height >= editPreview.vh - 1,
-    `${Math.round(editPreview.height)}px of ${editPreview.vh}`,
+    // It is no longer the whole screen: the editor is five bands and the video
+    // is one of them, so that nothing is laid over the picture. It still gets
+    // the largest band, which is what "the video is the focus" means once the
+    // controls are beside it rather than on top of it.
+    'the video gets the largest band of the screen',
+    editPreview.height >= editPreview.vh * 0.45 &&
+      editPreview.height >= editPreview.controls &&
+      editPreview.height >= editPreview.clips,
+    `${Math.round(editPreview.height)}px of ${editPreview.vh}, against ${Math.round(
+      editPreview.controls,
+    )}px of tools and ${Math.round(editPreview.clips)}px of clips`,
   );
   check(
     // `cover`, and `contain` would be the bug rather than the requirement. A
@@ -532,8 +546,8 @@ async function run() {
     .locator('[data-editor-tool]')
     .evaluateAll((nodes) => nodes.map((node) => node.dataset.editorTool));
   check(
-    'the five tools are Trim, Sound, Text, Cover and Resize',
-    JSON.stringify(tools) === JSON.stringify(['trim', 'sound', 'text', 'cover', 'resize']),
+    'the five tools are Trim, Sound, Text, Cover and Crop',
+    JSON.stringify(tools) === JSON.stringify(['trim', 'sound', 'text', 'cover', 'crop']),
     tools.join(', '),
   );
   const toolSizes = await page
@@ -546,10 +560,19 @@ async function run() {
   );
   check('there is a timeline', (await page.locator('[data-editor-timeline]').count()) === 1);
   check(
-    'and it is thumb-sized',
+    // The FILMSTRIP is what a thumb reaches for: the clip's own frames, dragged
+    // to scrub and carrying the trim grips. The project bar beside it answers a
+    // different question — where am I in the whole video — and is deliberately
+    // slim, because in a five-band editor every pixel it gives back is video.
+    'and the filmstrip it scrubs with is thumb-sized',
     await page
-      .locator('[data-editor-timeline]')
-      .evaluate((i) => i.getBoundingClientRect().height >= 44),
+      .locator('[data-editor-track]')
+      .evaluate((node) => node.getBoundingClientRect().height >= 44),
+    `${Math.round(
+      await page
+        .locator('[data-editor-track]')
+        .evaluate((node) => node.getBoundingClientRect().height),
+    )}px of frames`,
   );
   check('and a clear Next', (await page.locator('[data-editor-next]').count()) === 1);
 
@@ -775,10 +798,35 @@ async function run() {
   const postId = page.url().split('/post/')[1].split(/[?#]/)[0];
   check('the video posts', Boolean(postId), page.url());
 
+  // What the file actually is, which is the whole point of the pass above.
+  const shot = await page.evaluate(async (id) => {
+    const response = await fetch(`/api/v1/posts/${id}`);
+    if (!response.ok) return null;
+    const body = await response.json();
+    const media = body?.post?.media?.[0] ?? null;
+    return media ? { width: media.width, height: media.height } : null;
+  }, postId);
   check(
-    'an untouched recording was NOT re-encoded in the browser',
-    !sawPreparing,
-    'the render pass never ran',
+    // THE BUG THIS GUARDS. Wrapping a recording as a File is what lets an
+    // untouched clip skip the render — and skipping it posted whatever the
+    // sensor handed back. An iPhone hands back 1920x1080 and Chromium's fake
+    // device 1216x2160, so the viewfinder's 9:16 crop was NOT what got posted,
+    // and no CSS downstream can turn a landscape file into a portrait one.
+    'a recording is posted as a real 1080x1920 portrait video',
+    shot?.width === 1080 && shot?.height === 1920,
+    `${shot?.width}x${shot?.height}`,
+  );
+  check(
+    'which is 9:16',
+    shot?.width != null && Math.abs(shot.width / shot.height - 9 / 16) < 0.001,
+  );
+  check(
+    // The saving is still taken where it can be: a camera that really does hand
+    // back 1080x1920 skips the pass, and so does every upload from the camera
+    // roll. It is only paid when the frame would otherwise be wrong.
+    'and the render pass ran only because the camera did not give that frame',
+    sawPreparing,
+    'the pass runs when the sensor frame is not the output frame',
   );
   check(
     'the upload asked the server where to put it',

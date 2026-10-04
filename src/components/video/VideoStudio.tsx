@@ -333,7 +333,7 @@ export function VideoStudio({
 
   /** Turns a file or a recording into a clip, once we know how long it is. */
   const addSource = useCallback(
-    async (source: Blob, label: string, file?: File) => {
+    async (source: Blob, label: string, file?: File, fromCamera = false) => {
       const url = trackUrl(URL.createObjectURL(source));
       let facts;
       try {
@@ -372,6 +372,7 @@ export function VideoStudio({
             rotation: 0,
             volume: 1,
             file,
+            fromCamera,
           }),
         ];
       });
@@ -600,7 +601,9 @@ export function VideoStudio({
           // lib/video/recording.ts.
           const index = clips.length + 1;
           const file = recordedFile(blob, mimeType, index);
-          void addSource(file, `Recording ${index}`, file);
+          // Flagged as filmed here, which is what makes it come out 1080x1920
+          // whatever shape the sensor handed back — see `fromCamera`.
+          void addSource(file, `Recording ${index}`, file, true);
           // And that is all a finished segment does. The camera stays open, on
           // the viewfinder, ready for the next one — releasing the shutter is
           // not a decision to stop filming, and it used to be treated as one.

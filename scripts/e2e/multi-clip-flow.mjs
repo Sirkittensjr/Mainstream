@@ -202,33 +202,71 @@ async function run() {
     `${Math.round(frame.width)}x${Math.round(frame.height)} in ${frame.vw}x${frame.vh}`,
   );
 
-  // The black band came from the LAYOUT, not from anything a CSS patch could
-  // cover: the picture was laid across the whole 390x844 screen with
-  // `object-contain`, and a 9:16 source is WIDER than a 0.46 screen, so it was
-  // fitted by width and left ~150px of black split above and below.
+  // THE BANDS. The editor is no longer a full-bleed video with the controls
+  // floating over its lower third; it is five bands with the video as one of
+  // them, so the picture is never covered by the thing editing it. What that
+  // costs is width — a 9:16 box in the space left over is about 240px wide on a
+  // 390px screen — and the gutters either side are where the cost shows up.
   //
-  // The fix is settled by arithmetic. A full-width 9:16 frame on a 390px phone
-  // wants to be 693px tall against a 664px viewport, so a picture that shares the
-  // height with a toolbar CANNOT be 9:16: putting it in the 390x415 space above
-  // one and covering threw away 40% of the frame, and fitting brought the bands
-  // back. So the picture is the whole screen, met with the same fit the render
-  // uses, and the controls float over its lower part. What to check, then: the
-  // video covering the viewport edge to edge, the free area above the controls
-  // reaching the top of the screen, and the fit matching the export.
+  // The black band this replaced was a different thing entirely: the picture
+  // laid across the whole screen with `object-contain`, fitted by width because
+  // a 9:16 source is wider than a 0.46 screen, leaving ~150px of black above and
+  // below. What is checked now is that the bands are in order and that the
+  // picture meets its own box the way the render meets 1080x1920.
+  const bands = await page.evaluate(() => {
+    const box = (selector) => {
+      const node = document.querySelector(selector);
+      if (!node) return null;
+      const rect = node.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height };
+    };
+    return {
+      top: box('[data-editor-topbar]'),
+      scrub: box('[data-editor-scrub]'),
+      stage: box('[data-editor-stage]'),
+      controls: box('[data-editor-controls]'),
+      clips: box('[data-editor-strip]'),
+      vw: window.innerWidth,
+      vh: window.innerHeight,
+    };
+  });
+  check(
+    'the bands run top bar, filmstrip, video, tools, clips — in that order',
+    bands.top.top <= 1 &&
+      bands.scrub.top >= bands.top.bottom - 1 &&
+      bands.stage.top >= bands.scrub.bottom - 1 &&
+      bands.controls.top >= bands.stage.bottom - 1 &&
+      bands.clips.top >= bands.controls.bottom - 1,
+    [bands.top, bands.scrub, bands.stage, bands.controls, bands.clips]
+      .map((b) => Math.round(b.top))
+      .join(' -> '),
+  );
+  check(
+    'and all of them fit the screen with nothing cut off',
+    bands.clips.bottom <= bands.vh + 1,
+    `clips end at ${Math.round(bands.clips.bottom)}px of ${bands.vh}px`,
+  );
+  check(
+    'the video gets the largest band',
+    bands.stage.height > bands.controls.height &&
+      bands.stage.height > bands.clips.height &&
+      bands.stage.height > bands.scrub.height,
+    `video ${Math.round(bands.stage.height)}px, tools ${Math.round(
+      bands.controls.height,
+    )}px, clips ${Math.round(bands.clips.height)}px`,
+  );
+
   const picture = await page.evaluate(() => {
     const shown = [...document.querySelectorAll('[data-clip-slot]')].find(
       (v) => Number(getComputedStyle(v).opacity) > 0.5,
     );
     const box = shown.getBoundingClientRect();
-    const stage = document.querySelector('[data-editor-stage]').getBoundingClientRect();
-    const chrome = document.querySelector('[data-editor-controls]').getBoundingClientRect();
-    // How much `cover` is cutting off, as a fraction of the source's height.
     const source = shown.videoWidth / shown.videoHeight;
-    const drawn = (box.width / source) / box.height;
+    const drawn = box.width / source / box.height;
     return {
-      box: { top: box.top, width: box.width, height: box.height },
-      stage: { top: stage.top, bottom: stage.bottom, width: stage.width, height: stage.height },
-      chromeTop: chrome.top,
+      ratio: box.width / box.height,
+      width: box.width,
+      height: box.height,
       fit: getComputedStyle(shown).objectFit,
       crop: Number.isFinite(drawn) ? Math.max(0, 1 - 1 / Math.max(1, drawn)) : 1,
       vw: window.innerWidth,
@@ -236,50 +274,30 @@ async function run() {
     };
   });
   check(
-    'the stage starts at the very top — no black band above the video',
-    Math.abs(picture.stage.top) <= 1,
-    `stage top at ${Math.round(picture.stage.top)}px`,
+    // The box IS the output frame, so what is on screen is the shape that gets
+    // posted — not a 16:9 file in a 9:16 container.
+    'the video sits in a true 9:16 box',
+    Math.abs(picture.ratio - 9 / 16) < 0.02,
+    `${picture.ratio.toFixed(3)} wide-to-tall, against ${(9 / 16).toFixed(3)}`,
   );
   check(
-    'and runs down to the toolbar, with no black band below it either',
-    Math.abs(picture.stage.bottom - picture.chromeTop) <= 1,
-    `stage ends at ${Math.round(picture.stage.bottom)}px, toolbar starts at ${Math.round(
-      picture.chromeTop,
-    )}px`,
+    'which is as tall as the band allows',
+    picture.height >= bands.stage.height - 20,
+    `${Math.round(picture.width)}x${Math.round(picture.height)} in a ${Math.round(
+      bands.stage.height,
+    )}px band`,
   );
   check(
-    'the stage is most of the screen, not a card in the middle of it',
-    picture.stage.width >= picture.vw - 1 && picture.stage.height >= picture.vh * 0.6,
-    `${Math.round(picture.stage.width)}x${Math.round(picture.stage.height)} of ${picture.vw}x${
-      picture.vh
-    }`,
-  );
-  check(
-    'the video covers the whole viewport, with no black anywhere',
-    Math.abs(picture.box.top) <= 1 &&
-      picture.box.width >= picture.vw - 1 &&
-      picture.box.height >= picture.vh - 1,
-    `${Math.round(picture.box.width)}x${Math.round(picture.box.height)} in ${picture.vw}x${
-      picture.vh
-    }`,
-  );
-  check(
-    // What `cover` costs on this screen. A 9:16 source in a 390x664 window is
-    // scaled to the width and overflows the height by a few percent: that is the
-    // crop, and it has to stay small or the frame somebody composed is not the
-    // frame that gets posted.
-    'and loses only a few percent of the frame to the crop',
-    picture.crop <= 0.12,
-    `${Math.round(picture.crop * 100)}% of the frame's height cropped`,
-  );
-  check(
-    // Not `contain`, which is what put the bands there. `cover` crops a little
-    // off the sides of a 9:16 source on a taller-than-9:16 screen and stretches
-    // nothing — and it is the rule `outputFrame` renders with, so the preview is
-    // a preview of the file that actually gets posted.
+    // Same rule `outputFrame` renders with, so a landscape recording is
+    // centre-cropped here exactly as it will be in the file.
     'and meets it the same way the render does — cropped, never stretched',
     picture.fit === 'cover',
     picture.fit,
+  );
+  check(
+    'with next to nothing lost to the crop, because the shapes match',
+    picture.crop <= 0.02,
+    `${Math.round(picture.crop * 100)}% of the frame's height cropped`,
   );
   check('the editor does not scroll sideways', (await sideways(page)) === 0);
 
@@ -349,8 +367,9 @@ async function run() {
   const inStrip = await page.locator('[data-editor-clip]').count();
   check('all three clips are in the strip', inStrip === 3, `${inStrip} clips`);
   check(
-    'and the editor says how many there are',
-    /3 clips/.test(await page.locator('[data-editor-fullscreen]').innerText()),
+    'and the editor says which of them is open',
+    /Clip \d of 3/.test(await page.locator('[data-editor-panel="trim"]').innerText()),
+    (await page.locator('[data-editor-panel="trim"]').innerText()).split('\n')[0],
   );
   check(
     'with the clock over the video rather than buried in the controls',
@@ -603,8 +622,14 @@ async function run() {
     (await page.locator('[data-video-text]').innerText()).includes(overlayText),
   );
   check(
-    'and it is drawn in the editor variant, inset clear of the controls',
-    (await page.locator('[data-video-text]').getAttribute('data-video-text-variant')) === 'editor',
+    // `post`, not `editor`. The editor used to draw the words across the whole
+    // screen with its own insets, because the controls covered the lower third
+    // and a bottom-anchored line would have been typed underneath them. The
+    // words now sit inside the 9:16 box, which IS the frame they get posted in,
+    // so the post's own insets are the honest ones: where a line sits here is
+    // where it sits in the finished video.
+    'and it is drawn in the frame it will be posted in',
+    (await page.locator('[data-video-text]').getAttribute('data-video-text-variant')) === 'post',
   );
 
   // Clear of the controls is the point: positioning text you cannot see is not
@@ -687,12 +712,12 @@ async function run() {
   );
 
   /* ===================== the clip's own shape ===================== */
-  section('RESIZE CHANGES THE CLIP, NOT JUST A LABEL');
+  section('CROP CHANGES THE CLIP, NOT JUST A LABEL');
 
-  await page.locator('[data-editor-tool="resize"]').click();
+  await page.locator('[data-editor-tool="crop"]').click();
   await wait(250);
   check(
-    'Resize offers the same shapes the desktop editor does',
+    'Crop offers the same shapes the desktop editor does',
     (await page.locator('[data-editor-shape]').count()) === 5,
     (await page.locator('[data-editor-shape]').allInnerTexts()).join(' / '),
   );
@@ -869,11 +894,19 @@ async function run() {
     (await android.page.locator('[data-editor-handle]').count()) === 2,
   );
   check(
-    'and no black band above the video on this screen either',
+    'and the bands still stack in order on this screen',
     await android.page.evaluate(() => {
-      const stage = document.querySelector('[data-editor-stage]').getBoundingClientRect();
-      const chrome = document.querySelector('[data-editor-controls]').getBoundingClientRect();
-      return Math.abs(stage.top) <= 1 && Math.abs(stage.bottom - chrome.top) <= 1;
+      const box = (selector) => document.querySelector(selector).getBoundingClientRect();
+      const scrub = box('[data-editor-scrub]');
+      const stage = box('[data-editor-stage]');
+      const controls = box('[data-editor-controls]');
+      const clips = box('[data-editor-strip]');
+      return (
+        stage.top >= scrub.bottom - 1 &&
+        controls.top >= stage.bottom - 1 &&
+        clips.top >= controls.bottom - 1 &&
+        clips.bottom <= window.innerHeight + 1
+      );
     }),
   );
 
@@ -904,7 +937,7 @@ async function run() {
     'and the tools still all on screen',
     await android.page.evaluate(
       () =>
-        document.querySelector('[data-editor-tool="resize"]').getBoundingClientRect().bottom <=
+        document.querySelector('[data-editor-tool="crop"]').getBoundingClientRect().bottom <=
         window.innerHeight + 1,
     ),
   );

@@ -42,6 +42,17 @@ export interface Clip {
   volume: number;
   /** Set when the clip came from a file, so an unedited single clip can be posted as-is. */
   file?: File;
+  /**
+   * Filmed here, rather than chosen from the camera roll.
+   *
+   * A recording is a vertical video by intent: the viewfinder is a full-screen
+   * 9:16 crop and that crop is what the person framed. What the sensor hands
+   * back is another matter — it is landscape on an iPhone (1920x1080) and
+   * oversized here (1216x2160) — so this says "make this 1080x1920" rather than
+   * trusting the dimensions that arrived. A file somebody uploaded says nothing
+   * of the sort and keeps its own shape.
+   */
+  fromCamera?: boolean;
 }
 
 export const clipDuration = (clip: Clip): number => Math.max(0, clip.trimEnd - clip.trimStart);
@@ -175,6 +186,8 @@ export function outputFrame(clips: Clip[]): {
 } {
   const first = clips[0];
   if (!first) return { ...VERTICAL_OUTPUT, fit: 'cover' };
+  // Filmed here: 9:16 is what the viewfinder framed, whatever the sensor said.
+  if (first.fromCamera) return { ...VERTICAL_OUTPUT, fit: 'cover' };
   if (isUpright(first)) return { ...VERTICAL_OUTPUT, fit: 'cover' };
 
   const { width, height } = displaySize(first);
@@ -182,6 +195,12 @@ export function outputFrame(clips: Clip[]): {
   // Even numbers: an odd dimension is rejected by some H.264 encoders.
   const even = (value: number) => Math.max(2, Math.round((value * scale) / 2) * 2);
   return { width: even(width), height: even(height), fit: 'contain' };
+}
+
+/** Whether a clip is already exactly the vertical frame, pixel for pixel. */
+export function isOutputFrame(clip: Clip): boolean {
+  const { width, height } = displaySize(clip);
+  return width === VERTICAL_OUTPUT.width && height === VERTICAL_OUTPUT.height;
 }
 
 /** The frame's dimensions alone, for callers that do not care how clips fit it. */
@@ -201,6 +220,13 @@ export function needsRender(clips: Clip[]): boolean {
   if (clips.length !== 1) return true;
   const [clip] = clips;
   if (!clip.file) return true;
+  // A recording that is not already the output frame has to be built, however
+  // untouched it is. Skipping the pass is what posted the camera's own
+  // dimensions — 1920x1080 from an iPhone, 1216x2160 from Chromium's fake
+  // device — as the finished video, and no CSS downstream can turn a landscape
+  // file into a portrait one. This is the one case where the saving is not
+  // worth taking: see `fromCamera`.
+  if (clip.fromCamera && !isOutputFrame(clip)) return true;
   return (
     clip.rotation !== 0 ||
     clip.volume !== 1 ||

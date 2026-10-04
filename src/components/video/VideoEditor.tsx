@@ -20,51 +20,43 @@ import { VideoText } from './VideoText';
 import { cropForRatio } from './ClipEditor';
 import { useClipFrames } from './useClipFrames';
 import { clipDuration, outputFrame, type Clip, type Rotation } from '@/lib/video/clips';
-import { stripWidths, timeline, timelineDuration } from '@/lib/video/playlist';
+import { timeline, timelineDuration } from '@/lib/video/playlist';
 import { formatPreciseSeconds, formatSeconds } from '@/lib/video/limits';
 import { MAX_TEXT_OVERLAYS, MAX_TEXT_OVERLAY_LENGTH, type TextOverlay } from '@/lib/types';
 
 /**
- * The editing stage: a vertical video, its clips, and the tools that change it.
+ * The editing stage: the video, with the editing arranged AROUND it.
  *
- * SHAPED LIKE A VIDEO APP, not like a page with a video on it. The picture is
- * full-bleed behind everything; the controls float over its lower part on a
- * scrim; the clips are shown as their own frames; and no panel ever covers the
- * middle of the screen.
+ * FIVE BANDS, top to bottom, and the order is the whole design:
  *
- * THE BLACK BANDS, and why they were there. The picture used to be laid across
- * the whole screen with `object-contain`. A phone screen is taller than 9:16
- * (390x844 is 0.46 against 0.5625), so a vertical recording is WIDER than the
- * screen it was being fitted into: `contain` matched its width and left a band of
- * black above and below. Meanwhile the render fills a 1080x1920 frame with
- * `cover`, so the preview was showing a shape the finished video does not have.
+ *   1  back, "Edit", Next
+ *   2  the open clip as a filmstrip of its own frames — scrub it, trim it
+ *   3  the video, large and with nothing on top of it
+ *   4  Trim, Sound, Text, Cover, Crop, and whichever one is open
+ *   5  the clips in the project as thumbnails, and a + to film another
  *
- * Fixed at the layout, and the arithmetic decides the shape of the fix. On a
- * phone a full-width 9:16 frame is TALLER THAN THE SCREEN — 390 wide wants 693
- * tall, against a 664px Safari viewport — so a video that shares the height with
- * a toolbar cannot be 9:16. Putting the picture in the 390x415 space above a
- * toolbar and covering it threw away 40% of the frame's height; fitting it
- * instead brought the bands straight back.
+ * WHAT THIS REPLACED put the video full-bleed behind everything and floated the
+ * controls over its lower third. That kept the picture as large as a phone can
+ * make it, but it meant the thing being edited was permanently half-covered by
+ * the thing doing the editing. Laying the bands out instead costs the video
+ * width — a 9:16 box in the ~420px left over is about 240px wide on a 390px
+ * screen — and buys a picture that is never obscured. That is the trade this
+ * was asked for, and the gutters either side of the video are where the cost
+ * shows up.
  *
- * So the picture is the WHOLE screen, laid behind the controls, and met with the
- * same fit the render uses — `outputFrame(clips).fit`. A 9:16 source in a 390x664
- * window loses 14px top and bottom to `cover` rather than 40%, there is no black
- * anywhere, nothing is stretched, and what is on screen is what gets posted. The
- * controls then float over the bottom of it, which is also what keeps the frame
- * as large as it can be: every pixel the toolbar does not need is video.
+ * THE PREVIEW IS THE OUTPUT FRAME. The video sits in a 9:16 box and is met with
+ * `cover`, which is exactly what `renderClips` does into 1080x1920 — so a
+ * landscape recording is centre-cropped here the same way it will be in the
+ * finished file. A preview with a different fit from the export is not a
+ * preview.
  *
- * THE FREE AREA is what the toolbar leaves — `data-editor-stage`, a flex child
- * sized by the layout rather than by a guess at the toolbar's height. The words
- * and the tap target live in it, so text can never be typed somewhere it cannot
- * be seen.
- *
- * THE CLIPS ARE THEIR OWN FRAMES. A row of numbered grey boxes is a form; a row
- * of the actual frames is an editor, and it is how somebody picks the clip they
- * mean — by recognising it, not by remembering that the cat one was third. The
- * selected clip opens out along the row to its whole source as a filmstrip, with
- * the part being kept bright, the trimmed-off parts dimmed, and a grip at each
- * end: trimming is dragging the ends of the thing you are looking at, with the
- * rest of the project still beside it. See `useClipFrames`.
+ * THE FILMSTRIP IS THE SELECTED CLIP, all of its source, as its own frames.
+ * Dragging it scrubs that clip; with Trim open it also carries a grip at each
+ * end, with the trimmed-off parts dimmed. Trimming is therefore dragging the
+ * ends of the thing you are looking at, and nothing has to open over the video
+ * to do it. The slim bar under it is the whole PROJECT, which is the other
+ * question — where am I in the finished video — and the one the filmstrip
+ * cannot answer while it is showing a single clip.
  *
  * Nothing about captions, categories, tags or content warnings is here. Those
  * belong to posting, and this is editing.
@@ -73,29 +65,27 @@ import { MAX_TEXT_OVERLAYS, MAX_TEXT_OVERLAY_LENGTH, type TextOverlay } from '@/
  *
  *   Trim   — two numbers on ONE clip, applied by the render pass at the end.
  *            A multi-clip project is not one blob: each clip keeps its own
- *            boundaries and its own handles, and the preview re-cuts itself as
+ *            boundaries and its own grips, and the preview re-cuts itself as
  *            soon as either moves.
  *   Sound  — a playback property on the finished post. Silencing an audio track
  *            for real means re-encoding, and a two-minute video would cost two
  *            minutes to mute.
  *   Text   — also a playback property, drawn over the video by the player, so a
  *            video carrying words costs no render it did not already need. The
- *            words themselves are tappable: picking a line on the video opens it.
+ *            words are tappable: picking a line on the video opens it.
  *   Cover  — the existing picker, shared with the posting screen.
- *   Resize — the clip's crop rectangle and rotation, which `drawFrame` has always
- *            honoured. The same ratios the desktop editor offers, so there is one
- *            answer to "what shape is this" rather than two.
+ *   Crop   — the clip's crop rectangle and rotation, which `drawFrame` has
+ *            always honoured. The same ratios the desktop editor offers.
  *
  * There is no Filters tool. FayTarra's render has no colour pipeline — `drawFrame`
  * scales, crops and rotates and that is all — so a filter rail would be a row of
- * buttons that change nothing. It belongs with a real filter stage in the render,
- * not here.
+ * buttons that change nothing.
  *
  * It owns nothing except which clip is selected and which tool is open. Every
  * change goes up to the composer that holds the clips and does the uploading.
  */
 
-export type EditorTool = 'trim' | 'sound' | 'text' | 'cover' | 'resize';
+export type EditorTool = 'trim' | 'sound' | 'text' | 'cover' | 'crop';
 type Tool = EditorTool;
 
 const TOOLS: { key: Tool; label: string; Icon: typeof TrimIcon }[] = [
@@ -103,7 +93,7 @@ const TOOLS: { key: Tool; label: string; Icon: typeof TrimIcon }[] = [
   { key: 'sound', label: 'Sound', Icon: VolumeIcon },
   { key: 'text', label: 'Text', Icon: TextIcon },
   { key: 'cover', label: 'Cover', Icon: ImageIcon },
-  { key: 'resize', label: 'Resize', Icon: CropIcon },
+  { key: 'crop', label: 'Crop', Icon: CropIcon },
 ];
 
 /** The shapes on offer, matching the desktop editor's. */
@@ -168,7 +158,7 @@ export function VideoEditor({
   const [playing, setPlaying] = useState(false);
   /** Project time, driven by the player. */
   const [at, setAt] = useState(0);
-  /** Which clip the trim handles belong to. */
+  /** Which clip the filmstrip and the tools are about. */
   const [selected, setSelected] = useState(0);
   /** Which line of text is being edited, if any. */
   const [pickedText, setPickedText] = useState<number | null>(null);
@@ -178,7 +168,6 @@ export function VideoEditor({
 
   const segments = useMemo(() => timeline(clips), [clips]);
   const total = timelineDuration(segments);
-  const widths = useMemo(() => stripWidths(segments), [segments]);
   const many = clips.length > 1;
 
   // A clip can be dropped from under the selection — Retake and Delete both do it.
@@ -213,30 +202,58 @@ export function VideoEditor({
   /** Only the ones with words in them get previewed or posted. */
   const written = overlays.filter((entry) => entry.text.trim().length > 0);
 
-  /**
-   * Dragging a trim handle on the timeline.
-   *
-   * The selected clip is drawn as its WHOLE source length with a lit window over
-   * the part being kept, which is what makes dragging stable: if the bar were the
-   * kept part, every drag would resize the thing being dragged and the handle
-   * would run away from the thumb. Pointer capture so a finger that slides off
-   * the track keeps control of the handle.
-   */
-  const track = useRef<HTMLDivElement>(null);
+  /* --------------------------------------------------------- the filmstrip */
 
+  const strip = useRef<HTMLDivElement>(null);
+
+  /** Where a clientX falls in the selected clip's own source, in seconds. */
+  function sourceAt(clientX: number): number {
+    const rail = strip.current;
+    if (!rail || clip.sourceDuration <= 0) return 0;
+    const box = rail.getBoundingClientRect();
+    const across = (clientX - box.left) / Math.max(1, box.width);
+    return Math.min(Math.max(across, 0), 1) * clip.sourceDuration;
+  }
+
+  /** Puts the preview where the finger is, clamped to what the clip keeps. */
+  function scrubTo(clientX: number) {
+    const segment = segments[index];
+    if (!segment) return;
+    const source = Math.min(Math.max(sourceAt(clientX), clip.trimStart), clip.trimEnd);
+    player.current?.seek(segment.startsAt + (source - clip.trimStart));
+  }
+
+  /** Dragging anywhere on the filmstrip scrubs the clip it is showing. */
+  function scrubFrom(event: React.PointerEvent<HTMLElement>) {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    scrubTo(event.clientX);
+    const move = (moveEvent: PointerEvent) => scrubTo(moveEvent.clientX);
+    const release = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', release);
+      window.removeEventListener('pointercancel', release);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
+  }
+
+  /**
+   * Dragging a trim grip.
+   *
+   * The filmstrip is the clip's WHOLE source, which is what makes dragging
+   * stable: if it were the kept part, every drag would resize the thing being
+   * dragged and the grip would run away from the thumb. Pointer capture so a
+   * finger that slides off the strip keeps hold of the grip.
+   */
   function dragHandle(edge: 'start' | 'end', event: React.PointerEvent<HTMLElement>) {
-    const rail = track.current;
-    if (!rail || clip.sourceDuration <= 0) return;
+    if (clip.sourceDuration <= 0) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
     event.stopPropagation();
 
-    const box = rail.getBoundingClientRect();
-    const secondsAt = (clientX: number) =>
-      ((clientX - box.left) / Math.max(1, box.width)) * clip.sourceDuration;
-
     const move = (moveEvent: PointerEvent) => {
-      const seconds = secondsAt(moveEvent.clientX);
+      const seconds = sourceAt(moveEvent.clientX);
       if (edge === 'start') {
         const next = Math.max(0, Math.min(seconds, clip.trimEnd - 0.3));
         onTrimClip(clip.id, { trimStart: next, trimEnd: clip.trimEnd });
@@ -277,140 +294,240 @@ export function VideoEditor({
   /** The kept window as fractions of the selected clip's own source length. */
   const window0 = clip.sourceDuration > 0 ? clip.trimStart / clip.sourceDuration : 0;
   const window1 = clip.sourceDuration > 0 ? clip.trimEnd / clip.sourceDuration : 1;
-  /** How far through the project the scrub bar is, for its own fill. */
-  const through = total > 0 ? Math.min(100, Math.max(0, (at / total) * 100)) : 0;
+  /** Where the playhead sits along the filmstrip, in the same fractions. */
+  const segment = segments[index];
+  const head =
+    segment && clip.sourceDuration > 0
+      ? Math.min(Math.max(clip.trimStart + (at - segment.startsAt), 0), clip.sourceDuration) /
+        clip.sourceDuration
+      : 0;
+  const onStrip = Boolean(segment && at >= segment.startsAt && at <= segment.endsAt);
   const stripFrames = frames.strips[clip.id] ?? [];
+  const trimming = tool === 'trim';
 
   return (
-    // The picture is the whole screen; the column on top of it divides that screen
-    // into the free area and the controls. See the note above for why the video
-    // cannot share the height with the toolbar and still be 9:16.
+    // Five bands, and the video is one of them rather than the floor they sit
+    // on. See the note above for what that costs and what it buys.
     <div
-      className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-black"
+      className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-ink-950"
       data-editor-fullscreen
     >
-      {/* =========================== the picture =========================== */}
-      <ClipPlayer
-        ref={player}
-        clips={clips}
-        muted={muted}
-        fit={fit}
-        onTime={setAt}
-        onPlayingChange={setPlaying}
-        className="absolute inset-0"
-      />
-
-      {/* ========================== the free area ========================== */}
-      {/* Everything the toolbar does not take. Sized by flex, so the words and
-          the tap target are laid out against the real room rather than against a
-          guess at how tall the toolbar is. */}
-      <div className="relative z-10 min-h-0 flex-1" data-editor-stage>
-        {/* Tap the picture to play or pause. The whole free area, because nothing
-            else lives in it. Underneath the words, so a tap on a line of text
-            opens that line instead of pausing. */}
+      {/* ===================== 1. the top bar ===================== */}
+      <div
+        data-editor-topbar
+        className="safe-top safe-x flex shrink-0 items-center justify-between gap-2 px-3 pb-2 pt-2"
+      >
         <button
           type="button"
-          onClick={() => player.current?.toggle()}
-          aria-hidden="true"
-          tabIndex={-1}
-          data-editor-tap
-          className="absolute inset-0 flex items-center justify-center"
+          onClick={onRetake}
+          data-editor-retake
+          aria-label="Back to the camera"
+          className="flex h-10 w-10 items-center justify-center rounded-full text-white transition active:scale-95 active:bg-white/10"
         >
-          <span
-            className={`flex h-16 w-16 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-md transition-opacity ${
-              playing ? 'opacity-0' : 'opacity-100'
-            }`}
-          >
-            {playing ? <PauseIcon width={24} height={24} /> : <PlayIcon width={24} height={24} />}
-          </span>
+          <ChevronIcon direction="left" width={22} height={22} />
         </button>
-
-        {/* The words, inside the free area — so text can never be put somewhere
-            the controls will cover. Tappable while the Text tool is open, which
-            is what "edit the text on the video" means here. */}
-        <VideoText
-          media={{ text: written }}
-          variant="editor"
-          onPick={tool === 'text' ? (position) => setPickedText(position) : undefined}
-          selected={tool === 'text' ? pickedText : null}
-        />
-
-        {/* ------------------------------------------------------- top bar */}
-        {/* Over the picture, on a scrim. `pointer-events-none` on the bar and
-            `auto` on its buttons, so the scrim does not eat taps meant for the
-            video underneath it. */}
-        <div className="safe-top safe-x pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-2 bg-gradient-to-b from-black/70 via-black/25 to-transparent px-3 pb-10 pt-2">
-          <button
-            type="button"
-            onClick={onRetake}
-            data-editor-retake
-            aria-label="Back to the camera"
-            className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur-md transition active:scale-95"
-          >
-            <ChevronIcon direction="left" width={20} height={20} />
-          </button>
-          <p className="pointer-events-none pt-2 text-[15px] font-semibold text-white">Edit</p>
-          <button
-            type="button"
-            onClick={onNext}
-            data-editor-next
-            className="btn-primary pointer-events-auto h-10 px-5 py-0 text-[14px]"
-          >
-            Next
-          </button>
-        </div>
-
-        {/* The clock, over the video where the eye already is. */}
-        <div
-          data-editor-time
-          className="safe-top pointer-events-none absolute inset-x-0 top-0 flex justify-center pt-12"
+        <p className="text-[15px] font-semibold tracking-wide text-white">Edit</p>
+        <button
+          type="button"
+          onClick={onNext}
+          data-editor-next
+          className="btn-primary h-10 px-5 py-0 text-[14px]"
         >
-          <span className="rounded-full bg-black/45 px-3 py-1 text-[12px] font-semibold tabular-nums text-white backdrop-blur-md">
-            {formatPreciseSeconds(at)} / {formatSeconds(total)}
-            {many ? ` · ${clips.length} clips` : ''}
-          </span>
-        </div>
-
-        {/* ------------------------------------------ the selected clip's own */}
-        {/* Bottom LEFT, not the middle: the middle of the picture is where
-            somebody taps to play, and a destructive button does not go there. */}
-        {onDeleteClip && (
-          <div className="safe-x pointer-events-none absolute inset-x-0 bottom-0 flex items-end px-3 pb-3">
-            <button
-              type="button"
-              onClick={() => onDeleteClip(clip.id)}
-              data-editor-delete
-              aria-label={many ? `Delete clip ${index + 1}` : 'Delete this clip'}
-              className="pointer-events-auto flex h-10 items-center gap-1.5 rounded-full bg-black/50 px-3 text-[12px] font-semibold text-white backdrop-blur-md transition active:scale-95"
-            >
-              <TrashIcon width={15} height={15} />
-              Delete{many ? ` clip ${index + 1}` : ''}
-            </button>
-          </div>
-        )}
+          Next
+        </button>
       </div>
 
-      {/* =========================== the toolbar =========================== */}
-      {/* Over the picture on a scrim rather than beside it in a solid bar: the
-          video is full-bleed underneath, and a bar that took its own height would
-          take it off the frame. Dark enough to read white controls against moving
-          video, short enough to leave most of the video clear. */}
+      {/* ============ 2. the open clip, as its own frames ============ */}
+      {/* Scrub it to move the preview; with Trim open it carries a grip at each
+          end and dims what is being cut away. Nothing opens over the video to
+          trim, because the thing being trimmed is already on screen. */}
+      <div className="safe-x shrink-0 px-3" data-editor-scrub>
+        <div
+          ref={strip}
+          onPointerDown={scrubFrom}
+          data-editor-track
+          className="relative h-14 w-full touch-none select-none overflow-hidden rounded-xl bg-ink-800"
+        >
+          <span className="absolute inset-0 flex">
+            {(stripFrames.length > 0 ? stripFrames : ['']).map((frame, slot) => (
+              <span
+                key={slot}
+                className="h-full flex-1 bg-ink-700 bg-cover bg-center"
+                style={frame ? { backgroundImage: `url(${frame})` } : undefined}
+              />
+            ))}
+          </span>
+
+          {trimming && (
+            <>
+              {/* What is being cut away. */}
+              <span
+                className="pointer-events-none absolute inset-y-0 left-0 bg-ink-950/75"
+                style={{ width: `${window0 * 100}%` }}
+              />
+              <span
+                className="pointer-events-none absolute inset-y-0 right-0 bg-ink-950/75"
+                style={{ width: `${(1 - window1) * 100}%` }}
+              />
+              {/* What is being kept. */}
+              <span
+                className="pointer-events-none absolute inset-y-0 border-y-2 border-fay"
+                style={{ left: `${window0 * 100}%`, right: `${(1 - window1) * 100}%` }}
+              />
+              {(['start', 'end'] as const).map((edge) => (
+                <span
+                  key={edge}
+                  role="slider"
+                  tabIndex={-1}
+                  aria-label={`Trim ${edge}`}
+                  aria-valuemin={0}
+                  aria-valuemax={Math.max(0.1, clip.sourceDuration)}
+                  aria-valuenow={edge === 'start' ? clip.trimStart : clip.trimEnd}
+                  aria-valuetext={formatPreciseSeconds(
+                    edge === 'start' ? clip.trimStart : clip.trimEnd,
+                  )}
+                  data-editor-handle={edge}
+                  onPointerDown={(event) => dragHandle(edge, event)}
+                  // A thumb's worth of target, drawn as a bar. Kept inside the
+                  // strip at the extremes rather than half off its edge, which
+                  // is where a centred grip at 0s ends up.
+                  className="absolute inset-y-0 flex w-9 cursor-ew-resize touch-none items-center justify-center"
+                  style={
+                    edge === 'start'
+                      ? { left: `${window0 * 100}%`, marginLeft: '-4px' }
+                      : { left: `${window1 * 100}%`, marginLeft: '-32px' }
+                  }
+                >
+                  <span className="h-10 w-1.5 rounded-full bg-fay shadow-[0_0_0_1.5px_rgba(0,0,0,0.5)]" />
+                </span>
+              ))}
+            </>
+          )}
+
+          {/* The playhead. */}
+          {onStrip && (
+            <span
+              className="pointer-events-none absolute inset-y-0 w-[2px] bg-white shadow-[0_0_4px_rgba(0,0,0,0.8)]"
+              style={{ left: `${head * 100}%` }}
+            />
+          )}
+        </div>
+
+        {/* The whole project, which the filmstrip above cannot show while it is
+            showing one clip. Thin on purpose; the strip is the thumb target. */}
+        <div className="mt-1 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => player.current?.toggle()}
+            aria-label={playing ? 'Pause' : 'Play'}
+            data-editor-playpause
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition active:scale-95"
+          >
+            {playing ? <PauseIcon width={12} height={12} /> : <PlayIcon width={12} height={12} />}
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={Math.max(0.1, total)}
+            step={0.05}
+            value={Math.min(Math.max(at, 0), total)}
+            aria-label="Position in the video"
+            data-editor-timeline
+            onChange={(event) => player.current?.seek(Number(event.target.value))}
+            style={
+              {
+                '--scrub-track': `linear-gradient(to right, #FF3D9A ${
+                  total > 0 ? Math.min(100, Math.max(0, (at / total) * 100)) : 0
+                }%, rgba(255,255,255,0.22) ${
+                  total > 0 ? Math.min(100, Math.max(0, (at / total) * 100)) : 0
+                }%)`,
+              } as React.CSSProperties
+            }
+            className="scrub scrub-sm flex-1"
+          />
+          <span
+            data-editor-time
+            className="shrink-0 text-[11px] font-semibold tabular-nums text-white/60"
+          >
+            {formatPreciseSeconds(at)} / {formatSeconds(total)}
+          </span>
+        </div>
+      </div>
+
+      {/* ===================== 3. the video ===================== */}
+      {/* A 9:16 box, which IS the output frame, met with the same fit the render
+          uses. Nothing is drawn on top of it but the words being edited. */}
       <div
-        data-editor-controls
-        className="safe-bottom safe-x relative z-10 shrink-0 bg-gradient-to-t from-black/95 via-black/85 to-black/45 px-3 pb-1 pt-3"
+        data-editor-stage
+        className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-3 py-2"
       >
-        {/* ------------------------------------------------- the tool's sheet */}
-        {/* FIRST, so that opening a tool pushes only the rows above it: the
-            timeline and the tool rail stay exactly where the thumb left them.
-            Trim needs almost nothing here — its grips are on the timeline. */}
-        <div className="max-h-[26vh] overflow-y-auto" data-editor-panel={tool}>
+        <div className="relative h-full max-w-full overflow-hidden rounded-2xl bg-black [aspect-ratio:9/16]">
+          <ClipPlayer
+            ref={player}
+            clips={clips}
+            muted={muted}
+            fit={fit}
+            onTime={setAt}
+            onPlayingChange={setPlaying}
+            className="absolute inset-0"
+          />
+          <button
+            type="button"
+            onClick={() => player.current?.toggle()}
+            aria-hidden="true"
+            tabIndex={-1}
+            data-editor-tap
+            className="absolute inset-0 flex items-center justify-center"
+          >
+            <span
+              className={`flex h-14 w-14 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-md transition-opacity ${
+                playing ? 'opacity-0' : 'opacity-100'
+              }`}
+            >
+              {playing ? <PauseIcon width={22} height={22} /> : <PlayIcon width={22} height={22} />}
+            </span>
+          </button>
+          {/* The words sit in the frame they will be posted in, so positioning
+              them here is positioning them there. */}
+          <VideoText
+            media={{ text: written }}
+            onPick={tool === 'text' ? (position) => setPickedText(position) : undefined}
+            selected={tool === 'text' ? pickedText : null}
+          />
+        </div>
+      </div>
+
+      {/* ============ 4. the tools, and whichever one is open ============ */}
+      <div data-editor-controls className="safe-x shrink-0 px-3">
+        <div className="flex items-stretch gap-1">
+          {TOOLS.map(({ key, label, Icon }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onTool(key)}
+              aria-pressed={tool === key}
+              data-editor-tool={key}
+              className={`flex min-h-[48px] flex-1 basis-0 flex-col items-center justify-center gap-0.5 rounded-xl text-[10px] font-semibold transition ${
+                tool === key ? 'bg-white/[0.14] text-white' : 'text-white/60 active:bg-white/[0.07]'
+              }`}
+            >
+              <Icon width={18} height={18} />
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Compact and capped. A tool's controls belong under the video, never
+            over it — and Trim needs almost nothing here, because its grips are
+            on the filmstrip at the top. */}
+        <div className="max-h-[24vh] overflow-y-auto" data-editor-panel={tool}>
           {tool === 'trim' && (
-            <div className="flex items-center gap-2 pb-2">
+            <div className="flex items-center gap-1.5 pt-0.5">
               <p className="min-w-0 flex-1 truncate text-[12px] font-semibold text-white/80">
                 {many ? `Clip ${index + 1} of ${clips.length} · Keeping ` : 'Keeping '}
                 <span className="tabular-nums text-white/55">{formatPreciseSeconds(kept)}</span>
               </p>
-              {/* The grips on the timeline are the way to trim; these are the
+              {/* The grips on the filmstrip are the way to trim; these are the
                   same two numbers for a keyboard, and what the suite drives. */}
               <label className="sr-only" htmlFor="editor-trim-start">
                 Start
@@ -428,7 +545,7 @@ export function VideoEditor({
                   onTrimClip(clip.id, { trimStart: next, trimEnd: clip.trimEnd });
                   player.current?.seek(segments[index]?.startsAt ?? 0);
                 }}
-                className="scrub w-16 shrink-0"
+                className="scrub scrub-sm w-14 shrink-0"
               />
               <label className="sr-only" htmlFor="editor-trim-end">
                 End
@@ -447,14 +564,12 @@ export function VideoEditor({
                     Math.max(Number(event.target.value), clip.trimStart + 0.3),
                   );
                   onTrimClip(clip.id, { trimStart: clip.trimStart, trimEnd: next });
-                  const segment = segments[index];
-                  if (segment) {
-                    player.current?.seek(
-                      segment.startsAt + Math.max(0, next - clip.trimStart - 0.15),
-                    );
+                  const here = segments[index];
+                  if (here) {
+                    player.current?.seek(here.startsAt + Math.max(0, next - clip.trimStart - 0.15));
                   }
                 }}
-                className="scrub w-16 shrink-0"
+                className="scrub scrub-sm w-14 shrink-0"
               />
               <button
                 type="button"
@@ -469,7 +584,7 @@ export function VideoEditor({
           )}
 
           {tool === 'sound' && (
-            <div className="flex gap-2 pb-2">
+            <div className="flex gap-2 pt-1">
               {[
                 { on: true, label: 'Sound on', hint: 'As recorded' },
                 { on: false, label: 'Sound off', hint: 'Watched silent' },
@@ -480,7 +595,7 @@ export function VideoEditor({
                   onClick={() => onMuted(!option.on)}
                   aria-pressed={muted === !option.on}
                   data-editor-sound={option.on ? 'on' : 'off'}
-                  className={`min-h-[52px] flex-1 rounded-xl border px-3 py-2 text-left transition ${
+                  className={`min-h-[48px] flex-1 rounded-xl border px-3 py-2 text-left transition ${
                     muted === !option.on
                       ? 'border-fay bg-fay/15'
                       : 'border-white/10 bg-white/[0.04] active:bg-white/[0.09]'
@@ -497,7 +612,7 @@ export function VideoEditor({
           )}
 
           {tool === 'text' && (
-            <div className="space-y-2 pb-2">
+            <div className="space-y-2 pt-1">
               {overlays.length === 0 && (
                 <p className="text-[12px] text-white/50">
                   Put a line over the video. Tap it on the video to come back to it.
@@ -590,7 +705,7 @@ export function VideoEditor({
           )}
 
           {tool === 'cover' && (
-            <div className="pb-2">
+            <div className="pt-1">
               <CoverPicker
                 preview={cover.preview}
                 custom={cover.custom}
@@ -605,8 +720,8 @@ export function VideoEditor({
             </div>
           )}
 
-          {tool === 'resize' && (
-            <div className="space-y-2 pb-2">
+          {tool === 'crop' && (
+            <div className="space-y-2 pt-1">
               <div className="hide-scrollbar flex items-center gap-1.5 overflow-x-auto">
                 {SHAPES.map((shape) => {
                   const target = cropForRatio(clip, shape.ratio);
@@ -631,9 +746,7 @@ export function VideoEditor({
                 <button
                   type="button"
                   onClick={() =>
-                    onPatchClip?.(clip.id, {
-                      rotation: ((clip.rotation + 90) % 360) as Rotation,
-                    })
+                    onPatchClip?.(clip.id, { rotation: ((clip.rotation + 90) % 360) as Rotation })
                   }
                   data-editor-rotate
                   className="btn-quiet min-h-[40px] shrink-0 px-3 py-1.5 text-[11px]"
@@ -647,200 +760,66 @@ export function VideoEditor({
             </div>
           )}
         </div>
+      </div>
 
-        {/* ---------------------------------------------------- the scrub bar */}
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => player.current?.toggle()}
-            aria-label={playing ? 'Pause' : 'Play'}
-            data-editor-playpause
-            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/10 text-white transition active:scale-95"
-          >
-            {playing ? <PauseIcon width={16} height={16} /> : <PlayIcon width={16} height={16} />}
-          </button>
-          <input
-            type="range"
-            min={0}
-            max={Math.max(0.1, total)}
-            step={0.05}
-            value={Math.min(Math.max(at, 0), total)}
-            aria-label="Position in the video"
-            data-editor-timeline
-            onChange={(event) => player.current?.seek(Number(event.target.value))}
-            // The fill behind the knob. WebKit has no `::-webkit-slider-progress`,
-            // so the played part is painted as a hard-stop gradient on the track,
-            // and iOS Safari is the browser this is for.
-            style={
-              {
-                '--scrub-track': `linear-gradient(to right, #FF3D9A ${through}%, rgba(255,255,255,0.22) ${through}%)`,
-              } as React.CSSProperties
-            }
-            className="scrub flex-1"
-          />
-        </div>
-
-        {/* ---------------------------------------------------- the clip strip */}
-        {/* One video made of clips, drawn as their own frames. The selected one
-            opens out to its whole source as a filmstrip with the kept part bright
-            and a grip at each end; the others stay on screen, narrower, so the
-            project is always visible and nothing has to be opened to see it. */}
-        <div className="mt-1 flex items-stretch gap-1" data-editor-strip>
-          {segments.map((segment, position) => {
-            const chosen = position === index;
-            const poster = frames.poster(segment.clip.id);
-            return (
-              <button
-                key={segment.clip.id}
-                type="button"
-                onClick={() => pick(position)}
-                aria-pressed={chosen}
-                aria-label={`Clip ${position + 1} of ${clips.length}`}
-                data-editor-clip={position}
-                style={{
-                  // The selected clip earns room for its filmstrip and its grips;
-                  // the rest keep their share of the project's length.
-                  flexGrow: chosen ? 2.6 : Math.max(0.35, widths[position] * 2),
-                  flexBasis: 0,
-                }}
-                className={`relative h-14 overflow-hidden rounded-lg border bg-ink-800 transition ${
-                  chosen ? 'min-w-[120px] border-fay' : 'min-w-[38px] border-white/15'
-                }`}
-              >
-                {chosen ? (
-                  // The whole source as frames, with the kept part bright, the
-                  // trimmed-off parts dimmed, and a grip at each end.
-                  //
-                  // Inset by a grip's half-width on each side. A grip is 28px wide
-                  // and centred on its position, so a trim at 0s put half of it
-                  // outside this clip's `overflow-hidden` box: it was drawn
-                  // clipped and a tap on its centre landed on the border, so
-                  // dragging the start of an untrimmed clip did nothing at all.
-                  <span
-                    ref={track}
-                    data-editor-track
-                    className="absolute inset-y-0 left-4 right-4 block"
-                  >
-                    <span className="absolute inset-0 flex">
-                      {(stripFrames.length > 0 ? stripFrames : ['']).map((frame, slot) => (
-                        <span
-                          key={slot}
-                          className="h-full flex-1 bg-ink-700 bg-cover bg-center"
-                          style={frame ? { backgroundImage: `url(${frame})` } : undefined}
-                        />
-                      ))}
-                    </span>
-                    {/* What is being cut away. */}
-                    <span
-                      className="absolute inset-y-0 left-0 bg-black/65"
-                      style={{ width: `${window0 * 100}%` }}
-                    />
-                    <span
-                      className="absolute inset-y-0 right-0 bg-black/65"
-                      style={{ width: `${(1 - window1) * 100}%` }}
-                    />
-                    {/* What is being kept. */}
-                    <span
-                      className="pointer-events-none absolute inset-y-0 border-y-2 border-fay"
-                      style={{
-                        left: `${window0 * 100}%`,
-                        right: `${(1 - window1) * 100}%`,
-                      }}
-                    />
-                    {(['start', 'end'] as const).map((edge) => (
-                      <span
-                        key={edge}
-                        role="slider"
-                        tabIndex={-1}
-                        aria-label={`Trim ${edge}`}
-                        aria-valuemin={0}
-                        aria-valuemax={Math.max(0.1, clip.sourceDuration)}
-                        aria-valuenow={edge === 'start' ? clip.trimStart : clip.trimEnd}
-                        aria-valuetext={formatPreciseSeconds(
-                          edge === 'start' ? clip.trimStart : clip.trimEnd,
-                        )}
-                        data-editor-handle={edge}
-                        onPointerDown={(event) => dragHandle(edge, event)}
-                        // Wide enough for a thumb, drawn narrow.
-                        className="absolute inset-y-0 flex w-7 cursor-ew-resize touch-none items-center justify-center"
-                        style={
-                          edge === 'start'
-                            ? { left: `${window0 * 100}%`, marginLeft: '-14px' }
-                            : { left: `${window1 * 100}%`, marginLeft: '-14px' }
-                        }
-                      >
-                        <span className="h-8 w-[5px] rounded-full bg-fay shadow-[0_0_0_1px_rgba(0,0,0,0.45)]" />
-                      </span>
-                    ))}
-                    <span className="pointer-events-none absolute inset-x-0 bottom-0.5 text-center text-[9px] font-bold tabular-nums text-white drop-shadow">
-                      {formatPreciseSeconds(kept)}
-                    </span>
-                  </span>
-                ) : (
-                  <>
-                    <span
-                      className="absolute inset-0 bg-cover bg-center"
-                      style={poster ? { backgroundImage: `url(${poster})` } : undefined}
-                    />
-                    <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent pb-0.5 pt-2">
-                      <span className="block text-center text-[9px] font-bold tabular-nums text-white">
-                        {formatSeconds(segment.length)}
-                      </span>
-                    </span>
-                    <span className="absolute left-1 top-1 flex h-4 min-w-[16px] items-center justify-center rounded bg-black/65 px-1 text-[9px] font-bold text-white">
-                      {position + 1}
-                    </span>
-                  </>
-                )}
-                {/* Where the playhead is inside this segment. */}
-                {at >= segment.startsAt && at < segment.endsAt && (
-                  <span
-                    className="pointer-events-none absolute bottom-0 top-0 w-[2px] bg-white"
-                    style={{
-                      left: `${
-                        segment.length > 0 ? ((at - segment.startsAt) / segment.length) * 100 : 0
-                      }%`,
-                    }}
-                  />
-                )}
-              </button>
-            );
-          })}
-
-          {/* Filming another clip belongs on the end of the timeline, where the
-              clip will appear — not on a full-width button under it, which cost
-              44px of video to say the same thing. */}
-          {onAddClip && (
+      {/* ============ 5. the clips, and one more ============ */}
+      {/* Their own frames, because a clip is chosen by recognising it. */}
+      <div
+        data-editor-strip
+        className="safe-bottom safe-x hide-scrollbar flex shrink-0 items-stretch gap-2 overflow-x-auto px-3 pt-2"
+      >
+        {segments.map((each, position) => {
+          const chosen = position === index;
+          const poster = frames.poster(each.clip.id);
+          return (
             <button
+              key={each.clip.id}
               type="button"
-              onClick={onAddClip}
-              data-editor-add-clip
-              aria-label="Film another clip"
-              className="flex h-14 w-11 shrink-0 items-center justify-center rounded-lg bg-fay text-white shadow-lg shadow-fay/25 transition active:scale-95"
-            >
-              <PlusIcon width={20} height={20} />
-            </button>
-          )}
-        </div>
-
-        {/* ------------------------------------------------------ the tools */}
-        <div className="hide-scrollbar mt-1 flex items-stretch gap-1 overflow-x-auto">
-          {TOOLS.map(({ key, label, Icon }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => onTool(key)}
-              aria-pressed={tool === key}
-              data-editor-tool={key}
-              className={`flex min-h-[48px] flex-1 shrink-0 basis-0 flex-col items-center justify-center gap-0.5 rounded-xl px-1 text-[10px] font-semibold transition ${
-                tool === key ? 'bg-white/[0.14] text-white' : 'text-white/60 active:bg-white/[0.07]'
+              onClick={() => pick(position)}
+              aria-pressed={chosen}
+              aria-label={`Clip ${position + 1} of ${clips.length}`}
+              data-editor-clip={position}
+              className={`relative h-14 w-12 shrink-0 overflow-hidden rounded-lg border-2 bg-ink-800 transition ${
+                chosen ? 'border-fay' : 'border-transparent opacity-70 active:opacity-100'
               }`}
             >
-              <Icon width={18} height={18} />
-              {label}
+              <span
+                className="absolute inset-0 bg-cover bg-center"
+                style={poster ? { backgroundImage: `url(${poster})` } : undefined}
+              />
+              <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent pb-0.5 pt-2 text-center text-[9px] font-bold tabular-nums text-white">
+                {formatSeconds(each.length)}
+              </span>
+              <span className="absolute left-1 top-1 flex h-4 min-w-[16px] items-center justify-center rounded bg-black/65 px-1 text-[9px] font-bold text-white">
+                {position + 1}
+              </span>
             </button>
-          ))}
-        </div>
+          );
+        })}
+
+        {onDeleteClip && many && (
+          <button
+            type="button"
+            onClick={() => onDeleteClip(clip.id)}
+            data-editor-delete
+            aria-label={`Delete clip ${index + 1}`}
+            className="flex h-14 w-10 shrink-0 items-center justify-center rounded-lg border border-white/15 text-white/55 transition active:bg-white/10"
+          >
+            <TrashIcon width={16} height={16} />
+          </button>
+        )}
+
+        {onAddClip && (
+          <button
+            type="button"
+            onClick={onAddClip}
+            data-editor-add-clip
+            aria-label="Film another clip"
+            className="flex h-14 w-12 shrink-0 items-center justify-center rounded-lg bg-fay text-white shadow-lg shadow-fay/25 transition active:scale-95"
+          >
+            <PlusIcon width={20} height={20} />
+          </button>
+        )}
       </div>
     </div>
   );

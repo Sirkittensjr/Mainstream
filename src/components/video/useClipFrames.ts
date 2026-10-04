@@ -30,8 +30,16 @@ import { framesFrom, sampleTimes } from '@/lib/video/thumbnails';
  * strip that appears and one that arrives.
  */
 
-/** Frames across a clip's source. More than this is unreadable at phone width. */
-const STRIP = 6;
+/**
+ * Frames across a clip's source.
+ *
+ * Ten, because the strip now runs the full width of the screen under the top
+ * bar rather than sitting in a tile: at ~56px tall each frame is about 31px
+ * wide, so ten of them fill 390px and the strip reads as film rather than as a
+ * row of swatches. Each one costs a seek, so this is the width that is useful
+ * and no more.
+ */
+const STRIP = 10;
 /** Which of them stands in for the whole clip in the timeline. */
 const POSTER = Math.floor(STRIP / 2);
 
@@ -84,7 +92,7 @@ export function useClipFrames(clips: Clip[], selectedId: string | null): ClipFra
         const frames = await framesFrom(
           clip.src,
           sampleTimes(0, clip.sourceDuration, STRIP),
-          { maxEdge: 96, signal: stop.signal },
+          { maxEdge: 120, signal: stop.signal },
         );
         reading = null;
         if (cancelled) return;
