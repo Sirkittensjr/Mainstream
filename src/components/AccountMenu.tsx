@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { logoutAction } from '@/app/actions';
 import { formatUnread } from '@/lib/format';
+import { Avatar } from './Avatar';
 import type { NavUser } from './Nav';
 
 /**
@@ -42,8 +43,6 @@ export function AccountMenu({
     };
   }, [open]);
 
-  const initials = user.displayName.slice(0, 2).toUpperCase();
-
   return (
     <div ref={wrapper} className="relative">
       <button
@@ -55,29 +54,19 @@ export function AccountMenu({
         className={
           placement === 'sidebar'
             ? 'flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left transition hover:bg-white/[0.04]'
-            : 'flex items-center rounded-full p-0.5 transition hover:bg-white/[0.06]'
+            : 'flex h-11 w-11 items-center justify-center rounded-full transition hover:bg-white/[0.06]'
         }
       >
-        {user.avatarUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={user.avatarUrl}
-            alt=""
-            className={`shrink-0 rounded-full object-cover ${
-              placement === 'sidebar' ? 'h-10 w-10' : 'h-8 w-8'
-            }`}
-          />
-        ) : (
-          <span
-            aria-hidden
-            className={`flex shrink-0 items-center justify-center rounded-full font-display font-bold text-ink-950 ${
-              placement === 'sidebar' ? 'h-10 w-10 text-sm' : 'h-8 w-8 text-xs'
-            }`}
-            style={{ backgroundImage: 'linear-gradient(135deg,#FF3D9A,#FFB443)' }}
-          >
-            {initials}
-          </span>
-        )}
+        {/* The same <Avatar> as everywhere else, rather than a bare <img> and
+            a second gradient written out by hand. It also means a 36px circle
+            downloads a 36px picture instead of whatever came off the phone. */}
+        <Avatar
+          username={user.username}
+          displayName={user.displayName}
+          src={user.avatarUrl}
+          size={placement === 'sidebar' ? 'md' : 'sm'}
+          href={false}
+        />
         {placement === 'sidebar' && (
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm font-semibold">{user.displayName}</span>
@@ -107,7 +96,7 @@ export function AccountMenu({
             href={`/u/${user.username}`}
             role="menuitem"
             onClick={() => setOpen(false)}
-            className="block px-4 py-2.5 text-sm text-white/70 transition hover:bg-white/5 hover:text-white"
+            className="flex min-h-[44px] items-center px-4 text-sm text-white/70 transition hover:bg-white/5 hover:text-white"
           >
             View profile
           </Link>
@@ -115,7 +104,7 @@ export function AccountMenu({
             href="/messages"
             role="menuitem"
             onClick={() => setOpen(false)}
-            className="flex items-center justify-between px-4 py-2.5 text-sm text-white/70 transition hover:bg-white/5 hover:text-white"
+            className="flex min-h-[44px] items-center justify-between px-4 text-sm text-white/70 transition hover:bg-white/5 hover:text-white"
           >
             Messages
             {user.unreadMessages > 0 && (
@@ -128,7 +117,7 @@ export function AccountMenu({
             href="/settings"
             role="menuitem"
             onClick={() => setOpen(false)}
-            className="block px-4 py-2.5 text-sm text-white/70 transition hover:bg-white/5 hover:text-white"
+            className="flex min-h-[44px] items-center px-4 text-sm text-white/70 transition hover:bg-white/5 hover:text-white"
           >
             Settings
           </Link>
@@ -137,7 +126,7 @@ export function AccountMenu({
               href="/admin"
               role="menuitem"
               onClick={() => setOpen(false)}
-              className="block px-4 py-2.5 text-sm text-white/70 transition hover:bg-white/5 hover:text-white"
+              className="flex min-h-[44px] items-center px-4 text-sm text-white/70 transition hover:bg-white/5 hover:text-white"
             >
               Admin
             </Link>
@@ -147,7 +136,7 @@ export function AccountMenu({
             <button
               type="submit"
               role="menuitem"
-              className="block w-full px-4 py-2.5 text-left text-sm font-semibold text-fay transition hover:bg-fay/10"
+              className="flex min-h-[44px] w-full items-center px-4 text-left text-sm font-semibold text-fay transition hover:bg-fay/10"
             >
               Log out
             </button>

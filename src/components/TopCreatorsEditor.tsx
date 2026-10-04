@@ -39,7 +39,7 @@ export function TopCreatorsEditor({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="chip hover:bg-white/10"
+        className="chip-tab hover:bg-white/10"
         aria-label="Edit your Top 3 creators"
       >
         Edit

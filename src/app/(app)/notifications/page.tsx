@@ -41,9 +41,14 @@ export default async function NotificationsPage() {
       <MarkReadOnOpen unread={unread} action={markNotificationsReadAction} />
 
       <div className="mx-auto max-w-2xl px-4 pt-4 lg:pt-8">
+        {/* The heading is hidden on a phone because the top bar already says
+            "Notifications" — every other page in the app does the same. The
+            line underneath it is not a repeat, so it stays. */}
         <div className="mb-5">
-          <h1 className="font-display text-3xl font-extrabold tracking-tight">Notifications</h1>
-          <p className="mt-1 text-white/45">
+          <h1 className="hidden font-display text-3xl font-extrabold tracking-tight lg:block">
+            Notifications
+          </h1>
+          <p className="text-white/45 lg:mt-1">
             {unread > 0 ? `${unread} new` : 'You are all caught up'}
           </p>
         </div>

@@ -188,7 +188,7 @@ export default async function ProfilePage({
                   <Link
                     key={interest}
                     href={`/discover?category=${encodeURIComponent(interest)}`}
-                    className="chip hover:bg-white/10"
+                    className="chip-tab hover:bg-white/10"
                   >
                     {interest}
                   </Link>
@@ -209,6 +209,58 @@ export default async function ProfilePage({
                 href={`/u/${user.username}/following`}
               />
               <Stat label="Posts" value={formatCount(stats.posts)} />
+            </div>
+
+            {/* The actions come before the numbers.
+                Follow, Message and Rate were underneath two rating boxes, the
+                ranking line, the reaction row and the Top 3 — so on a phone the
+                one thing a visitor came to do was a scroll away from the name
+                they came to see. Nothing is removed; the order is what
+                changed. */}
+            <div className="mt-5 flex flex-wrap items-center gap-2">
+              {isSelf ? (
+                <>
+                  <Link href="/settings" className="btn-ghost min-h-[44px] px-6 py-2.5 text-sm">
+                    Edit profile
+                  </Link>
+                  {/* The general way in, beside Edit profile: Photo, Text,
+                      Upload video, Record video. Record video opens the same
+                      VideoStudio the `+` button does, by the same route. */}
+                  <CreatePostMenu variant="button" />
+                </>
+              ) : (
+                <>
+                  <FollowButton
+                    userId={user.id}
+                    initialFollowing={following}
+                    size="lg"
+                    signedIn={Boolean(viewer)}
+                  />
+                  {/* Only appears while the follow is mutual. The rule is
+                      enforced on the server and in the database either way. */}
+                  {messageable && (
+                    <Link
+                      href={`/messages/${user.username}`}
+                      className="btn-ghost min-h-[44px] px-6 py-2.5 text-sm"
+                    >
+                      Message
+                    </Link>
+                  )}
+                  <RateButton
+                    targetType="user"
+                    targetId={user.id}
+                    rating={rated ? rating.overall : null}
+                    votes={rating.overallVotes}
+                    myScore={mine?.score ?? null}
+                    myReactions={mine?.reactions ?? []}
+                    signedIn={Boolean(viewer)}
+                    subject={`@${user.username}`}
+                  />
+                  {viewer && (
+                    <ProfileMenu userId={user.id} username={user.username} blocked={blocked} />
+                  )}
+                </>
+              )}
             </div>
 
             <div className="mt-5 grid grid-cols-2 gap-3">
@@ -280,57 +332,11 @@ export default async function ProfilePage({
                 }))}
               />
             )}
-
-            <div className="mt-5 flex flex-wrap items-center gap-2">
-              {isSelf ? (
-                <>
-                  <Link href="/settings" className="btn-ghost px-6 py-2.5 text-sm">
-                    Edit profile
-                  </Link>
-                  {/* The general way in, beside Edit profile: Photo, Text,
-                      Upload video, Record video. Record video opens the same
-                      VideoStudio the `+` button does, by the same route. */}
-                  <CreatePostMenu variant="button" />
-                </>
-              ) : (
-                <>
-                  <FollowButton
-                    userId={user.id}
-                    initialFollowing={following}
-                    size="lg"
-                    signedIn={Boolean(viewer)}
-                  />
-                  {/* Only appears while the follow is mutual. The rule is
-                      enforced on the server and in the database either way. */}
-                  {messageable && (
-                    <Link
-                      href={`/messages/${user.username}`}
-                      className="btn-ghost px-6 py-2.5 text-sm"
-                    >
-                      Message
-                    </Link>
-                  )}
-                  <RateButton
-                    targetType="user"
-                    targetId={user.id}
-                    rating={rated ? rating.overall : null}
-                    votes={rating.overallVotes}
-                    myScore={mine?.score ?? null}
-                    myReactions={mine?.reactions ?? []}
-                    signedIn={Boolean(viewer)}
-                    subject={`@${user.username}`}
-                  />
-                  {viewer && (
-                    <ProfileMenu userId={user.id} username={user.username} blocked={blocked} />
-                  )}
-                </>
-              )}
-            </div>
           </header>
 
           {/* Scrollable, because four chips and a count each do not fit across a
               small phone — and cutting one off the end would hide a whole shelf. */}
-          <nav className="profile-tabs -mx-4 mt-6 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <nav aria-label="Profile" className="profile-tabs chip-strip mt-6">
             {TABS.map((entry) => (
               // A plain anchor, not a `<Link>`, and deliberately. The shelf lives
               // in a search param on a `force-dynamic` page, and a client-side
@@ -346,11 +352,11 @@ export default async function ProfilePage({
                 href={entry === 'posts' ? `/u/${user.username}` : `/u/${user.username}?tab=${entry}`}
                 data-profile-tab={entry}
                 aria-current={tab === entry ? 'page' : undefined}
-                // A `chip`'s own padding makes a 34px-tall pill, which is fine
-                // for a filter and too small for the navigation these four are:
-                // the shelves are how somebody gets at their own videos, photos
-                // and writing, so they are given a thumb-sized target.
-                className={`chip min-h-[44px] shrink-0 px-4 text-sm capitalize ${tab === entry ? 'chip-active' : 'hover:bg-white/10'}`}
+                // `chip-tab` rather than `chip`: a chip's own padding makes a
+                // 28px pill, which is fine for a label and too small for the
+                // navigation these four are. It is the same class the feed tabs
+                // and the category strips use.
+                className={`chip-tab capitalize ${tab === entry ? 'chip-active' : 'hover:bg-white/10'}`}
               >
                 {entry}
                 {entry !== 'about' && counts[entry] > 0 && (
@@ -398,7 +404,7 @@ export default async function ProfilePage({
                 )}
                 {isSelf && shelf === 'posts' && (
                   <Link
-                    href="/create"
+                    href="/create?kind=photo"
                     data-new-photo-post
                     className="btn-ghost min-h-[52px] w-full py-3.5"
                   >
@@ -422,7 +428,7 @@ export default async function ProfilePage({
                         isSelf && shelf === 'videos'
                           ? { href: '/create/video', label: 'Record a video' }
                           : isSelf && shelf === 'posts'
-                            ? { href: '/create', label: 'New photo post' }
+                            ? { href: '/create?kind=photo', label: 'New photo post' }
                             : undefined
                       }
                     />

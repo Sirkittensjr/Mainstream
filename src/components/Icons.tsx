@@ -350,3 +350,21 @@ export function TextIcon(props: IconProps) {
     </svg>
   );
 }
+
+/**
+ * The "more options" affordance.
+ *
+ * Three of these menus were drawn with a literal "•••" in the markup, which
+ * renders at whatever size and baseline the font feels like and never matched
+ * the icon beside it. This is the same mark as an icon, so it lines up with
+ * everything else and scales with the button it sits in.
+ */
+export function MoreIcon(props: IconProps) {
+  return (
+    <svg {...base(props)} fill="currentColor" stroke="none">
+      <circle cx="5" cy="12" r="1.7" />
+      <circle cx="12" cy="12" r="1.7" />
+      <circle cx="19" cy="12" r="1.7" />
+    </svg>
+  );
+}

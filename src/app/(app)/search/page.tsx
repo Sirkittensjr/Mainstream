@@ -8,7 +8,7 @@ import { RatingPill } from '@/components/RatingPill';
 import { PageTopBar } from '@/components/PageTopBar';
 import { PostList } from '@/components/PostList';
 import { SearchIcon } from '@/components/Icons';
-import { SectionHeader } from '@/components/EmptyState';
+import { EmptyState, SectionHeader } from '@/components/EmptyState';
 import { search } from '@/lib/services/search';
 import { followingIds } from '@/lib/services/users';
 import { CATEGORIES } from '@/lib/types';
@@ -39,10 +39,21 @@ export default async function SearchPage({
     <>
       <PageTopBar title="Search" />
       <div className="mx-auto max-w-2xl px-4 pt-4 lg:pt-8">
-        <form action="/search" className="relative">
+        <form action="/search" role="search" className="relative">
           <SearchIcon className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-white/30" />
+          {/* `type="search"` is what gives a phone the Search key on its
+              keyboard and the clear button in the field; without it this was a
+              plain text box whose only way to submit was a return key labelled
+              "go". Autocorrect is off because it mangles @handles. */}
           <input
             name="q"
+            type="search"
+            enterKeyHint="search"
+            inputMode="search"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
             defaultValue={query}
             autoFocus={!query}
             placeholder="People, posts, tags, categories"
@@ -59,7 +70,7 @@ export default async function SearchPage({
                 <Link
                   key={category}
                   href={`/discover?category=${encodeURIComponent(category)}`}
-                  className="chip hover:bg-white/10"
+                  className="chip-tab hover:bg-white/10"
                 >
                   {category}
                 </Link>
@@ -69,14 +80,35 @@ export default async function SearchPage({
         )}
 
         {nothing && (
-          <p className="mt-10 text-center text-sm text-white/40">
-            Nothing matched &ldquo;{query}&rdquo;. Try a name, a tag or a category.
-          </p>
+          <div className="mt-8">
+            <EmptyState
+              title={`Nothing matched “${query}”`}
+              body="Try a name, an @handle, a tag or one of the categories below."
+              cta={{ href: '/discover', label: 'Browse Discover' }}
+            />
+            <div className="mt-6">
+              <SectionHeader title="Categories" />
+              <div className="flex flex-wrap gap-2">
+                {CATEGORIES.map((category) => (
+                  <Link
+                    key={category}
+                    href={`/discover?category=${encodeURIComponent(category)}`}
+                    className="chip-tab hover:bg-white/10"
+                  >
+                    {category}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          </div>
         )}
 
         {results.people.length > 0 && (
           <section className="mt-8">
-            <SectionHeader title="People" />
+            <SectionHeader
+              title="People"
+              subtitle={`${results.people.length} ${results.people.length === 1 ? 'match' : 'matches'}`}
+            />
             <ul className="space-y-2">
               {results.people.map((entry) => (
                 <li key={entry.user.id} className="card flex items-center gap-3 p-4">
@@ -122,7 +154,7 @@ export default async function SearchPage({
                 <Link
                   key={category}
                   href={`/discover?category=${encodeURIComponent(category)}`}
-                  className="chip hover:bg-white/10"
+                  className="chip-tab hover:bg-white/10"
                 >
                   {category}
                 </Link>

@@ -74,20 +74,22 @@ export default async function DiscoverPage({
           </p>
         </div>
 
-        <div className="mb-4 flex gap-2">
+        <nav aria-label="Discover" className="chip-strip mb-4">
           <Link
             href={href({ show: 'posts', board: null })}
-            className={`chip ${kind === 'posts' ? 'chip-active' : 'hover:bg-white/10'}`}
+            aria-current={kind === 'posts' ? 'page' : undefined}
+            className={`chip-tab ${kind === 'posts' ? 'chip-active' : 'hover:bg-white/10'}`}
           >
             Posts
           </Link>
           <Link
             href={href({ show: 'people', board: null })}
-            className={`chip ${kind === 'people' ? 'chip-active' : 'hover:bg-white/10'}`}
+            aria-current={kind === 'people' ? 'page' : undefined}
+            className={`chip-tab ${kind === 'people' ? 'chip-active' : 'hover:bg-white/10'}`}
           >
             People
           </Link>
-        </div>
+        </nav>
 
         {kind === 'posts' ? (
           <PostsTab
@@ -124,10 +126,11 @@ function CategoryStrip({
   unit: string;
 }) {
   return (
-    <div className="hide-scrollbar -mx-4 mt-4 flex gap-2 overflow-x-auto px-4 pb-1">
+    <div className="chip-strip mt-4">
       <Link
         href={href({ category: null })}
-        className={`chip shrink-0 ${!active ? 'chip-active' : 'hover:bg-white/10'}`}
+        aria-current={!active ? 'page' : undefined}
+        className={`chip-tab ${!active ? 'chip-active' : 'hover:bg-white/10'}`}
       >
         All
       </Link>
@@ -135,7 +138,8 @@ function CategoryStrip({
         <Link
           key={entry.category}
           href={href({ category: entry.category })}
-          className={`chip shrink-0 ${active === entry.category ? 'chip-active' : 'hover:bg-white/10'}`}
+          aria-current={active === entry.category ? 'page' : undefined}
+          className={`chip-tab ${active === entry.category ? 'chip-active' : 'hover:bg-white/10'}`}
           title={`${entry.count} ${unit}`}
         >
           {entry.category}
@@ -165,12 +169,13 @@ async function PostsTab({
 
   return (
     <>
-      <div className="flex gap-2">
+      <div className="chip-strip">
         {POST_BOARDS.map((entry) => (
           <Link
             key={entry.key}
             href={href({ board: entry.key })}
-            className={`chip ${board === entry.key ? 'chip-active' : 'hover:bg-white/10'}`}
+            aria-current={board === entry.key ? 'page' : undefined}
+            className={`chip-tab ${board === entry.key ? 'chip-active' : 'hover:bg-white/10'}`}
           >
             {entry.label}
           </Link>
@@ -262,12 +267,13 @@ async function PeopleTab({
         </div>
       )}
 
-      <div className="flex gap-2">
+      <div className="chip-strip">
         {RANK_BOARDS.map((entry) => (
           <Link
             key={entry.key}
             href={href({ board: entry.key })}
-            className={`chip ${board === entry.key ? 'chip-active' : 'hover:bg-white/10'}`}
+            aria-current={board === entry.key ? 'page' : undefined}
+            className={`chip-tab ${board === entry.key ? 'chip-active' : 'hover:bg-white/10'}`}
           >
             {entry.label}
           </Link>
