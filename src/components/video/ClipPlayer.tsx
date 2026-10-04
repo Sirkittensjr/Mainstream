@@ -55,13 +55,25 @@ export const ClipPlayer = forwardRef<
   {
     clips: Clip[];
     muted: boolean;
+    /**
+     * How the picture meets its box, and it must be the SAME rule the render
+     * uses — see `outputFrame`. The editor previewed with `contain` while the
+     * output was `cover`, so a 9:16 recording in a taller-than-9:16 phone screen
+     * was fitted by width and shown with a band of black above and below it that
+     * the finished video does not have. A preview with a different fit from the
+     * export is not a preview.
+     */
+    fit?: 'cover' | 'contain';
     /** Must position the element — `absolute inset-0`, or `relative` plus a size. */
     /** Project time, every frame while playing. */
     onTime?: (projectTime: number) => void;
     onPlayingChange?: (playing: boolean) => void;
     className?: string;
   }
->(function ClipPlayer({ clips, muted, onTime, onPlayingChange, className = '' }, ref) {
+>(function ClipPlayer(
+  { clips, muted, fit = 'cover', onTime, onPlayingChange, className = '' },
+  ref,
+) {
   const slotA = useRef<HTMLVideoElement>(null);
   const slotB = useRef<HTMLVideoElement>(null);
   /** Stable, so every hook below can list it as the dependency it really is. */
@@ -340,7 +352,9 @@ export const ClipPlayer = forwardRef<
           data-clip-slot={slot}
           // Both fill the frame; only the active one is visible. Kept mounted and
           // laid out so the waiting one can decode its first frame in advance.
-          className={`absolute inset-0 h-full w-full object-contain ${
+          className={`absolute inset-0 h-full w-full ${
+            fit === 'cover' ? 'object-cover' : 'object-contain'
+          } ${
             visible === slot ? 'opacity-100' : 'pointer-events-none opacity-0'
           }`}
         />

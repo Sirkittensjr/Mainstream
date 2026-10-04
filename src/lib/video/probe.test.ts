@@ -194,6 +194,90 @@ describe('probeVideo — MP4 and MOV', () => {
     assert.ok(seconds !== null && Math.abs(seconds - 121) < 0.01, `got ${seconds}`);
   });
 
+  /**
+   * The failure this guards against cost a 6.57s video more than half its
+   * length. `recorder.start(1000)` asks for one-second fragments, but a machine
+   * under load writes far fewer and far longer ones: a real render came out as
+   * three fragments, the last starting at 2.787s and carrying the remaining
+   * 3.8s. Measuring to the START of the last fragment recorded it as 2.787s.
+   */
+  it('counts the last fragment\u2019s own samples, not just where it starts', () => {
+    const head = mp4(
+      mvhd({ timescale: 1000, duration: 0 }),
+      trak({ id: 1, width: 1080, height: 1920, timescale: 30000 }),
+    );
+    // 30 samples of 1000 ticks each at 30000/s: one second per fragment.
+    const fragment = (decodeTime: number) =>
+      box(
+        'moof',
+        box(
+          'traf',
+          // tfhd with default-sample-duration-present (0x08).
+          box('tfhd', be32(0x000008), be32(1), be32(1000)),
+          box('tfdt', be32(0x01000000), be64(decodeTime)),
+          // trun, sample_count 30, no per-sample fields.
+          box('trun', be32(0), be32(30)),
+        ),
+      );
+    // Starts at 4s and runs a second: the file is 5s, not 4.
+    const file = concat(head, fragment(0), fragment(30000 * 4));
+    const seconds = probeVideo(file).seconds;
+    assert.ok(seconds !== null && Math.abs(seconds - 5) < 0.01, `got ${seconds}`);
+  });
+
+  it('takes per-sample durations where the fragment lists them', () => {
+    const head = mp4(
+      mvhd({ timescale: 1000, duration: 0 }),
+      trak({ id: 1, width: 1080, height: 1920, timescale: 30000 }),
+    );
+    // trun flags 0x000100: each sample carries its own duration. Three of them.
+    const fragment = box(
+      'moof',
+      box(
+        'traf',
+        box('tfhd', be32(0), be32(1)),
+        box('tfdt', be32(0x01000000), be64(30000 * 2)),
+        box('trun', be32(0x000100), be32(3), be32(15000), be32(15000), be32(30000)),
+      ),
+    );
+    const seconds = probeVideo(concat(head, fragment)).seconds;
+    // 2s in, plus 0.5 + 0.5 + 1.0 of samples.
+    assert.ok(seconds !== null && Math.abs(seconds - 4) < 0.01, `got ${seconds}`);
+  });
+
+  it('falls back to the movie header\u2019s default when a fragment states none', () => {
+    const head = mp4(
+      mvhd({ timescale: 1000, duration: 0 }),
+      trak({ id: 1, width: 1080, height: 1920, timescale: 30000 }),
+      // mvex/trex carrying default_sample_duration 1000.
+      box('mvex', box('trex', be32(0), be32(1), be32(1), be32(1000), be32(0), be32(0))),
+    );
+    const fragment = box(
+      'moof',
+      box(
+        'traf',
+        box('tfhd', be32(0), be32(1)),
+        box('tfdt', be32(0x01000000), be64(30000 * 3)),
+        box('trun', be32(0), be32(60)),
+      ),
+    );
+    const seconds = probeVideo(concat(head, fragment)).seconds;
+    // 3s in, plus 60 samples of 1000/30000s = 2s.
+    assert.ok(seconds !== null && Math.abs(seconds - 5) < 0.01, `got ${seconds}`);
+  });
+
+  it('still answers when a fragment says nothing about its samples at all', () => {
+    const head = mp4(
+      mvhd({ timescale: 1000, duration: 0 }),
+      trak({ id: 1, width: 720, height: 1280, timescale: 90000 }),
+    );
+    const fragment = (decodeTime: number) =>
+      box('moof', box('traf', box('tfhd', be32(0), be32(1)), box('tfdt', be32(0x01000000), be64(decodeTime))));
+    const file = concat(head, fragment(0), fragment(90000 * 121));
+    const seconds = probeVideo(file).seconds;
+    assert.ok(seconds !== null && Math.abs(seconds - 121) < 0.01, `got ${seconds}`);
+  });
+
   it('says nothing rather than guessing at a file it cannot read', () => {
     assert.deepEqual(probeVideo(ascii('not a video at all, not even close')), {
       seconds: null,

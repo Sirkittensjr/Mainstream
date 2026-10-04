@@ -207,15 +207,86 @@ function fragmentHeaderDuration(bytes: Uint8Array, moovChildren: Box[]): number 
 }
 
 /**
+ * Default sample durations declared in `moov`, per track, for fragments that
+ * do not carry their own.
+ */
+function trackDefaults(bytes: Uint8Array): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const trex of findAll(bytes, 0, bytes.length, 'trex')) {
+    // version+flags(4), track_ID(4), description_index(4), default_sample_duration(4)
+    out.set(u32(bytes, trex.start + 4), u32(bytes, trex.start + 12));
+  }
+  return out;
+}
+
+/**
+ * How long one fragment of one track runs, in that track's timescale.
+ *
+ * The samples are described by the `trun` boxes: either each carries its own
+ * duration, or they all take the default from `tfhd`, or failing that from
+ * `trex` back in the movie header. Returns null when nothing says.
+ */
+function fragmentLength(bytes: Uint8Array, traf: Box, fallback: number): number | null {
+  const children = boxesIn(bytes, traf.start, traf.end);
+  const tfhd = findBox(children, 'tfhd');
+  if (!tfhd) return null;
+
+  const tfhdFlags = u32(bytes, tfhd.start) & 0xffffff;
+  let at = tfhd.start + 8; // version+flags, track_ID
+  if (tfhdFlags & 0x000001) at += 8; // base-data-offset
+  if (tfhdFlags & 0x000002) at += 4; // sample-description-index
+  const defaultDuration = tfhdFlags & 0x000008 ? u32(bytes, at) : fallback;
+
+  let total = 0;
+  let counted = false;
+  for (const trun of children.filter((box) => box.type === 'trun')) {
+    const flags = u32(bytes, trun.start) & 0xffffff;
+    const count = u32(bytes, trun.start + 4);
+    let cursor = trun.start + 8;
+    if (flags & 0x000001) cursor += 4; // data-offset
+    if (flags & 0x000004) cursor += 4; // first-sample-flags
+
+    if (flags & 0x000100) {
+      // Each sample states its own duration, first in each sample's record.
+      const stride =
+        4 +
+        (flags & 0x000200 ? 4 : 0) +
+        (flags & 0x000400 ? 4 : 0) +
+        (flags & 0x000800 ? 4 : 0);
+      for (let sample = 0; sample < count; sample += 1) {
+        const at2 = cursor + sample * stride;
+        if (at2 + 4 > trun.end) break;
+        total += u32(bytes, at2);
+      }
+      counted = true;
+    } else if (defaultDuration > 0) {
+      total += count * defaultDuration;
+      counted = true;
+    }
+  }
+  return counted ? total : null;
+}
+
+/**
  * Length of a fragmented file, from its fragments.
  *
- * Safari's MediaRecorder writes fragmented MP4 with no duration in `mvhd`, so
- * the only record of how long it runs is the decode time each fragment starts
- * at. The last one plus its own length is the answer; this reads the start and
- * lets the tolerance in limits.ts cover the final fragment.
+ * MediaRecorder writes fragmented MP4 with no duration in `mvhd`, so the only
+ * record of how long it runs is in the fragments: each states the decode time
+ * it starts at, and describes the samples it holds.
+ *
+ * THE LAST FRAGMENT'S OWN LENGTH COUNTS, and leaving it out is not a rounding
+ * error. This used to return the start of the last fragment and lean on the
+ * tolerance in limits.ts to cover it, which assumed fragments are about a
+ * second — true when the recorder is asked for one-second chunks and the
+ * machine keeps up. Under load they are not: a 6.57s render came out as three
+ * fragments, the last starting at 2.787s and carrying the remaining 3.8s, and
+ * the file was recorded as 2.787s long. A video can lose more than half its
+ * length this way, and the shorter the number, the more of the length limit a
+ * long upload slips past.
  */
 function fragmentedDuration(bytes: Uint8Array, tracks: Track[]): number | null {
   const timescaleFor = new Map(tracks.map((track) => [track.id, track.timescale]));
+  const defaults = trackDefaults(bytes);
   let longest: number | null = null;
 
   for (const moof of findAll(bytes, 0, bytes.length, 'moof')) {
@@ -224,11 +295,13 @@ function fragmentedDuration(bytes: Uint8Array, tracks: Track[]): number | null {
       const tfhd = findBox(children, 'tfhd');
       const tfdt = findBox(children, 'tfdt');
       if (!tfhd || !tfdt) continue;
-      const timescale = timescaleFor.get(u32(bytes, tfhd.start + 4)) ?? 0;
+      const trackId = u32(bytes, tfhd.start + 4);
+      const timescale = timescaleFor.get(trackId) ?? 0;
       if (timescale <= 0) continue;
       const version = bytes[tfdt.start];
       const base = version === 1 ? u64(bytes, tfdt.start + 4) : u32(bytes, tfdt.start + 4);
-      const seconds = base / timescale;
+      const own = fragmentLength(bytes, traf, defaults.get(trackId) ?? 0) ?? 0;
+      const seconds = (base + own) / timescale;
       if (longest === null || seconds > longest) longest = seconds;
     }
   }

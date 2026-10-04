@@ -575,15 +575,120 @@ letterboxes into it, because somebody uploading a 16:9 video from a desktop did
 not ask for two thirds of its width to be thrown away. Either way one scale is
 applied to both axes, which is what "never stretched" means. See `outputFrame`.
 
-Also covered: the editor filling the viewport with the video `object-contain` so
-nothing is stretched; the controls overlaying the lower part rather than pushing
-the video into a box; per-clip selection and trimming, with the whole project
-getting shorter each time (measured 7.1s → 5.1s → 3.6s); text appearing over the
-video as it is typed and staying clear of the controls; a true 9:16 preview on the
-posting screen; and the posted file's own duration matching the kept clips
-(`stored 3.62s against 3.60s`) with the overlay preserved. Then the same editor on
-a smaller Android viewport, and Retake on the only clip going back to the camera
-rather than leaving an editor with nothing in it.
+**The editor's shape, and why the black band was there.** The picture used to be
+laid across the whole screen with `object-contain`. A phone screen is TALLER than
+9:16 — 390x844 is 0.46 against 0.5625 — so a vertical recording is wider than the
+screen it was being fitted into: `contain` matched its width and left about 150px
+of black split above and below, while the render filled 1080x1920 with `cover`. The
+preview was a preview of a different video.
+
+The fix is settled by arithmetic rather than taste. A full-width 9:16 frame on a
+390px phone wants to be **693px tall against a 664px viewport**, so a picture that
+shares the height with a toolbar cannot be 9:16: putting it in the 390x415 space
+above one and covering threw away 40% of the frame, and fitting brought the bands
+straight back. So the picture is the WHOLE screen, met with `outputFrame`'s own
+fit, and the controls float over its lower part on a scrim. The suite measures all
+of it: the video at `390x664` in a `390x664` viewport, **4% of the frame's height
+lost to the crop**, `objectFit: cover`, and the free area above the controls
+reaching `0px`.
+
+**The editor is five bands, and the video is one of them.** Top bar, the open
+clip as a filmstrip of its own frames, the video, the tools, the clips. What this
+replaced put the video full-bleed behind everything and floated the controls over
+its lower third — the largest possible picture, permanently half-covered by the
+thing editing it. Laying the bands out costs width, because a 9:16 box in the
+space left over is about 200px wide on a 390x664 screen, and buys a picture
+nothing is drawn on. The suite measures the band order, that they all fit, that
+the video gets the largest one, and that it is a true 9:16 box met with `cover` —
+the same rule `renderClips` uses, so 0% of the frame is lost to the crop and what
+is on screen is the shape that gets posted.
+
+**A recording is posted at 1080x1920, whatever the sensor gave.** `recordedFile`
+wraps a recording as a File precisely so `needsRender` lets an untouched clip skip
+the render pass — and skipping it posted the camera's own dimensions as the
+finished video. An iPhone hands back **1920x1080** and Chromium's fake device
+**1216x2160**, so the viewfinder's full-screen 9:16 crop was not what got posted,
+and no CSS container downstream can turn a landscape file into a portrait one.
+Clips now carry `fromCamera`, which makes `outputFrame` return the vertical frame
+for them and `needsRender` true unless the recording already is 1080x1920. The
+saving is still taken where it can be — an upload from the camera roll keeps its
+own shape, and a camera that really does give 1080x1920 skips the pass — so it is
+only paid when the frame would otherwise be wrong. mobile-record-flow asserts the
+posted media's own width and height, which is the check that was missing: the
+three-clip suite had always covered the rendered path, and the single untouched
+recording was the one nothing measured.
+
+**The clips are their own frames.** A row of numbered grey boxes is a form; a row
+of the actual frames is an editor, and it is how somebody picks the clip they mean
+— by recognising it, not by remembering that the cat one was third. `useClipFrames`
+reads six frames across each clip's WHOLE source, keyed on the source rather than
+on the trim so that dragging a handle never invalidates them, and the one-frame
+thumbnail for an unselected clip is just the middle frame of that same strip, so a
+clip is read once rather than twice. The suite asserts every clip in the strip
+paints a frame (`3 of 3`) and that the open one is a filmstrip (`6 frames`).
+
+Also covered: the controls sitting in the lower part rather than pushing the video
+into a box, and the open tool's sheet being a short strip BELOW the video rather
+than the floating panel that used to take over the middle of the screen; the
+selected clip opening out on the timeline with a draggable grip at each end while
+the other clips stay beside it (`7.6s → 6.9s` from one drag, with nothing opened
+over the video to do it); per-clip selection and trimming, with the whole project
+getting shorter each time (measured 12.1s → 10.1s → 8.6s → 7.6s); the clock over
+the video rather than buried in the controls; the **+** on the end of the timeline
+opening the camera and the new take JOINING the project (`3 → 4 clips`) rather
+than replacing it; **Delete** taking the selected clip back out again
+(`4 → 3 clips`, `9.0s → 6.9s`) without dropping out of the editor; **Resize**
+offering the desktop editor's own five shapes and really cropping the clip; text
+appearing over the video as it is typed, staying clear of the controls, and being
+tappable on the video itself to reopen that line; a true 9:16 preview on the
+posting screen; and the posted file's own duration against the kept clips, read
+live at the moment **Next** is tapped rather than from a number captured before
+the last cut. Then the same editor on a smaller Android viewport — one clip still
+gets a timeline, because that is where its trim handles are, and a second clip
+makes the two-clip project the three-clip run never passes through — and Retake on
+the only clip going back to the camera rather than leaving an editor with nothing
+in it.
+
+**The posted duration: two separate bugs, and what is left.**
+
+*The server was mis-reading the file.* `fragmentedDuration` measured a fragmented
+MP4 to the START of its last fragment, leaning on the tolerance in limits.ts to
+cover that fragment's own length — which assumes fragments are about a second,
+true when `recorder.start(1000)` is honoured and the machine keeps up. Under load
+it is not: a real 6.57s render came out as three fragments, the last starting at
+2.787s and carrying the remaining 3.8s, and the file was recorded as **2.787s**.
+More than half the length gone — and the shorter the number, the more of the
+length limit a long upload slips past. It now sums the samples the last fragment
+actually holds, from `trun`, falling back to `tfhd`'s default and then `trex`'s.
+Checked against four real renders, where the server's answer now matches the
+browser's own to the millisecond: 8.224, 8.464, 6.145, 6.567.
+
+*The render's length was whatever wall clock it happened to take.* Both the frame
+cadence and the recording ran off a wall-clock `setInterval`, so a machine that
+could not keep up changed the length AND put the pictures out of step with it.
+Frames are now paced on the SOURCE — `round(progress * OUTPUT_FPS)` frames by the
+time the source has played `progress` seconds — so the video cannot play fast or
+slow; and each clip gets a recording window of exactly its kept length, with the
+recorder held across the dead time spent fetching and seeking the next clip.
+
+*What is left is MediaRecorder's.* It records in real time, so when the main
+thread blocks the recorder keeps running and no timer can shut the window on the
+beat. The same fixed 6.90s project, measured end to end — before: 49%, 51%, 73%,
+84%, 88%, 124%, 134%. After: 101%, 101%, 113%, 85%. The median is 101% and the
+tail is roughly ±15%, which is what the suite's band allows.
+
+Three cleverer designs were tried and discarded, each documented at `playInto`:
+pausing on a stall detector (thrashed the recorder thirty times a second and
+dragged a 0.3s clip out to 1.8s), steering a control loop on accumulated recorded
+time (could only shed time, so a clip ending mid-hold stayed short — 76%), and
+topping that shortfall back up (overcorrected to 117%, because the pause latency
+it compensated for is exactly what it cannot measure).
+
+Closing the tail means not recording in real time at all: encoding frames with
+explicit timestamps through WebCodecs (`VideoEncoder`/`AudioEncoder` plus a muxer
+— `mp4-muxer` is on the registry) makes duration exact by construction and wholly
+independent of load. That is a new dependency and a second encode path, so it has
+not been done here.
 
 **The tappable part of the video is a flex sibling, not a percentage.** A
 tap-to-play region of `inset-0` put its own centre underneath the editing panel,

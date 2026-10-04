@@ -194,4 +194,74 @@
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
+
+  /*
+   * The video editor's scrub bar.
+   *
+   * A stock range input is the single thing that made the editor read as a web
+   * form rather than as a video app: a grey groove and a system thumb, sized by
+   * the platform. This keeps the element — it is still a real range input, so it
+   * still takes a keyboard, a screen reader and the suite's `max` — and gives it
+   * a thin track with a bright fill and a round white knob.
+   *
+   * The 44px comes from `height`, not from a tall track: the box has to be a
+   * thumb-sized target while the groove it draws stays 4px.
+   */
+  .scrub {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 2.75rem;
+    background: transparent;
+    touch-action: none;
+  }
+
+  /*
+   * The project bar in the editor, which is not the primary target.
+   *
+   * The filmstrip above it is what a thumb reaches for — 56px of actual frames
+   * — so this one answers a different question (where am I in the whole video)
+   * and can afford to be slim. Every pixel it gives back is video: the editor is
+   * five stacked bands and the picture gets what is left over.
+   */
+  .scrub-sm {
+    height: 1.5rem;
+  }
+
+  .scrub::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: var(--scrub-track, rgba(255, 255, 255, 0.22));
+  }
+
+  .scrub::-moz-range-track {
+    height: 4px;
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.22);
+  }
+
+  .scrub::-moz-range-progress {
+    height: 4px;
+    border-radius: 9999px;
+    background: theme('colors.fay.DEFAULT');
+  }
+
+  .scrub::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    margin-top: -5px;
+    border-radius: 9999px;
+    background: #fff;
+    box-shadow: 0 1px 4px rgb(0 0 0 / 0.5);
+  }
+
+  .scrub::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border: 0;
+    border-radius: 9999px;
+    background: #fff;
+    box-shadow: 0 1px 4px rgb(0 0 0 / 0.5);
+  }
 }

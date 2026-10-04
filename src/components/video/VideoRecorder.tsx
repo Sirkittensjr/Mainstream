@@ -153,7 +153,18 @@ export function VideoRecorder({
 
     const attempt = async (audio: boolean) =>
       navigator.mediaDevices.getUserMedia({
-        video: { facingMode: facing, width: { ideal: 1080 }, height: { ideal: 1920 } },
+        video: {
+          facingMode: facing,
+          // `ideal` is a hint, not a promise, and cameras answer it with their
+          // sensor's own orientation: an iPhone returns 1920x1080 for this and
+          // Chromium's fake device returns 1216x2160. `aspectRatio` is honoured
+          // by more of them than the pair of dimensions is, so it is worth
+          // asking — but nothing downstream relies on the answer. The output
+          // frame is settled by `fromCamera`, not by what arrives here.
+          aspectRatio: { ideal: 9 / 16 },
+          width: { ideal: 1080 },
+          height: { ideal: 1920 },
+        },
         audio,
       });
 

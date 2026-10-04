@@ -152,6 +152,24 @@ describe('the shape of the finished video', () => {
     assert.equal(outputFrame([clip({ sourceWidth: 1080, sourceHeight: 1920 })]).fit, 'cover');
   });
 
+  it('renders a landscape RECORDING into the vertical frame anyway', () => {
+    // The viewfinder is a 9:16 crop of whatever the sensor gives, so that crop
+    // is what was framed and what has to be posted.
+    const frame = outputFrame([
+      clip({ fromCamera: true, sourceWidth: 1920, sourceHeight: 1080 }),
+    ]);
+    assert.deepEqual(
+      { width: frame.width, height: frame.height, fit: frame.fit },
+      { width: 1080, height: 1920, fit: 'cover' },
+    );
+  });
+
+  it('but leaves a landscape UPLOAD its own shape', () => {
+    const frame = outputFrame([clip({ sourceWidth: 1920, sourceHeight: 1080 })]);
+    assert.equal(frame.fit, 'contain');
+    assert.ok(frame.width > frame.height, `${frame.width}x${frame.height}`);
+  });
+
   it('a 3:4 portrait clip is cropped to fit, never stretched', () => {
     const frame = outputFrame([clip({ sourceWidth: 1080, sourceHeight: 1440 })]);
     assert.deepEqual({ width: frame.width, height: frame.height }, { width: 1080, height: 1920 });
@@ -209,6 +227,29 @@ describe('deciding whether to re-encode', () => {
 
   it('re-encodes once there is more than one clip', () => {
     assert.equal(needsRender([clip({ id: 'a', file }), clip({ id: 'b', file })]), true);
+  });
+
+  /**
+   * The bug this guards: a recording was posted at whatever the sensor handed
+   * back, because wrapping it as a File is what lets an untouched clip skip the
+   * pass. An iPhone hands back 1920x1080 and Chromium's fake device 1216x2160,
+   * so the "untouched" case was almost never the 9:16 the viewfinder framed.
+   */
+  it('re-encodes a recording that is not already the output frame', () => {
+    const landscape = clip({ file, fromCamera: true, sourceWidth: 1920, sourceHeight: 1080 });
+    assert.equal(needsRender([landscape]), true);
+    const oversized = clip({ file, fromCamera: true, sourceWidth: 1216, sourceHeight: 2160 });
+    assert.equal(needsRender([oversized]), true);
+  });
+
+  it('leaves a recording alone when it already is 1080x1920', () => {
+    const exact = clip({ file, fromCamera: true, sourceWidth: 1080, sourceHeight: 1920 });
+    assert.equal(needsRender([exact]), false);
+  });
+
+  it('does not force the frame on a video somebody uploaded', () => {
+    const landscape = clip({ file, sourceWidth: 1920, sourceHeight: 1080 });
+    assert.equal(needsRender([landscape]), false);
   });
 
   for (const [what, patch] of [

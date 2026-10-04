@@ -333,7 +333,7 @@ export function VideoStudio({
 
   /** Turns a file or a recording into a clip, once we know how long it is. */
   const addSource = useCallback(
-    async (source: Blob, label: string, file?: File) => {
+    async (source: Blob, label: string, file?: File, fromCamera = false) => {
       const url = trackUrl(URL.createObjectURL(source));
       let facts;
       try {
@@ -372,6 +372,7 @@ export function VideoStudio({
             rotation: 0,
             volume: 1,
             file,
+            fromCamera,
           }),
         ];
       });
@@ -600,7 +601,9 @@ export function VideoStudio({
           // lib/video/recording.ts.
           const index = clips.length + 1;
           const file = recordedFile(blob, mimeType, index);
-          void addSource(file, `Recording ${index}`, file);
+          // Flagged as filmed here, which is what makes it come out 1080x1920
+          // whatever shape the sensor handed back — see `fromCamera`.
+          void addSource(file, `Recording ${index}`, file, true);
           // And that is all a finished segment does. The camera stays open, on
           // the viewfinder, ready for the next one — releasing the shutter is
           // not a decision to stop filming, and it used to be treated as one.
@@ -663,9 +666,27 @@ export function VideoStudio({
           // than posted as the pre-trim version.
           setFinished(null);
         }}
+        onPatchClip={(id, patch) => {
+          setClips((current) => updateClip(current, id, patch));
+          setFinished(null);
+        }}
         onMuted={setMutedOnPost}
         onOverlays={setOverlays}
         onAddClip={left > 0.5 ? () => setRecording(true) : undefined}
+        onDeleteClip={(id) => {
+          // Computed out here rather than inside the updater: an updater can be
+          // called twice, and moving the whole screen twice is not idempotent.
+          const kept = clips.filter((entry) => entry.id !== id);
+          setClips(kept);
+          setFinished(null);
+          // Deleting the only clip leaves nothing to edit, so it goes back to the
+          // camera rather than to an empty editor — the same place Retake lands,
+          // because it is the same situation.
+          if (kept.length === 0) {
+            setMobileStage('camera');
+            setRecording(true);
+          }
+        }}
         onRetake={() => {
           // Going back past a take means that take is being redone, so it is
           // dropped — the LAST one, which is the one just filmed. Keeping it and
