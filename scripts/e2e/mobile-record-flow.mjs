@@ -619,11 +619,27 @@ async function run() {
     (await page.locator('[data-video-text]').innerText()).includes(overlayText),
     (await page.locator('[data-video-text]').innerText()).trim(),
   );
-  await page.locator('[data-editor-text-at="top"]').click();
-  await wait(300);
+  // Free placement: no Top/Middle/Bottom stops any more, a line is dragged on
+  // the video to wherever it is wanted.
   check(
-    'and it can be moved up the frame',
-    (await page.locator('[data-editor-text-at="top"]').getAttribute('aria-pressed')) === 'true',
+    'the old position stops are gone',
+    (await page.locator('[data-editor-text-at]').count()) === 0,
+  );
+  const placed = await page.locator('[data-video-text-line="0"]').boundingBox();
+  const picture = await page.locator('[data-editor-stage]').boundingBox();
+  await page.mouse.move(placed.x + placed.width / 2, placed.y + placed.height / 2);
+  await page.mouse.down();
+  for (const step of [0.4, 0.3, 0.2]) {
+    await page.mouse.move(picture.x + picture.width * 0.4, picture.y + picture.height * step);
+    await wait(60);
+  }
+  await page.mouse.up();
+  await wait(400);
+  const dropped = await page.locator('[data-video-text-line="0"]').boundingBox();
+  check(
+    'and it can be dragged up the frame',
+    dropped.y < placed.y - 15,
+    `${Math.round(placed.y)}px -> ${Math.round(dropped.y)}px`,
   );
 
   // --- sound ---

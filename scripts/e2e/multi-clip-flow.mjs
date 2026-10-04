@@ -622,20 +622,19 @@ async function run() {
     (await page.locator('[data-video-text]').innerText()).includes(overlayText),
   );
   check(
-    // `post`, not `editor`. The editor used to draw the words across the whole
-    // screen with its own insets, because the controls covered the lower third
-    // and a bottom-anchored line would have been typed underneath them. The
-    // words now sit inside the 9:16 box, which IS the frame they get posted in,
-    // so the post's own insets are the honest ones: where a line sits here is
-    // where it sits in the finished video.
-    'and it is drawn in the frame it will be posted in',
-    (await page.locator('[data-video-text]').getAttribute('data-video-text-variant')) === 'post',
+    // The variant now says whether the words can be EDITED, not which insets
+    // they use: a line is placed by its own coordinates, so there is one set of
+    // numbers and they mean the same thing in the editor as in the feed. In the
+    // editor the lines take taps and drags; everywhere else they take nothing,
+    // so a tap on a post's text still reaches the player underneath.
+    'and the words here are editable, unlike the ones on a post',
+    (await page.locator('[data-video-text]').getAttribute('data-video-text-variant')) === 'editor',
   );
 
   // Clear of the controls is the point: positioning text you cannot see is not
   // positioning it.
   const clearOfChrome = await page.evaluate(() => {
-    const text = document.querySelector('[data-video-text] p').getBoundingClientRect();
+    const text = document.querySelector('[data-video-text-line]').getBoundingClientRect();
     const panel = document.querySelector('[data-editor-controls]').getBoundingClientRect();
     return { textBottom: text.bottom, panelTop: panel.top, clear: text.bottom <= panel.top + 1 };
   });
@@ -645,13 +644,60 @@ async function run() {
     `text ends at ${Math.round(clearOfChrome.textBottom)}px, panel starts at ${Math.round(clearOfChrome.panelTop)}px`,
   );
 
-  await page.locator('[data-editor-text-at="top"]').click();
-  await wait(300);
-  const moved = await page.evaluate(() => {
-    const text = document.querySelector('[data-video-text] p').getBoundingClientRect();
-    return { top: text.top, vh: window.innerHeight };
-  });
-  check('it can be moved up the frame', moved.top < moved.vh * 0.4, `${Math.round(moved.top)}px`);
+  // FREE PLACEMENT. There are no Top/Middle/Bottom stops any more: a line starts
+  // in the middle of the frame and is dragged to wherever it is wanted, which is
+  // usually beside whatever it is pointing at.
+  const line = page.locator('[data-video-text-line="0"]');
+  const started = await line.boundingBox();
+  const box9x16 = await page.locator('[data-editor-stage]').boundingBox();
+  check(
+    'a new line starts in the middle of the frame',
+    Math.abs(started.y + started.height / 2 - (box9x16.y + box9x16.height / 2)) < box9x16.height * 0.08,
+    `${Math.round(started.y + started.height / 2)}px against a frame centred at ${Math.round(
+      box9x16.y + box9x16.height / 2,
+    )}px`,
+  );
+  check(
+    'and the old Top/Middle/Bottom stops are gone',
+    (await page.locator('[data-editor-text-at]').count()) === 0,
+  );
+
+  // Dragged up and to the left, by a pointer, exactly as a thumb would.
+  await page.mouse.move(started.x + started.width / 2, started.y + started.height / 2);
+  await page.mouse.down();
+  for (const step of [0.4, 0.3, 0.22]) {
+    await page.mouse.move(box9x16.x + box9x16.width * 0.35, box9x16.y + box9x16.height * step);
+    await wait(60);
+  }
+  await page.mouse.up();
+  await wait(400);
+  const dragged = await line.boundingBox();
+  check(
+    'and it can be dragged anywhere on the video — up',
+    dragged.y + dragged.height / 2 < started.y + started.height / 2 - 20,
+    `${Math.round(started.y)}px -> ${Math.round(dragged.y)}px`,
+  );
+  check(
+    'and sideways, which the three stops never allowed',
+    Math.abs(dragged.x - started.x) > 10,
+    `${Math.round(started.x)}px -> ${Math.round(dragged.x)}px`,
+  );
+
+  // Dragged hard at a corner, it stops at the edge rather than leaving the frame.
+  await page.mouse.move(dragged.x + dragged.width / 2, dragged.y + dragged.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box9x16.x - 400, box9x16.y - 400);
+  await wait(80);
+  await page.mouse.up();
+  await wait(400);
+  const shoved = await line.boundingBox();
+  check(
+    'but it cannot be pushed off the frame altogether',
+    shoved.x + shoved.width > box9x16.x + 4 && shoved.y + shoved.height > box9x16.y + 4,
+    `line at ${Math.round(shoved.x)},${Math.round(shoved.y)} in a frame at ${Math.round(
+      box9x16.x,
+    )},${Math.round(box9x16.y)}`,
+  );
 
   // Editing a line by tapping the line itself, which is where somebody looks.
   check(
@@ -669,6 +715,77 @@ async function run() {
   check(
     'text can be removed again',
     (await page.locator('[data-editor-text-remove]').count()) === 1,
+  );
+
+  /* ===================== a line that comes and goes ===================== */
+  section('TEXT HAS ITS OWN START AND END');
+
+  // With a line open, the filmstrip stops being the clip and becomes the whole
+  // project — because "when does this show" is a question about the finished
+  // video, which one clip's strip cannot answer.
+  check(
+    'the open line gets handles on the timeline',
+    (await page.locator('[data-editor-text-handle]').count()) === 2,
+  );
+  const whole = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+  check(
+    'a line shows for the whole video until it is timed',
+    /0:00\.0.0:\d\d/.test(await page.locator('[data-editor-text-window="0"]').innerText()),
+    (await page.locator('[data-editor-text-window="0"]').innerText()).replace(/\n/g, ' '),
+  );
+
+  // Drag the start handle a third of the way in.
+  const textRail = await page.locator('[data-editor-track]').boundingBox();
+  const fromGrip = await page.locator('[data-editor-text-handle="from"]').boundingBox();
+  await page.mouse.move(fromGrip.x + fromGrip.width / 2, fromGrip.y + fromGrip.height / 2);
+  await page.mouse.down();
+  for (const part of [0.15, 0.25, 0.33]) {
+    await page.mouse.move(textRail.x + textRail.width * part, fromGrip.y + fromGrip.height / 2);
+    await wait(70);
+  }
+  await page.mouse.up();
+  await wait(500);
+  const timed = await page.evaluate(() => {
+    const node = document.querySelector('[data-editor-text-handle="from"]');
+    return Number(node.getAttribute('aria-valuenow'));
+  });
+  check(
+    'dragging a handle moves when the line starts',
+    timed > 0.5 && timed < whole,
+    `starts at ${timed.toFixed(2)}s of ${whole.toFixed(2)}s`,
+  );
+
+  // And the preview obeys it: before the start, the line is not drawn.
+  await setRange(page.locator('[data-editor-timeline]'), 0);
+  await wait(500);
+  check(
+    'the line is NOT on the video before its start',
+    (await page.locator('[data-video-text-line="0"]').count()) === 0,
+    `playhead at 0s, line starts at ${timed.toFixed(2)}s`,
+  );
+  await setRange(page.locator('[data-editor-timeline]'), Math.min(whole - 0.2, timed + 0.4));
+  await wait(500);
+  check(
+    'and IS on the video once the playhead reaches it',
+    (await page.locator('[data-video-text-line="0"]').count()) === 1,
+  );
+
+  // Put the window back: the rest of the run is about a line that shows all the
+  // way through, including on the posted page where there is no playhead to wait
+  // for before looking for it.
+  const backRail = await page.locator('[data-editor-track]').boundingBox();
+  const backGrip = await page.locator('[data-editor-text-handle="from"]').boundingBox();
+  await page.mouse.move(backGrip.x + backGrip.width / 2, backGrip.y + backGrip.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(backRail.x - 40, backGrip.y + backGrip.height / 2);
+  await wait(80);
+  await page.mouse.up();
+  await wait(400);
+  check(
+    'and the window can be opened back up to the whole video',
+    Number(
+      await page.locator('[data-editor-text-handle="from"]').getAttribute('aria-valuenow'),
+    ) < 0.05,
   );
 
   /* ===================== another clip, and one less ===================== */
@@ -692,8 +809,65 @@ async function run() {
   await page.locator(`[data-editor-clip="${afterAdding - 1}"]`).click();
   await wait(300);
   const lengthWithFour = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+
+  // IT ASKS FIRST. A clip is a take that cannot be filmed again, so Delete opens
+  // a question rather than doing it.
   await page.locator('[data-editor-delete]').click();
+  await wait(300);
+  check(
+    'Delete asks before it deletes',
+    (await page.locator('[data-editor-confirm-delete]').count()) === 1,
+  );
+  check(
+    'and names the clip it means',
+    /Delete clip 4 of 4\?/.test(await page.locator('[data-editor-confirm-delete]').innerText()),
+    (await page.locator('[data-editor-confirm-delete]').innerText()).replace(/\n/g, ' '),
+  );
+  check(
+    'with the clip in question lit in the row',
+    await page.evaluate(
+      (position) =>
+        /rgb\(248|rgb\(250|red/.test(
+          getComputedStyle(
+            document.querySelector(`[data-editor-clip="${position}"]`),
+          ).borderTopColor,
+        ) ||
+        getComputedStyle(document.querySelector(`[data-editor-clip="${position}"]`))
+          .boxShadow !== 'none',
+      afterAdding - 1,
+    ),
+  );
+  check(
+    'and the question is small enough to leave the video visible',
+    await page.evaluate(() => {
+      const sheet = document
+        .querySelector('[data-editor-confirm-delete] div:last-of-type')
+        ?.getBoundingClientRect();
+      const stage = document.querySelector('[data-editor-stage]').getBoundingClientRect();
+      return sheet ? sheet.top > stage.top + stage.height * 0.4 : false;
+    }),
+  );
+
+  // No leaves everything exactly as it was.
+  await page.locator('[data-editor-confirm-no]').click();
+  await wait(400);
+  check(
+    'No closes it and changes nothing',
+    (await page.locator('[data-editor-confirm-delete]').count()) === 0 &&
+      (await page.locator('[data-editor-clip]').count()) === afterAdding &&
+      Number(await page.locator('[data-editor-timeline]').getAttribute('max')) === lengthWithFour,
+    `${await page.locator('[data-editor-clip]').count()} clips still here`,
+  );
+
+  // Yes deletes that one and only that one.
+  await page.locator('[data-editor-delete]').click();
+  await page.waitForSelector('[data-editor-confirm-yes]', { timeout: 5000 });
+  await page.locator('[data-editor-confirm-yes]').click();
   await wait(600);
+  check(
+    'and the question closes once it is answered',
+    (await page.locator('[data-editor-confirm-delete]').count()) === 0,
+  );
   const afterDeleting = await page.locator('[data-editor-clip]').count();
   check(
     'deleting the selected clip takes it out of the project',
@@ -710,6 +884,81 @@ async function run() {
     'with the editor still on the video rather than dropped back to the camera',
     (await page.locator('[data-editor-fullscreen]').count()) === 1,
   );
+
+  /* ===================== each clip's own level ===================== */
+  section('SOUND IS PER CLIP, NOT ONE SWITCH OVER THE LOT');
+
+  /** Reads the level the Sound tool shows for whichever clip is open. */
+  const levelNow = async () =>
+    Number(
+      (await page.locator('[data-editor-clip-volume-value]').innerText()).replace('%', ''),
+    );
+
+  await page.locator('[data-editor-tool="sound"]').click();
+  await wait(250);
+  await page.locator('[data-editor-clip="0"]').click();
+  await wait(300);
+  check('a clip starts at full volume', (await levelNow()) === 100, `${await levelNow()}%`);
+
+  // Clip 2 down to nothing. It is one of the two long clips, which is what makes
+  // it measurable in the finished file further down.
+  await page.locator('[data-editor-clip="1"]').click();
+  await wait(300);
+  await page.locator('[data-editor-clip-mute]').click();
+  await wait(300);
+  check('a clip can be muted on its own', (await levelNow()) === 0, `${await levelNow()}%`);
+
+  // Clip 3 to half.
+  await page.locator('[data-editor-clip="2"]').click();
+  await wait(300);
+  await setRange(page.locator('[data-editor-clip-volume]'), 0.5);
+  await wait(300);
+  const half = await levelNow();
+  check('and another set to half', half > 40 && half < 60, `${half}%`);
+
+  // The point of all three: they are independent.
+  const levels = [];
+  for (const position of [0, 1, 2]) {
+    await page.locator(`[data-editor-clip="${position}"]`).click();
+    await wait(350);
+    levels.push(await levelNow());
+  }
+  check(
+    'each clip kept its own level',
+    levels[0] === 100 && levels[1] === 0 && levels[2] === half,
+    levels.map((value) => `${value}%`).join(' / '),
+  );
+
+  // And they survive the other editing somebody does afterwards.
+  await page.locator('[data-editor-tool="trim"]').click();
+  // The longest clip, which is the one with room left to cut: clip 1 has been
+  // trimmed twice and dragged once by now and is near its floor.
+  await page.locator('[data-editor-clip="2"]').click();
+  await wait(300);
+  const beforeVolumeTrim = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+  // Relative to where this clip's end already is, not to its maximum: `max - 0.4`
+  // on an already-trimmed clip would make it LONGER.
+  const endNow = Number(await page.locator('[data-editor-trim="end"]').inputValue());
+  await setRange(page.locator('[data-editor-trim="end"]'), Math.max(0.5, endNow - 0.4));
+  await wait(600);
+  await page.locator('[data-editor-tool="sound"]').click();
+  const afterTrimLevels = [];
+  for (const position of [0, 1, 2]) {
+    await page.locator(`[data-editor-clip="${position}"]`).click();
+    await wait(350);
+    afterTrimLevels.push(await levelNow());
+  }
+  check(
+    'and trimming a clip does not disturb any of them',
+    JSON.stringify(afterTrimLevels) === JSON.stringify(levels),
+    afterTrimLevels.map((value) => `${value}%`).join(' / '),
+  );
+  check(
+    'the trim still took',
+    Number(await page.locator('[data-editor-timeline]').getAttribute('max')) < beforeVolumeTrim,
+  );
+  await page.locator('[data-editor-tool="trim"]').click();
+  await wait(200);
 
   /* ===================== the clip's own shape ===================== */
   section('CROP CHANGES THE CLIP, NOT JUST A LABEL');
@@ -750,6 +999,18 @@ async function run() {
   // trim: every cut moves it, and comparing the posted file against a stale
   // number measures the suite rather than the render.
   const projectLength = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+
+  // Each clip's kept length, read from its own trim handles, so the audio check
+  // after posting knows which stretch of the finished file is which clip.
+  const keptLengths = [];
+  for (const position of [0, 1, 2]) {
+    await page.locator(`[data-editor-clip="${position}"]`).click();
+    await wait(300);
+    const from = Number(await page.locator('[data-editor-trim="start"]').inputValue());
+    const to = Number(await page.locator('[data-editor-trim="end"]').inputValue());
+    keptLengths.push(to - from);
+  }
+
   await page.locator('[data-editor-next]').click();
   await page.waitForSelector('[data-post-stage]', { timeout: 20000 });
 
@@ -836,6 +1097,88 @@ async function run() {
     stored?.duration != null && stored.duration > 1.2,
     `${stored?.duration}s`,
   );
+  // ============ the audio that actually came out ============
+  // Not "the UI remembered the numbers" — the finished file. Clip 1 was left at
+  // full, clip 2 muted and clip 3 halved, and `renderClips` routes each clip
+  // through its own gain node, so those three stretches of the posted audio
+  // should be loud, silent and in between. Measured by decoding the file.
+  const loudness = await page.evaluate(
+    async ({ url, lengths }) => {
+      const response = await fetch(url);
+      if (!response.ok) return { error: `fetch ${response.status}` };
+      const bytes = await response.arrayBuffer();
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return { error: 'no AudioContext' };
+      const context = new Ctx();
+      let buffer;
+      try {
+        buffer = await context.decodeAudioData(bytes);
+      } catch (error) {
+        return { error: `decode: ${error}` };
+      }
+      if (buffer.numberOfChannels === 0) return { error: 'no audio track' };
+      const samples = buffer.getChannelData(0);
+
+      // The file can come out a little longer or shorter than the arithmetic, so
+      // the boundaries are scaled onto what was actually produced.
+      const arithmetic = lengths.reduce((sum, value) => sum + value, 0);
+      const scale = arithmetic > 0 ? buffer.duration / arithmetic : 1;
+      const rms = (from, to) => {
+        const first = Math.max(0, Math.floor(from * buffer.sampleRate));
+        const last = Math.min(samples.length, Math.ceil(to * buffer.sampleRate));
+        if (last <= first) return 0;
+        let total = 0;
+        for (let at = first; at < last; at += 1) total += samples[at] * samples[at];
+        return Math.sqrt(total / (last - first));
+      };
+
+      const levels = [];
+      let at = 0;
+      for (const length of lengths) {
+        const from = at * scale;
+        const to = (at + length) * scale;
+        // Inset, so a boundary landing a few milliseconds out does not leak one
+        // clip's audio into another's measurement.
+        const inset = Math.min(0.15, (to - from) * 0.2);
+        levels.push(rms(from + inset, to - inset));
+        at += length;
+      }
+      void context.close();
+      return { levels, duration: buffer.duration };
+    },
+    { url: stored?.url, lengths: keptLengths },
+  );
+
+  if (loudness.error) {
+    check('the posted audio could be decoded to check per-clip volume', false, loudness.error);
+  } else {
+    const [, silenced, halved] = loudness.levels;
+    const loudest = Math.max(...loudness.levels);
+    check(
+      'the posted file has audio in it at all',
+      loudest > 0.005,
+      `loudest stretch RMS ${loudest.toFixed(4)}`,
+    );
+    check(
+      // THE ONE THAT MATTERS. The muted clip is silent in the FILE itself, not
+      // merely flagged somewhere downstream — and the rest of the file is not,
+      // so this is a clip being muted rather than the whole video.
+      'the stretch where clip 2 was muted is silent',
+      silenced < 0.002 && silenced < loudest * 0.1,
+      `RMS ${silenced.toFixed(4)} against ${loudest.toFixed(4)} elsewhere`,
+    );
+    check(
+      // Not silent, which is the difference between "half" and "off". The ratio
+      // between half and full is NOT asserted: Chromium's fake microphone emits a
+      // pulsed tone rather than a continuous one, so RMS over a stretch measures
+      // how many beeps happened to fall in it as much as how loud they were. The
+      // UI checks above are what prove 50% is held as 50%.
+      'and the stretch where clip 3 was halved still has sound in it',
+      halved > silenced && halved > 0.002,
+      `RMS ${halved.toFixed(4)} against ${silenced.toFixed(4)} muted`,
+    );
+  }
+
   check(
     // A vertical project renders into the full 9:16 frame. This used to scale the
     // LONG edge to 1080, so a 1080x1920 recording came out 608x1080.
@@ -945,6 +1288,8 @@ async function run() {
   await android.page.locator('[data-editor-clip="1"]').click();
   await wait(300);
   await android.page.locator('[data-editor-delete]').click();
+  await android.page.waitForSelector('[data-editor-confirm-yes]', { timeout: 5000 });
+  await android.page.locator('[data-editor-confirm-yes]').click();
   await wait(500);
   check(
     'deleting it leaves the one clip, still in the editor',

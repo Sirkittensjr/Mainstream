@@ -112,3 +112,50 @@ export async function framesFrom(
   release();
   return frames;
 }
+
+/**
+ * One filmstrip for the WHOLE project, assembled from frames already in hand.
+ *
+ * Timing a line of text is a question about the finished video — "show this from
+ * two seconds to five" — so the strip it is trimmed against has to be the whole
+ * video, not the one clip the editor happens to have open. Grabbing a fresh set
+ * for that would mean another pass over every clip; instead each cell picks the
+ * frame its own moment already fell on, out of the per-clip strips the timeline
+ * is drawn from.
+ *
+ * Cells are sampled at their own midpoints, so a strip of six over three equal
+ * clips gives two cells to each rather than one landing exactly on a join.
+ * A clip whose frames have not arrived yet contributes an empty string, and the
+ * caller draws a placeholder for it.
+ */
+export function projectFrames(
+  segments: {
+    clip: { id: string; trimStart: number; sourceDuration: number };
+    startsAt: number;
+    endsAt: number;
+    length: number;
+  }[],
+  strips: Record<string, string[]>,
+  cells: number,
+): string[] {
+  const count = Math.max(1, Math.floor(cells));
+  const total = segments.length === 0 ? 0 : segments[segments.length - 1].endsAt;
+  if (total <= 0) return Array.from({ length: count }, () => '');
+
+  return Array.from({ length: count }, (_, cell) => {
+    const when = (total * (cell + 0.5)) / count;
+    const segment =
+      segments.find((each) => when < each.endsAt) ?? segments[segments.length - 1];
+    const frames = strips[segment.clip.id];
+    if (!frames || frames.length === 0) return '';
+
+    // Where that moment falls inside the clip's own FILE, which is what its
+    // strip spans — the strip covers the whole source, trimmed-off parts and all.
+    const into = Math.min(Math.max(when - segment.startsAt, 0), segment.length);
+    const source = segment.clip.trimStart + into;
+    const across =
+      segment.clip.sourceDuration > 0 ? source / segment.clip.sourceDuration : 0;
+    const slot = Math.min(frames.length - 1, Math.max(0, Math.floor(across * frames.length)));
+    return frames[slot] ?? '';
+  });
+}
