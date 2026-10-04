@@ -480,8 +480,8 @@ async function run() {
   check('Next leaves the camera for the editing stage', true);
   check(
     'with the one clip that was filmed',
-    (await page.locator('[data-editor-clip]').count()) === 0,
-    'one clip needs no strip',
+    (await page.locator('[data-editor-clip]').count()) === 1,
+    'on the timeline, where its trim handles are',
   );
 
   /* ========================= stage 2: editing ========================= */
@@ -515,7 +515,18 @@ async function run() {
     editPreview.height >= editPreview.vh - 1,
     `${Math.round(editPreview.height)}px of ${editPreview.vh}`,
   );
-  check('and is not cropped while being edited', editPreview.fit === 'contain');
+  check(
+    // `cover`, and `contain` would be the bug rather than the requirement. A
+    // full-width 9:16 frame on a 390px phone wants 693px of a 664px viewport, so
+    // fitting a vertical recording into this screen leaves black bands above and
+    // below it — which is exactly what it used to do. Covering crops about 4% off
+    // the top and bottom instead, and it is the rule `outputFrame` renders with,
+    // so the preview matches the file. What must never happen is a STRETCH, and
+    // neither value does that.
+    'and meets the screen the same way the render does, without stretching',
+    editPreview.fit === 'cover',
+    editPreview.fit,
+  );
 
   const tools = await page
     .locator('[data-editor-tool]')

@@ -188,27 +188,83 @@ async function run() {
     `${Math.round(frame.width)}x${Math.round(frame.height)} in ${frame.vw}x${frame.vh}`,
   );
 
+  // The black band came from the LAYOUT, not from anything a CSS patch could
+  // cover: the picture was laid across the whole 390x844 screen with
+  // `object-contain`, and a 9:16 source is WIDER than a 0.46 screen, so it was
+  // fitted by width and left ~150px of black split above and below.
+  //
+  // The fix is settled by arithmetic. A full-width 9:16 frame on a 390px phone
+  // wants to be 693px tall against a 664px viewport, so a picture that shares the
+  // height with a toolbar CANNOT be 9:16: putting it in the 390x415 space above
+  // one and covering threw away 40% of the frame, and fitting brought the bands
+  // back. So the picture is the whole screen, met with the same fit the render
+  // uses, and the controls float over its lower part. What to check, then: the
+  // video covering the viewport edge to edge, the free area above the controls
+  // reaching the top of the screen, and the fit matching the export.
   const picture = await page.evaluate(() => {
     const shown = [...document.querySelectorAll('[data-clip-slot]')].find(
       (v) => Number(getComputedStyle(v).opacity) > 0.5,
     );
     const box = shown.getBoundingClientRect();
+    const stage = document.querySelector('[data-editor-stage]').getBoundingClientRect();
+    const chrome = document.querySelector('[data-editor-controls]').getBoundingClientRect();
+    // How much `cover` is cutting off, as a fraction of the source's height.
+    const source = shown.videoWidth / shown.videoHeight;
+    const drawn = (box.width / source) / box.height;
     return {
-      width: box.width,
-      height: box.height,
+      box: { top: box.top, width: box.width, height: box.height },
+      stage: { top: stage.top, bottom: stage.bottom, width: stage.width, height: stage.height },
+      chromeTop: chrome.top,
       fit: getComputedStyle(shown).objectFit,
+      crop: Number.isFinite(drawn) ? Math.max(0, 1 - 1 / Math.max(1, drawn)) : 1,
       vw: window.innerWidth,
       vh: window.innerHeight,
     };
   });
   check(
-    'the video fills it too, rather than sitting in a card',
-    picture.width >= picture.vw - 1 && picture.height >= picture.vh - 1,
-    `${Math.round(picture.width)}x${Math.round(picture.height)}`,
+    'the stage starts at the very top — no black band above the video',
+    Math.abs(picture.stage.top) <= 1,
+    `stage top at ${Math.round(picture.stage.top)}px`,
   );
   check(
-    'and is not stretched — the aspect ratio is preserved',
-    picture.fit === 'contain',
+    'and runs down to the toolbar, with no black band below it either',
+    Math.abs(picture.stage.bottom - picture.chromeTop) <= 1,
+    `stage ends at ${Math.round(picture.stage.bottom)}px, toolbar starts at ${Math.round(
+      picture.chromeTop,
+    )}px`,
+  );
+  check(
+    'the stage is most of the screen, not a card in the middle of it',
+    picture.stage.width >= picture.vw - 1 && picture.stage.height >= picture.vh * 0.6,
+    `${Math.round(picture.stage.width)}x${Math.round(picture.stage.height)} of ${picture.vw}x${
+      picture.vh
+    }`,
+  );
+  check(
+    'the video covers the whole viewport, with no black anywhere',
+    Math.abs(picture.box.top) <= 1 &&
+      picture.box.width >= picture.vw - 1 &&
+      picture.box.height >= picture.vh - 1,
+    `${Math.round(picture.box.width)}x${Math.round(picture.box.height)} in ${picture.vw}x${
+      picture.vh
+    }`,
+  );
+  check(
+    // What `cover` costs on this screen. A 9:16 source in a 390x664 window is
+    // scaled to the width and overflows the height by a few percent: that is the
+    // crop, and it has to stay small or the frame somebody composed is not the
+    // frame that gets posted.
+    'and loses only a few percent of the frame to the crop',
+    picture.crop <= 0.12,
+    `${Math.round(picture.crop * 100)}% of the frame's height cropped`,
+  );
+  check(
+    // Not `contain`, which is what put the bands there. `cover` crops a little
+    // off the sides of a 9:16 source on a taller-than-9:16 screen and stretches
+    // nothing — and it is the rule `outputFrame` renders with, so the preview is
+    // a preview of the file that actually gets posted.
+    'and meets it the same way the render does — cropped, never stretched',
+    picture.fit === 'cover',
     picture.fit,
   );
   check('the editor does not scroll sideways', (await sideways(page)) === 0);
@@ -227,8 +283,32 @@ async function run() {
       stripLow: strip ? strip.top > vh * 0.4 : true,
     };
   });
-  check('the controls overlay the lower part of the screen', overlaid.inside && overlaid.low);
-  check('and the clip strip with them', overlaid.stripLow);
+  check('the controls sit in the lower part of the screen', overlaid.inside && overlaid.low);
+  check('and the clip timeline with them', overlaid.stripLow);
+
+  // The complaint this replaced: a floating 'Clip 2 of 2 / Keeping 0:03.6' panel
+  // took over the middle of the screen. A tool's controls are now a short strip
+  // under the timeline, inside the toolbar, and never over the video.
+  const sheet = await page.evaluate(() => {
+    const panel = document.querySelector('[data-editor-panel]').getBoundingClientRect();
+    const stage = document.querySelector('[data-editor-stage]').getBoundingClientRect();
+    return {
+      top: panel.top,
+      height: panel.height,
+      stageBottom: stage.bottom,
+      vh: window.innerHeight,
+    };
+  });
+  check(
+    'the tool controls are a strip below the video, not a sheet over it',
+    sheet.top >= sheet.stageBottom - 1,
+    `panel starts at ${Math.round(sheet.top)}px, video ends at ${Math.round(sheet.stageBottom)}px`,
+  );
+  check(
+    'and a short one — it does not take over the screen',
+    sheet.height <= sheet.vh * 0.3,
+    `${Math.round(sheet.height)}px of ${sheet.vh}px`,
+  );
 
   // The part of the picture somebody can still tap must really be clear of the
   // chrome. A tap region of the whole screen put its own centre under the editing
@@ -332,6 +412,16 @@ async function run() {
     'and the panel says which clip it is',
     /Clip 1 of 3/.test(await page.locator('[data-editor-panel="trim"]').innerText()),
   );
+  // Trimming without opening anything: the selected clip opens out to its whole
+  // source length right there on the timeline and carries a handle at each end.
+  check(
+    'the selected clip carries its trim handles on the timeline itself',
+    (await page.locator('[data-editor-handle]').count()) === 2,
+  );
+  check(
+    'and the other clips stay beside it rather than disappearing behind a modal',
+    (await page.locator('[data-editor-clip]').count()) === 3,
+  );
   const clipOneEnd = Number(await page.locator('[data-editor-trim="end"]').getAttribute('max'));
   await setRange(page.locator('[data-editor-trim="end"]'), Math.max(1, clipOneEnd - 2));
   await wait(700);
@@ -407,6 +497,46 @@ async function run() {
     (await page.locator('[data-editor-clip]').count()) === 3,
   );
 
+  // And the handles really trim, not just decorate. Drag clip 1's start handle a
+  // third of the way across its track and the project gets shorter, without any
+  // panel being opened to do it.
+  await page.locator('[data-editor-clip="0"]').click();
+  await wait(300);
+  const beforeDrag = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+  const grip = await page.locator('[data-editor-handle="start"]').boundingBox();
+  // The inner rail, not the clip button: the rail is inset by a handle's
+  // half-width so the grips stay on the clip, so the button's edges are not 0s
+  // and the whole source.
+  const rail = await page.locator('[data-editor-track]').boundingBox();
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+  await page.mouse.down();
+  // In steps, because one jump can be delivered as a single pointermove that
+  // lands before the handler has the track measured.
+  for (const part of [0.1, 0.2, 0.3]) {
+    await page.mouse.move(rail.x + rail.width * part, grip.y + grip.height / 2);
+    await wait(80);
+  }
+  await page.mouse.up();
+  await wait(700);
+  const afterDrag = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+  check(
+    'dragging a trim handle on the timeline cuts the clip',
+    afterDrag < beforeDrag - 0.2,
+    `${beforeDrag}s -> ${afterDrag}s`,
+  );
+  check(
+    'and nothing was opened over the video to do it',
+    (await page.locator('[data-editor-clip]').count()) === 3 &&
+      (await page.evaluate(() => {
+        const stage = document.querySelector('[data-editor-stage]').getBoundingClientRect();
+        const hit = document.elementFromPoint(
+          stage.left + stage.width / 2,
+          stage.top + stage.height / 2,
+        );
+        return Boolean(hit && hit.closest('[data-editor-stage]'));
+      })),
+  );
+
   /* ===================== text ===================== */
   section('TEXT OVER THE VIDEO');
 
@@ -453,6 +583,10 @@ async function run() {
   /* ===================== the post screen ===================== */
   section('POSTING THREE TRIMMED CLIPS');
 
+  // Read the project's length HERE, not from a variable captured before the last
+  // trim: every cut moves it, and comparing the posted file against a stale
+  // number measures the suite rather than the render.
+  const projectLength = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
   await page.locator('[data-editor-next]').click();
   await page.waitForSelector('[data-post-stage]', { timeout: 20000 });
 
@@ -505,7 +639,7 @@ async function run() {
     const body = await response.json();
     return body?.post?.media?.[0] ?? null;
   }, postId);
-  const expected = afterThird;
+  const expected = projectLength;
   check(
     // Proportional, and deliberately not "within 1.5 seconds": that would pass a
     // file a quarter short on a long project and catch nothing.
@@ -576,10 +710,23 @@ async function run() {
   check('the editor fills a smaller phone too', small.fills, `${small.vw}x${small.vh}`);
   check('and every tool is still on screen', small.toolsInside);
   check('with no sideways scroll', (await sideways(android.page)) === 0);
+  // One clip still gets the timeline: there is nothing to choose between, but the
+  // trim handles live on it, so taking it away would take trimming away with it.
   check(
-    'one clip needs no clip strip',
-    (await android.page.locator('[data-editor-strip]').count()) === 0,
-    'nothing to choose between',
+    'a single clip still gets a timeline',
+    (await android.page.locator('[data-editor-clip]').count()) === 1,
+  );
+  check(
+    'carrying its two trim handles',
+    (await android.page.locator('[data-editor-handle]').count()) === 2,
+  );
+  check(
+    'and no black band above the video on this screen either',
+    await android.page.evaluate(() => {
+      const stage = document.querySelector('[data-editor-stage]').getBoundingClientRect();
+      const chrome = document.querySelector('[data-editor-controls]').getBoundingClientRect();
+      return Math.abs(stage.top) <= 1 && Math.abs(stage.bottom - chrome.top) <= 1;
+    }),
   );
 
   /* ===================== empty and error states ===================== */

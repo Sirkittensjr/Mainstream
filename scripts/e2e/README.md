@@ -575,15 +575,52 @@ letterboxes into it, because somebody uploading a 16:9 video from a desktop did
 not ask for two thirds of its width to be thrown away. Either way one scale is
 applied to both axes, which is what "never stretched" means. See `outputFrame`.
 
-Also covered: the editor filling the viewport with the video `object-contain` so
-nothing is stretched; the controls overlaying the lower part rather than pushing
-the video into a box; per-clip selection and trimming, with the whole project
-getting shorter each time (measured 7.1s → 5.1s → 3.6s); text appearing over the
-video as it is typed and staying clear of the controls; a true 9:16 preview on the
-posting screen; and the posted file's own duration matching the kept clips
-(`stored 3.62s against 3.60s`) with the overlay preserved. Then the same editor on
-a smaller Android viewport, and Retake on the only clip going back to the camera
-rather than leaving an editor with nothing in it.
+**The editor's shape, and why the black band was there.** The picture used to be
+laid across the whole screen with `object-contain`. A phone screen is TALLER than
+9:16 — 390x844 is 0.46 against 0.5625 — so a vertical recording is wider than the
+screen it was being fitted into: `contain` matched its width and left about 150px
+of black split above and below, while the render filled 1080x1920 with `cover`. The
+preview was a preview of a different video.
+
+The fix is settled by arithmetic rather than taste. A full-width 9:16 frame on a
+390px phone wants to be **693px tall against a 664px viewport**, so a picture that
+shares the height with a toolbar cannot be 9:16: putting it in the 390x415 space
+above one and covering threw away 40% of the frame, and fitting brought the bands
+straight back. So the picture is the WHOLE screen, met with `outputFrame`'s own
+fit, and the controls float over its lower part on a scrim. The suite measures all
+of it: the video at `390x664` in a `390x664` viewport, **4% of the frame's height
+lost to the crop**, `objectFit: cover`, and the free area above the controls
+reaching `0px`.
+
+Also covered: the controls sitting in the lower part rather than pushing the video
+into a box, and the open tool's sheet being a 44px strip BELOW the video rather
+than the floating panel that used to take over the middle of the screen; the
+selected clip opening out on the timeline with a draggable handle at each end
+while the other clips stay beside it (`7.6s → 6.9s` from one drag, with nothing
+opened over the video to do it); per-clip selection and trimming, with the whole
+project getting shorter each time (measured 12.1s → 10.1s → 8.6s → 7.6s); text
+appearing over the video as it is typed and staying clear of the controls; a true
+9:16 preview on the posting screen; and the posted file's own duration against the
+kept clips, read live at the moment **Next** is tapped rather than from a number
+captured before the last cut. Then the same editor on a smaller Android viewport —
+one clip still gets a timeline, because that is where its trim handles are — and
+Retake on the only clip going back to the camera rather than leaving an editor
+with nothing in it.
+
+**The posted duration swings, and the render is why.** `playInto` writes output
+frames on a wall-clock `setInterval` at `OUTPUT_FPS` while the source plays in
+real time, so the file's length is the WALL-CLOCK time the pass took, not the
+source time it covered. Under load the two come apart in both directions: a
+throttled timer writes fewer frames than seconds elapsed and the file comes out
+short, a stalled source gets the same frame written repeatedly and it comes out
+long. Measured on one unchanged project of 6.90s across four runs: **8.78s, 5.78s,
+5.01s, 6.05s** — 128%, 84%, 73%, 88%. The duration check's band is
+`[80%, +0.5s]`, so it fails about half the time, and the failure is the render's,
+not the editor's. The fix is to pace the output on the source's own progress
+(`round((currentTime - trimStart) * OUTPUT_FPS)` frames written so far, catching
+up on each tick) instead of on the clock, which makes the file exactly as long as
+the kept source whatever the timer does. Not applied here: this branch was asked
+to leave the render alone.
 
 **The tappable part of the video is a flex sibling, not a percentage.** A
 tap-to-play region of `inset-0` put its own centre underneath the editing panel,
