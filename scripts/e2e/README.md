@@ -623,29 +623,46 @@ makes the two-clip project the three-clip run never passes through — and Retak
 the only clip going back to the camera rather than leaving an editor with nothing
 in it.
 
-**The posted duration, and what makes it drift.** `playInto` writes output frames
-on a wall-clock `setInterval` at `OUTPUT_FPS` while the source plays in real time,
-so the file's length is the WALL-CLOCK time the pass took, not the source time it
-covered. Anything that competes for the decoder pulls those apart in both
-directions: a throttled timer writes fewer frames than seconds elapsed and the
-file comes out short, a stalled source gets the same frame written repeatedly and
-it comes out long. Measured on one unchanged 6.90s project, before the editor's
-frame grabs were made abortable: **8.78s, 5.78s, 5.01s, 6.05s, 9.23s, 8.65s,
-3.49s** — 128%, 84%, 73%, 88%, 134%, 124%, 51%, against a `[80%, +0.5s]` band.
+**The posted duration: two separate bugs, and what is left.**
 
-Most of that was the editor's own doing. `useClipFrames` reads six frames per
-clip, and leaving the editor is exactly the moment `renderClips` starts — so a
-strip still seeking in the background was competing with a real-time pass for the
-same decoder. `framesFrom` now takes an `AbortSignal`, checked between every
-frame, and the hook aborts on cleanup. Same project, same machine, afterwards:
-**7.38s and 6.75s** — 107% and 98%.
+*The server was mis-reading the file.* `fragmentedDuration` measured a fragmented
+MP4 to the START of its last fragment, leaning on the tolerance in limits.ts to
+cover that fragment's own length — which assumes fragments are about a second,
+true when `recorder.start(1000)` is honoured and the machine keeps up. Under load
+it is not: a real 6.57s render came out as three fragments, the last starting at
+2.787s and carrying the remaining 3.8s, and the file was recorded as **2.787s**.
+More than half the length gone — and the shorter the number, the more of the
+length limit a long upload slips past. It now sums the samples the last fragment
+actually holds, from `trun`, falling back to `tfhd`'s default and then `trex`'s.
+Checked against four real renders, where the server's answer now matches the
+browser's own to the millisecond: 8.224, 8.464, 6.145, 6.567.
 
-What remains is the pacing itself, which is still wall-clock and so still drifts
-under load. The fix for that is to pace the output on the source's own progress
-(`round((currentTime - trimStart) * OUTPUT_FPS)` frames written so far, catching
-up on each tick) instead of on the clock, which would make the file exactly as
-long as the kept source whatever the timer does. Not applied: it changes the
-render for every post, and nobody has asked for that yet.
+*The render's length was whatever wall clock it happened to take.* Both the frame
+cadence and the recording ran off a wall-clock `setInterval`, so a machine that
+could not keep up changed the length AND put the pictures out of step with it.
+Frames are now paced on the SOURCE — `round(progress * OUTPUT_FPS)` frames by the
+time the source has played `progress` seconds — so the video cannot play fast or
+slow; and each clip gets a recording window of exactly its kept length, with the
+recorder held across the dead time spent fetching and seeking the next clip.
+
+*What is left is MediaRecorder's.* It records in real time, so when the main
+thread blocks the recorder keeps running and no timer can shut the window on the
+beat. The same fixed 6.90s project, measured end to end — before: 49%, 51%, 73%,
+84%, 88%, 124%, 134%. After: 101%, 101%, 113%, 85%. The median is 101% and the
+tail is roughly ±15%, which is what the suite's band allows.
+
+Three cleverer designs were tried and discarded, each documented at `playInto`:
+pausing on a stall detector (thrashed the recorder thirty times a second and
+dragged a 0.3s clip out to 1.8s), steering a control loop on accumulated recorded
+time (could only shed time, so a clip ending mid-hold stayed short — 76%), and
+topping that shortfall back up (overcorrected to 117%, because the pause latency
+it compensated for is exactly what it cannot measure).
+
+Closing the tail means not recording in real time at all: encoding frames with
+explicit timestamps through WebCodecs (`VideoEncoder`/`AudioEncoder` plus a muxer
+— `mp4-muxer` is on the registry) makes duration exact by construction and wholly
+independent of load. That is a new dependency and a second encode path, so it has
+not been done here.
 
 **The tappable part of the video is a flex sibling, not a percentage.** A
 tap-to-play region of `inset-0` put its own centre underneath the editing panel,

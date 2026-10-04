@@ -74,8 +74,10 @@ export function canRender(): boolean {
 /**
  * Frames per second of the finished video.
  *
- * The number the muxer is told and the number the render actually delivers have
- * to be the same one, or the file comes out the wrong length — see `playInto`.
+ * Both halves of `playInto` are counted in it: a clip's frame budget is its kept
+ * length times this, and the deadband that steers the recorder is measured in
+ * frames of it. The file's own length comes from how long the recorder ran, so
+ * this decides how finely that is tracked rather than setting it outright.
  */
 export const OUTPUT_FPS = 30;
 
@@ -213,8 +215,33 @@ export async function renderClips(clips: Clip[], options: RenderOptions = {}): P
     void audio?.close();
   };
 
+  /**
+   * The recorder runs ONLY while a clip is actually playing.
+   *
+   * MediaRecorder records wall-clock time, and the file's duration is the time
+   * it spent recording — so everything that happens between frames of source
+   * lands in the finished video as extra length. Two things do: loading and
+   * seeking the next clip, which is dead time between clips, and the source
+   * falling behind mid-clip when the machine is busy. Measured on a 6.90s
+   * project, together they added 1.3s and posted it as 8.22s.
+   *
+   * Paused time is excluded from the recording, so holding across both leaves
+   * the file as long as the source actually played, whatever the machine was
+   * doing. `playInto` steers it; this is the switch.
+   */
+  const recording = {
+    hold: () => {
+      if (recorder.state === 'recording') recorder.pause();
+    },
+    run: () => {
+      if (recorder.state === 'paused') recorder.resume();
+    },
+  };
+
   try {
     recorder.start(1000);
+    // Nothing is playing yet: the first clip still has to be fetched and seeked.
+    recording.hold();
     let produced = 0;
 
     for (const [index, clip] of clips.entries()) {
@@ -246,23 +273,35 @@ export async function renderClips(clips: Clip[], options: RenderOptions = {}): P
       const length = clipDuration(clip);
       const startedAt = produced;
 
-      await playInto(video, clip, () => {
-        drawFrame(context, video, clip, output);
-        // The drawn frame is the frame: see the captureStream note above.
-        requestFrame?.();
-        produced = startedAt + Math.min(length, video.currentTime - clip.trimStart);
-        options.onProgress?.({
-          seconds: produced,
-          total,
-          clip: index + 1,
-          clips: clips.length,
-        });
-      }, options.signal);
+      await playInto(
+        video,
+        clip,
+        (frames) => {
+          // Drawn once however many frames it is worth: the picture has not
+          // changed between them, and `drawImage` into a 1080x1920 canvas is the
+          // expensive part of this loop.
+          drawFrame(context, video, clip, output);
+          for (let frame = 0; frame < frames; frame += 1) requestFrame?.();
+          produced = startedAt + Math.min(length, video.currentTime - clip.trimStart);
+          options.onProgress?.({
+            seconds: produced,
+            total,
+            clip: index + 1,
+            clips: clips.length,
+          });
+        },
+        recording,
+        options.signal,
+      );
+      recording.hold();
 
       produced = startedAt + length;
       video.pause();
     }
 
+    // Stopped from wherever the last clip left it. Resuming only to stop again
+    // costs another pause/resume cycle, and each of those is time the recorder
+    // spends not recording.
     recorder.stop();
     await finished;
     return {
@@ -281,16 +320,59 @@ export async function renderClips(clips: Clip[], options: RenderOptions = {}): P
 }
 
 /**
- * Plays one clip from its in-point to its out-point, drawing every frame.
+ * Plays one clip from its in-point to its out-point, delivering exactly the
+ * frames that clip's kept length is worth, and recording for exactly as long.
  *
- * `requestVideoFrameCallback` fires once per decoded frame, which is exactly
- * the cadence the canvas wants. Where it does not exist, animation frames are
- * close enough and no browser that can record is far behind on both.
+ * TWO THINGS DECIDE THE FINISHED VIDEO, and they used to be the same thing:
+ * how many pictures it contains, and how long it runs. Both were taken from a
+ * wall-clock `setInterval` — one `onFrame` per tick, recorder running
+ * throughout — so a machine that could not keep up changed both. Measured on
+ * one fixed 6.90s project, the posted file ranged from 49% to 134% of its real
+ * length, and the pictures came out of step with it either way.
+ *
+ * FRAMES ARE PACED ON THE SOURCE: deliver `round(progress * OUTPUT_FPS)` frames
+ * by the time the source has played `progress` seconds. If the sampler is
+ * throttled to 14Hz each wake delivers the two or three frames the source
+ * advanced by instead of one, so the pictures stay in step with the clip's own
+ * time; if it runs faster than the source decodes it delivers nothing, so a
+ * stalled decoder no longer pads the file with duplicates. That is what keeps a
+ * video from playing fast or slow, whatever the machine was doing.
+ *
+ * TIME IS A WINDOW, because MediaRecorder writes wall-clock: the file is as long
+ * as the recorder ran, not as long as the frames imply. So each clip gets a
+ * recording window of exactly its kept length — opened when the element really
+ * starts playing, shut by one timer that length later — and the recorder is held
+ * across everything in between clips, which is dead time spent fetching and
+ * seeking the next one. A 2.55s clip contributes 2.55s, and three clips are
+ * their three lengths added up.
+ *
+ * ONE PAUSE AND ONE RESUME PER CLIP, which is the point. Two cleverer versions
+ * came first and both failed on the same thing: every pause/resume costs the
+ * recording something, and no accounting here can see how much. Pausing whenever
+ * the element looked stalled thrashed it thirty times a second and dragged a
+ * 0.3s clip out to 1.8s. Steering a control loop on accumulated recorded time
+ * against source progress was better — 98%, 103%, 104% — but it could only ever
+ * SHED time, so a clip that ended while it happened to be holding stayed short,
+ * and the same project came out at 76% on one run in three. Topping the shortfall
+ * back up overcorrected the other way, to 117%, because the latency it was
+ * compensating for is exactly what it could not measure. A window needs no
+ * accounting: it is one timer and two state changes.
+ *
+ * What a window costs, when the source falls behind, is frame rate: that clip
+ * delivers fewer pictures across its own correct length. See `finish` for why it
+ * must not try to make them up.
+ *
+ * The fallback path — a browser with no `requestFrame`, where the canvas is
+ * sampled on the browser's own timer — cannot be paced this way, because
+ * nothing here decides when a frame is taken. There the old behaviour stands.
  */
 function playInto(
   video: HTMLVideoElement,
   clip: Clip,
-  onFrame: () => void,
+  /** Deliver this many copies of the picture currently on the element. */
+  onFrames: (frames: number) => void,
+  /** Starts and stops the clock the finished file is measured by. */
+  recording: { hold: () => void; run: () => void },
   signal?: AbortSignal,
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
@@ -299,37 +381,59 @@ function playInto(
       if (stopped) return;
       stopped = true;
       window.clearInterval(timer);
-      video.removeEventListener('ended', stop);
+      window.clearTimeout(window_);
       resolve();
     };
 
     const abort = () => {
       stopped = true;
       window.clearInterval(timer);
-      video.removeEventListener('ended', stop);
+      window.clearTimeout(window_);
       reject(new DOMException('Cancelled', 'AbortError'));
     };
     signal?.addEventListener('abort', abort, { once: true });
 
-    /**
-     * A steady OUTPUT_FPS, not one draw per source frame.
-     *
-     * This used to draw on `requestVideoFrameCallback`, which fires once per
-     * frame the SOURCE presents — so the output got as many frames per second as
-     * the source had, and no more. Chromium's MP4 muxer assumes a fixed rate, so
-     * a 22fps source produced a file 22/30ths of its real length: the whole video
-     * slightly sped up. Measured on three clips totalling 7.65s, posted as 5.74s.
-     *
-     * Sampling the element on a timer instead means a second of wall clock is
-     * always OUTPUT_FPS frames, whatever the source's rate, and the file comes
-     * out the length it was played for. Drawing the same source frame twice
-     * costs a drawImage and nothing else.
-     */
-    const period = 1000 / OUTPUT_FPS;
+    /** What this clip is worth, in frames. */
+    const length = clipDuration(clip);
+    const budget = Math.max(1, Math.round(length * OUTPUT_FPS));
+    let delivered = 0;
+    /** Only a sampler: the frame count does not depend on its rate. */
+    const period = 1000 / (OUTPUT_FPS * 2);
     let timer = 0;
+    let window_ = 0;
 
+    /** Brings the delivered count up to `target`, never past the budget. */
+    const deliverTo = (target: number) => {
+      const want = Math.min(budget, target);
+      if (want > delivered) {
+        const frames = want - delivered;
+        delivered = want;
+        onFrames(frames);
+      }
+    };
+
+    /**
+     * Shuts the window.
+     *
+     * NOTHING IS FLUSHED HERE, and that is deliberate. An earlier version topped
+     * the clip up to its full frame budget first, so that a source which had
+     * fallen behind still contributed every picture. But those were up to a
+     * hundred `requestFrame` calls in one go, on the same thread that has to run
+     * the timer that shuts this window — the flush blocked for long enough that
+     * the recorder kept going well past the clip, and one run in three came out
+     * at 131%. The flush was left over from when the frame count WAS the
+     * duration; under a window it buys nothing and costs the thing it is paid in.
+     *
+     * A clip whose source fell behind therefore delivers fewer frames across its
+     * window, which is a lower frame rate for that stretch and the correct
+     * length. The video element is paused because its frames are done with and
+     * letting it run on would record audio from past the out-point.
+     */
     const finish = () => {
       window.clearInterval(timer);
+      window.clearTimeout(window_);
+      video.pause();
+      recording.hold();
       stop();
     };
 
@@ -337,19 +441,29 @@ function playInto(
       if (stopped) return;
       if (signal?.aborted) {
         window.clearInterval(timer);
+        window.clearTimeout(window_);
         return;
       }
-      onFrame();
-      if (video.currentTime >= clip.trimEnd - 0.02 || video.ended) finish();
+      const progress = Math.min(Math.max(video.currentTime - clip.trimStart, 0), length);
+      deliverTo(Math.round(progress * OUTPUT_FPS));
+      // Deliberately NOT finishing on `trimEnd` or `ended`: the window below is
+      // what ends the clip, because the window is what the file's length is made
+      // of. Reaching the out-point early just means the rest of the window holds
+      // the last frame.
     };
 
-    video.addEventListener('ended', stop);
     video.play().then(
       () => {
-        // One frame straight away, so a clip shorter than a frame interval is
-        // still represented, then the steady rate.
-        tick();
+        // The clip's window opens HERE — when it is really playing, not when it
+        // was asked for — and shuts exactly its kept length later. That window
+        // is the clip's contribution to the finished file, so a 2.55s clip is
+        // 2.55s of video whatever the machine was doing in the meantime.
+        recording.run();
+        // One frame straight away, so the encoder has a picture from the start
+        // and a clip shorter than a sample interval is still represented.
+        deliverTo(1);
         timer = window.setInterval(tick, period);
+        window_ = window.setTimeout(finish, length * 1000);
       },
       () => reject(new Error('The browser would not play this clip back.')),
     );
