@@ -55,6 +55,11 @@ const ADDED_COLUMNS: { table: TableName; column: string; migration: string }[] =
   { table: 'posts', column: 'review_state', migration: '0009' },
   { table: 'reports', column: 'cleared_at', migration: '0009' },
   { table: 'posts', column: 'video_views', migration: '0010' },
+  // Without these a Story or Big Message cannot keep its shape, and posting one
+  // is refused rather than stored as a short message. See insert-post.ts.
+  { table: 'posts', column: 'text_kind', migration: '0011' },
+  { table: 'posts', column: 'text_title', migration: '0011' },
+  { table: 'posts', column: 'text_style', migration: '0012' },
 ];
 
 const MIGRATION_FOR_TABLE: Partial<Record<TableName, string>> = {

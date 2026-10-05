@@ -85,7 +85,12 @@ export function SpeechBubble({
   return (
     // The row, not the bubble: this is what keeps the bubble hugging its words
     // instead of stretching to the card.
-    <div className={`px-4 pb-3 ${className}`} data-text-post={kind} data-text-style={style ?? ''}>
+    <div
+      className={`px-4 pb-3 ${className}`}
+      data-text-post={kind}
+      data-text-style={style ?? ''}
+      data-post-id={postId}
+    >
       <div
         data-speech-bubble
         className={`relative inline-block max-w-full rounded-[1.75rem] ${surface} ${

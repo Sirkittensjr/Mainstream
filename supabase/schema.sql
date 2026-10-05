@@ -107,6 +107,44 @@ alter table public.posts
   add column if not exists review_expires_at timestamptz,
   add column if not exists review_reports    integer not null default 0;
 
+-- Text posts (0011, 0012). Which of the three a text post is — short, story or
+-- big — a story's title, and a big message's colour. Null on everything that is
+-- not a text post, and on text posts written before kinds existed, which are
+-- drawn as short messages. `long` is the first name of `story` and still reads
+-- as one. The limits are restated here because a caption arriving straight from
+-- an API call never passes through the composer.
+alter table public.posts
+  add column if not exists text_kind  text,
+  add column if not exists text_title text,
+  add column if not exists text_style text;
+
+alter table public.posts drop constraint if exists posts_text_kind_check;
+alter table public.posts add constraint posts_text_kind_check
+  check (text_kind is null or text_kind in ('short', 'story', 'long', 'big'));
+
+alter table public.posts drop constraint if exists posts_text_body_check;
+alter table public.posts add constraint posts_text_body_check
+  check (
+    text_kind is null
+    or (text_kind = 'short' and char_length(caption) <= 200)
+    or (text_kind in ('story', 'long') and char_length(caption) <= 1000)
+    or (text_kind = 'big' and char_length(caption) <= 30)
+  );
+
+alter table public.posts drop constraint if exists posts_text_title_check;
+alter table public.posts add constraint posts_text_title_check
+  check (
+    text_title is null
+    or (text_kind in ('story', 'long') and char_length(text_title) between 1 and 30)
+  );
+
+alter table public.posts drop constraint if exists posts_text_style_check;
+alter table public.posts add constraint posts_text_style_check
+  check (
+    text_style is null
+    or (text_kind = 'big' and text_style in ('glow', 'night', 'violet', 'dusk'))
+  );
+
 create index if not exists posts_author_idx on public.posts (author_id);
 create index if not exists posts_created_idx on public.posts (created_at desc);
 create index if not exists posts_category_idx on public.posts (category);

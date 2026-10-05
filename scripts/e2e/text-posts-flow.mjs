@@ -550,6 +550,138 @@ async function run() {
     check(`${where} does not scroll sideways`, seen.sideways <= 0, `${seen.sideways}px`);
   }
 
+  /* ============ what the composer shows is what the feed gets ============ */
+  section('WHAT THE COMPOSER SHOWS IS WHAT THE FEED GETS');
+
+  // The bug this guards against: the preview was right and the posted message
+  // came back as a small white Short Message. So every check here compares the
+  // POSTED feed card against the PREVIEW its author was shown, property by
+  // property, at both widths and for a gradient colour and a dark one.
+  const phoneContext = await browser.newContext({
+    ...devices['iPhone 13'],
+    userAgent: undefined,
+    baseURL: BASE,
+    storageState: await me.context.storageState(),
+  });
+  const phonePage = await phoneContext.newPage();
+
+  /** Everything about a bubble that decides how it looks. */
+  const signatureOf = (root) => {
+    const bubble = root.querySelector('[data-speech-bubble]');
+    const body = bubble?.querySelector('[data-text-body]');
+    const tail = bubble?.querySelector('[data-speech-tail]');
+    if (!bubble || !body || !tail) return null;
+    const b = getComputedStyle(bubble);
+    const t = getComputedStyle(body);
+    return {
+      kind: root.dataset.textPost,
+      style: root.dataset.textStyle,
+      bubbleImage: b.backgroundImage,
+      bubbleColour: b.backgroundColor,
+      radius: b.borderTopLeftRadius,
+      tail: getComputedStyle(tail).backgroundImage + ' ' + getComputedStyle(tail).backgroundColor,
+      ink: t.color,
+      inkImage: t.backgroundImage,
+      family: t.fontFamily,
+      size: t.fontSize,
+      step: body.dataset.bigStep,
+      transform: t.textTransform,
+      align: t.textAlign,
+    };
+  };
+
+  for (const [width, where] of [
+    ['desktop', page],
+    ['phone', phonePage],
+  ]) {
+    for (const style of ['violet', 'night']) {
+      const words = `BIG TEST ${stamp.slice(0, 2)}${style[0]}`.toUpperCase();
+      await where.goto('/create?kind=text&text=big', { waitUntil: 'domcontentloaded' });
+      await where.waitForSelector('[data-big-styles]', { timeout: 20000 });
+      await where.fill('#caption', words);
+      await where.locator(`[data-big-style="${style}"]`).click();
+      await wait(300);
+      const preview = await where.evaluate(
+        `(${signatureOf})(document.querySelector('[data-text-preview] [data-text-post]'))`,
+      );
+
+      await where.locator('[data-post-text]').click();
+      await where.waitForURL(/\/post\//, { timeout: 30000 });
+      const id = where.url().split('/post/')[1].split(/[?#]/)[0];
+
+      await where.goto('/home', { waitUntil: 'domcontentloaded' });
+      await where.waitForLoadState('networkidle');
+      const card = `[data-text-post][data-post-id="${id}"]`;
+      await where.waitForSelector(card, { timeout: 20000 });
+      const posted = await where.evaluate(
+        `(${signatureOf})(document.querySelector('${card}'))`,
+      );
+      const layout = await where.evaluate((selector) => {
+        const root = document.querySelector(selector);
+        const article = root.closest('article');
+        const bubble = root.querySelector('[data-speech-bubble]').getBoundingClientRect();
+        const body = root.querySelector('[data-text-body]').getBoundingClientRect();
+        const tail = root.querySelector('[data-speech-tail]').getBoundingClientRect();
+        const avatar = article
+          .querySelector('header a[aria-label$="profile"]')
+          .getBoundingClientRect();
+        const short = document.querySelector('[data-text-post="short"] [data-text-body]');
+        return {
+          inside:
+            body.left >= bubble.left - 1 &&
+            body.right <= bubble.right + 1 &&
+            body.bottom <= bubble.bottom + 1,
+          onScreen: bubble.left >= 0 && bubble.right <= window.innerWidth + 1,
+          sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          tailAboveBubble: tail.top < bubble.top + 2,
+          avatarAboveTail: avatar.bottom <= tail.top + 2,
+          tailToAvatar: Math.abs(tail.left + tail.width / 2 - (avatar.left + avatar.width / 2)),
+          shortSize: short ? parseFloat(getComputedStyle(short).fontSize) : null,
+        };
+      }, card);
+
+      const label = `${width}, ${style}`;
+      check(`[${label}] the posted message is drawn as a Big Message`, posted?.kind === 'big', posted?.kind);
+      check(`[${label}] and keeps the colour that was chosen`, posted?.style === style, posted?.style);
+      const differences = preview && posted
+        ? Object.keys(preview).filter((key) => preview[key] !== posted[key])
+        : ['missing'];
+      check(
+        `[${label}] the feed card matches the composer preview, property for property`,
+        differences.length === 0,
+        differences.map((key) => `${key}: ${preview?.[key]} → ${posted?.[key]}`).join('; ') ||
+          `${posted.size} ${posted.family.split(',')[0]}, ${posted.bubbleImage.slice(0, 40)}`,
+      );
+      check(
+        `[${label}] it is not the plain white speech bubble`,
+        style === 'violet'
+          ? posted.bubbleImage.includes('gradient')
+          : posted.bubbleImage === 'none' && !/255, 255, 255/.test(posted.bubbleColour),
+        `${posted.bubbleColour} ${posted.bubbleImage.slice(0, 40)}`,
+      );
+      check(
+        `[${label}] and it stays big after posting`,
+        layout.shortSize !== null && parseFloat(posted.size) >= layout.shortSize * 2,
+        `${posted.size} against a short message's ${layout.shortSize}px`,
+      );
+      check(
+        `[${label}] in Bebas Neue, in capitals, centred`,
+        /Bebas/i.test(posted.family) && posted.transform === 'uppercase' && posted.align === 'center',
+      );
+      check(
+        `[${label}] the words stay inside the bubble and the bubble on the screen`,
+        layout.inside && layout.onScreen && layout.sideways <= 0,
+        `${layout.sideways}px sideways`,
+      );
+      check(
+        `[${label}] the tail points up at the author's photo`,
+        layout.tailAboveBubble && layout.avatarAboveTail && layout.tailToAvatar <= 40,
+        `${Math.round(layout.tailToAvatar)}px off the avatar's centre`,
+      );
+    }
+  }
+  await phoneContext.close();
+
   /* ===================== a phone ===================== */
   section('ON A PHONE');
 

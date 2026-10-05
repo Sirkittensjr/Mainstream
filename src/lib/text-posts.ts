@@ -109,6 +109,41 @@ export function drawnAs(post: { text_kind?: string | null; caption: string; medi
   return textKindOf(post.text_kind) ?? 'short';
 }
 
+/** The columns a text post's shape lives in, beyond its words. */
+export const TEXT_COLUMNS = ['text_kind', 'text_title', 'text_style'] as const;
+export type TextColumn = (typeof TEXT_COLUMNS)[number];
+
+/**
+ * Whether a text post can be stored WITHOUT one of its columns and still be
+ * drawn exactly as its author saw it in the composer.
+ *
+ * This is the rule for a database that is behind the code. Leaving a column out
+ * is only acceptable when nothing anybody can see depends on it:
+ *
+ *   - a SHORT message without its kind reads back as kind-less, and a kind-less
+ *     text post is drawn as a short message — the same bubble, the same size;
+ *   - a BIG message in `glow` without its style reads back as null, and null is
+ *     `glow`.
+ *
+ * Everything else would come back as something else. A big message without its
+ * kind is a small white bubble; a violet one without its style is a white one;
+ * a story without its title has lost words. Those are refused rather than
+ * stored, because a post that changes shape between Preview and Post is the
+ * thing this feature cannot do.
+ */
+export function survivesWithout(
+  post: { text_kind?: string | null; text_title?: string | null; text_style?: string | null },
+  column: TextColumn,
+): boolean {
+  const value = post[column];
+  if (value === null || value === undefined) return true;
+  if (column === 'text_kind') {
+    return textKindOf(value) === 'short' && !post.text_title && !post.text_style;
+  }
+  if (column === 'text_style') return bigStyleOf(value) === 'glow';
+  return false;
+}
+
 /** The longest a body may be for a given kind. */
 export const bodyLimit = (kind: TextKind): number => TEXT_LIMITS[kind].body;
 

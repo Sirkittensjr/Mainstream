@@ -8,6 +8,7 @@ import {
   drawnAs,
   normaliseTextPost,
   previewOf,
+  survivesWithout,
   textKindOf,
 } from './text-posts';
 
@@ -182,5 +183,36 @@ describe('the preview a story shows in the feed', () => {
     for (const limit of [10, 25, 50, 120]) {
       assert.ok(previewOf('word '.repeat(200), limit).text.length <= limit);
     }
+  });
+});
+
+describe('what a text post can be stored without', () => {
+  it('a short message can lose its kind: kind-less is drawn as short', () => {
+    assert.equal(survivesWithout({ text_kind: 'short' }, 'text_kind'), true);
+  });
+
+  it('a big message cannot: kind-less is a small white bubble', () => {
+    assert.equal(survivesWithout({ text_kind: 'big' }, 'text_kind'), false);
+    assert.equal(survivesWithout({ text_kind: 'big', text_style: 'glow' }, 'text_kind'), false);
+  });
+
+  it('a story cannot lose its kind or its title', () => {
+    assert.equal(survivesWithout({ text_kind: 'story', text_title: 'T' }, 'text_kind'), false);
+    assert.equal(survivesWithout({ text_kind: 'story', text_title: 'T' }, 'text_title'), false);
+  });
+
+  it('glow can lose its style, because no style is glow', () => {
+    assert.equal(survivesWithout({ text_kind: 'big', text_style: 'glow' }, 'text_style'), true);
+  });
+
+  it('every other colour cannot', () => {
+    for (const style of ['night', 'violet', 'dusk']) {
+      assert.equal(survivesWithout({ text_kind: 'big', text_style: style }, 'text_style'), false, style);
+    }
+  });
+
+  it('a column that was never set can always be left out', () => {
+    assert.equal(survivesWithout({}, 'text_kind'), true);
+    assert.equal(survivesWithout({ text_kind: 'short' }, 'text_style'), true);
   });
 });
