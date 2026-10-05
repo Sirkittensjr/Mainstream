@@ -1283,20 +1283,35 @@ async function run() {
   });
   check('Photo leads with the picker', photoOrder?.pickerFirst === true, photoOrder?.heading);
 
+  // Text is no longer the same composer leading with its words: it asks which of
+  // the three kinds first — short, long or big — and each has its own composer.
+  // The three are covered properly by text-posts-flow; what matters here is that
+  // the sheet's Text option lands on that choice.
   await page.goto('/create?kind=text', { waitUntil: 'domcontentloaded' });
-  const textOrder = await page.evaluate(() => {
+  const textEntry = await page.evaluate(() => ({
+    kinds: [...document.querySelectorAll('[data-text-kind]')].map((n) => n.dataset.textKind),
+    heading: document.querySelector('h1')?.textContent ?? '',
+  }));
+  check(
+    'Text asks which kind of message first',
+    JSON.stringify(textEntry.kinds) === JSON.stringify(['short', 'long', 'big']),
+    textEntry.kinds.join(' / ') || textEntry.heading,
+  );
+
+  // And the combined composer — words AND a picker, neither taken away — is
+  // still what a bare /create gives, which is where every older link points.
+  await page.goto('/create', { waitUntil: 'domcontentloaded' });
+  const bare = await page.evaluate(() => {
     const caption = document.querySelector('textarea[name=caption]');
     const picker = document.querySelector('input[type=file]')?.closest('div');
     if (!caption || !picker) return null;
     return {
       captionFirst: caption.getBoundingClientRect().top < picker.getBoundingClientRect().top,
-      heading: document.querySelector('h1')?.textContent ?? '',
-      // Nothing was taken away: a text post can still gain a picture.
       stillHasPicker: Boolean(picker),
     };
   });
-  check('Text leads with the words', textOrder?.captionFirst === true, textOrder?.heading);
-  check('and neither kind loses the other half', textOrder?.stillHasPicker === true);
+  check('a bare /create still leads with the words', bare?.captionFirst === true);
+  check('and still offers a picture alongside them', bare?.stillHasPicker === true);
 
   // A post really can still be made from here, which is the only thing that makes
   // the two of them worth offering.

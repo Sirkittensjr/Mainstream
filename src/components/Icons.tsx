@@ -306,6 +306,19 @@ export function TrashIcon(props: IconProps) {
   );
 }
 
+/**
+ * A step back. Mirrored with `-scale-x-100` for redo, so the pair is obviously
+ * the same action in two directions rather than two unrelated arrows.
+ */
+export function UndoIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 10.5h9.5a5 5 0 0 1 0 10H9" />
+      <path d="M7.5 6 4 10.5 7.5 15" />
+    </svg>
+  );
+}
+
 export function ChevronIcon({ direction = 'right', ...props }: IconProps & { direction?: 'left' | 'right' }) {
   return (
     <svg {...base(props)}>
