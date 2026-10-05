@@ -53,6 +53,10 @@ export function serialisePost(view: PostView) {
     media: view.post.media,
     category: view.post.category,
     tags: view.post.tags,
+    // Which of the three shapes a text post is, so a client can draw the bubble
+    // the way the app does rather than guessing from the absence of media.
+    textKind: view.post.text_kind ?? null,
+    textTitle: view.post.text_title ?? null,
     createdAt: view.post.created_at,
     counts: {
       likes: view.likes,

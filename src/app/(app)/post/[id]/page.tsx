@@ -123,7 +123,7 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
             see it.
           </p>
         )}
-        <PostCard data={toCardData(view)} viewerId={viewer?.id ?? null} />
+        <PostCard data={toCardData(view)} viewerId={viewer?.id ?? null} full />
 
         <section className="card p-5">
           <div className="flex items-center justify-between gap-4">

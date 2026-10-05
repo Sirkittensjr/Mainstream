@@ -215,6 +215,17 @@ export interface Post {
    * the column, and a post from before it has never had one.
    */
   content_warning?: boolean;
+  /**
+   * Which of the three shapes a text post is: short, long or big.
+   *
+   * Null for every post that is not one — a photo or a video — and also for a
+   * text post written before kinds existed, which is drawn as `short`. See
+   * lib/text-posts.ts. Optional because a database that has not run migration
+   * 0011 does not return the column.
+   */
+  text_kind?: 'short' | 'long' | 'big' | null;
+  /** A long message's title. Only ever set when `text_kind` is 'long'. */
+  text_title?: string | null;
   removed: boolean;
   removed_reason: string | null;
   /**

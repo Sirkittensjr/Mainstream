@@ -14,6 +14,12 @@ export function toCardData(view: PostView): PostCardData {
     // Watch count, for video posts. Straight off the row — the database is the
     // only thing that decides what this number is.
     videoViews: view.post.video_views ?? 0,
+    // Which bubble a text post is, straight off the row. Null for a post with
+    // media, and null on a database that has not run migration 0011 — both of
+    // which `drawnAs` reads as "draw it the way it has always been drawn", or
+    // as a short message when there are words and nothing else.
+    textKind: view.post.text_kind ?? null,
+    textTitle: view.post.text_title ?? null,
     contentWarning: view.post.content_warning === true,
     createdAt: view.post.created_at,
     likes: view.likes,

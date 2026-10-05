@@ -1,11 +1,26 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter, Space_Grotesk } from 'next/font/google';
+import { Bebas_Neue, Inter, Space_Grotesk } from 'next/font/google';
 import './globals.css';
 
 const sans = Inter({ subsets: ['latin'], variable: '--font-sans', display: 'swap' });
 const display = Space_Grotesk({
   subsets: ['latin'],
   variable: '--font-display',
+  display: 'swap',
+});
+/**
+ * The face a BIG message is set in.
+ *
+ * Self-hosted by next/font like the other two — the files are fetched at build
+ * time and served from this origin, so there is no request to Google at runtime
+ * and no flash of a substituted face. Bebas Neue ships one weight, which is why
+ * `weight` is required here and why nothing else should reach for it: it is a
+ * display face for thirty characters, not a UI font.
+ */
+const statement = Bebas_Neue({
+  subsets: ['latin'],
+  weight: '400',
+  variable: '--font-statement',
   display: 'swap',
 });
 
@@ -47,7 +62,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${sans.variable} ${display.variable}`}>
+    <html lang="en" className={`${sans.variable} ${display.variable} ${statement.variable}`}>
       <body className="min-h-dvh font-sans">{children}</body>
     </html>
   );

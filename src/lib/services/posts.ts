@@ -1,6 +1,7 @@
 import 'server-only';
 import { cookies } from 'next/headers';
 import { db, isMissingColumn } from '@/lib/db';
+import type { TextKind } from '@/lib/text-posts';
 import { underReview } from './auto-review';
 import { communityCache, refreshCommunity } from './community-cache';
 import { newId } from '@/lib/ids';
@@ -138,6 +139,10 @@ export interface CreatePostInput {
   category: Category;
   tags: string[];
   contentWarning?: boolean;
+  /** Which of the three shapes a text post is. See lib/text-posts.ts. */
+  textKind?: TextKind | null;
+  /** A long message's title. Only ever set alongside `textKind: 'long'`. */
+  textTitle?: string | null;
 }
 
 /**
@@ -151,6 +156,18 @@ export interface CreatePostInput {
  */
 let warningsStored: boolean | null = null;
 
+/**
+ * Whether this database has the text-post columns.
+ *
+ * Same reasoning as `warningsStored` above, and the same shape: a deployment
+ * that has not run migration 0011 has no `text_kind`, and sending it would fail
+ * the whole insert — which would mean nobody could post anything at all over
+ * which bubble it is. The first insert that meets the missing column drops both
+ * columns and tries again. The post still arrives, with its words in `caption`,
+ * and is drawn as a short message until the migration is run.
+ */
+let textKindsStored: boolean | null = null;
+
 export async function createPost(input: CreatePostInput): Promise<Post> {
   const store = db();
   const post: Post = {
@@ -162,16 +179,35 @@ export async function createPost(input: CreatePostInput): Promise<Post> {
     tags: input.tags.map((tag) => tag.replace(/^#/, '').trim()).filter(Boolean).slice(0, 8),
     views: 0,
     content_warning: input.contentWarning === true,
+    text_kind: input.textKind ?? null,
+    text_title: input.textTitle ?? null,
     removed: false,
     removed_reason: null,
     created_at: new Date().toISOString(),
   };
 
   if (warningsStored === false) delete post.content_warning;
+  if (textKindsStored === false) {
+    delete post.text_kind;
+    delete post.text_title;
+  }
   try {
     await store.insert('posts', post);
     warningsStored ??= true;
+    textKindsStored ??= true;
   } catch (error) {
+    if (isMissingColumn(error, 'posts', 'text_kind')) {
+      textKindsStored = false;
+      console.error(
+        '[faytarra] Text post kinds are switched off: this database has no `text_kind` column ' +
+          'on `posts`. Run supabase/migrations/0011_text_posts.sql against it. Posting works as ' +
+          'normal; every text post is drawn as a short message until then.',
+      );
+      delete post.text_kind;
+      delete post.text_title;
+      await store.insert('posts', post);
+      return finish(post, store, input);
+    }
     if (!isMissingColumn(error, 'posts', 'content_warning')) throw error;
     warningsStored = false;
     console.error(
@@ -183,6 +219,15 @@ export async function createPost(input: CreatePostInput): Promise<Post> {
     await store.insert('posts', post);
   }
 
+  return finish(post, store, input);
+}
+
+/** Everything that happens once a post is in the table, however it got there. */
+async function finish(
+  post: Post,
+  store: ReturnType<typeof db>,
+  input: CreatePostInput,
+): Promise<Post> {
   const author = await store.get('users', input.authorId);
   await notifyMentions(
     post.caption,
