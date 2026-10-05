@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  BIG_STYLES,
+  TEXT_KIND_COPY,
   TEXT_LIMITS,
+  bigStyleOf,
   drawnAs,
   normaliseTextPost,
   previewOf,
@@ -10,13 +13,71 @@ import {
 
 describe('which kind a text post is', () => {
   it('takes the three it knows', () => {
-    for (const kind of ['short', 'long', 'big']) assert.equal(textKindOf(kind), kind);
+    for (const kind of ['short', 'story', 'big']) assert.equal(textKindOf(kind), kind);
   });
 
   it('and nothing else, however it is spelled', () => {
     for (const bad of ['SHORT', 'huge', '', null, undefined, 7, {}]) {
       assert.equal(textKindOf(bad), null, String(bad));
     }
+  });
+
+  /** The kind was called `long` for as long as it took to name it properly. */
+  it('reads the old name for a story as a story', () => {
+    assert.equal(textKindOf('long'), 'story');
+  });
+
+  it('and a row stored under the old name is drawn as one', () => {
+    assert.equal(drawnAs({ caption: 'a tale', text_kind: 'long', media: [] }), 'story');
+  });
+
+  it('but a story is never written back under the old name', () => {
+    const made = normaliseTextPost('long', 'A title', 'a body');
+    assert.ok(made.ok && made.kind === 'story');
+  });
+});
+
+describe('what the chooser says about each kind', () => {
+  it('names all three and says what they are for', () => {
+    assert.equal(TEXT_KIND_COPY.short.hint, 'Share a quick thought.');
+    assert.equal(TEXT_KIND_COPY.story.hint, 'Tell the full story.');
+    assert.equal(TEXT_KIND_COPY.big.hint, 'Make a statement.');
+  });
+
+  it('and spells out the limits it will hold them to', () => {
+    assert.deepEqual(TEXT_KIND_COPY.short.limits, ['Max 200 characters']);
+    assert.equal(TEXT_KIND_COPY.story.limits.length, 2);
+    assert.ok(TEXT_KIND_COPY.story.limits[0].includes('30'));
+    assert.ok(TEXT_KIND_COPY.story.limits[1].includes('1,000'));
+    assert.deepEqual(TEXT_KIND_COPY.big.limits, ['Max 30 characters']);
+  });
+
+  /** The copy is what the composer clamps to; a drift between them is a lie. */
+  it('and the numbers it quotes are the numbers it enforces', () => {
+    assert.ok(TEXT_KIND_COPY.short.limits[0].includes(String(TEXT_LIMITS.short.body)));
+    assert.ok(TEXT_KIND_COPY.big.limits[0].includes(String(TEXT_LIMITS.big.body)));
+    assert.ok(TEXT_KIND_COPY.story.limits[0].includes(String(TEXT_LIMITS.story.title)));
+  });
+});
+
+describe('how a big message is coloured', () => {
+  it('offers four, not a colour picker', () => {
+    assert.equal(BIG_STYLES.length, 4);
+  });
+
+  it('takes any of them', () => {
+    for (const style of BIG_STYLES) assert.equal(bigStyleOf(style), style);
+  });
+
+  it('and falls back to the quietest for anything else', () => {
+    for (const bad of ['rainbow', '#ff0000', '', null, undefined, 3, {}]) {
+      assert.equal(bigStyleOf(bad), 'glow', String(bad));
+    }
+  });
+
+  /** A big message written before the colours existed has no style at all. */
+  it('so a big message with no colour stored still has one to draw', () => {
+    assert.equal(bigStyleOf(null), 'glow');
   });
 });
 
@@ -29,7 +90,7 @@ describe('drawing a post that already existed', () => {
 
   it('a post that says which kind it is, is drawn as that', () => {
     assert.equal(drawnAs({ caption: 'LET US GO', text_kind: 'big', media: [] }), 'big');
-    assert.equal(drawnAs({ caption: 'the story', text_kind: 'long', media: [] }), 'long');
+    assert.equal(drawnAs({ caption: 'the story', text_kind: 'story', media: [] }), 'story');
   });
 
   it('a post with media is not a text post, whatever it claims', () => {
@@ -61,11 +122,11 @@ describe('what gets stored', () => {
     assert.ok(made.ok && made.body.length === TEXT_LIMITS.big.body);
   });
 
-  it('cuts a long message at 1,000, and its title at 30', () => {
-    const made = normaliseTextPost('long', 't'.repeat(90), 'b'.repeat(4000));
+  it('cuts a story at 1,000, and its title at 30', () => {
+    const made = normaliseTextPost('story', 't'.repeat(90), 'b'.repeat(4000));
     assert.ok(made.ok);
-    assert.equal(made.title!.length, TEXT_LIMITS.long.title);
-    assert.equal(made.body.length, TEXT_LIMITS.long.body);
+    assert.equal(made.title!.length, TEXT_LIMITS.story.title);
+    assert.equal(made.body.length, TEXT_LIMITS.story.body);
   });
 
   it('drops a title from the kinds that do not have one', () => {
@@ -80,8 +141,8 @@ describe('what gets stored', () => {
     assert.ok(!made.ok && made.error.length > 0);
   });
 
-  it('refuses a long message with no title, because the feed shows one', () => {
-    const made = normaliseTextPost('long', '  ', 'a real body');
+  it('refuses a story with no title, because the feed shows one', () => {
+    const made = normaliseTextPost('story', '  ', 'a real body');
     assert.ok(!made.ok);
   });
 
@@ -91,7 +152,7 @@ describe('what gets stored', () => {
   });
 });
 
-describe('the preview a long message shows in the feed', () => {
+describe('the preview a story shows in the feed', () => {
   it('shows the whole thing when it is already short', () => {
     assert.deepEqual(previewOf('All of it.'), { text: 'All of it.', clipped: false });
   });

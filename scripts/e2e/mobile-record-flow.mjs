@@ -1284,7 +1284,7 @@ async function run() {
   check('Photo leads with the picker', photoOrder?.pickerFirst === true, photoOrder?.heading);
 
   // Text is no longer the same composer leading with its words: it asks which of
-  // the three kinds first — short, long or big — and each has its own composer.
+  // the three kinds first — short, story or big — and each has its own composer.
   // The three are covered properly by text-posts-flow; what matters here is that
   // the sheet's Text option lands on that choice.
   await page.goto('/create?kind=text', { waitUntil: 'domcontentloaded' });
@@ -1294,7 +1294,7 @@ async function run() {
   }));
   check(
     'Text asks which kind of message first',
-    JSON.stringify(textEntry.kinds) === JSON.stringify(['short', 'long', 'big']),
+    JSON.stringify(textEntry.kinds) === JSON.stringify(['short', 'story', 'big']),
     textEntry.kinds.join(' / ') || textEntry.heading,
   );
 

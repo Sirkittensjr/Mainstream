@@ -1,9 +1,9 @@
 /**
  * Text posts, end to end: three kinds, one bubble.
  *
- * Covers what the feature actually promises — that a short message, a long one
- * and a big one are the same speech bubble with different amounts of room, that
- * the bubble points at its author, that a long message is previewed in the feed
+ * Covers what the feature actually promises — that a short message, a story and
+ * a big one are the same speech bubble with different amounts of room, that
+ * the bubble points at its author, that a story is previewed in the feed
  * and whole on its own page, that the limits hold against a request that never
  * went near the composer, and that a text post written before any of this
  * existed still works and gains the bubble.
@@ -27,6 +27,7 @@ function check(label, ok, detail = '') {
   if (!ok) failures += 1;
 }
 const section = (name) => console.log(`\n######## ${name} ########`);
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function confirmationLink(email) {
   const rows = readFileSync(OUTBOX, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -102,7 +103,7 @@ async function run() {
     .evaluateAll((nodes) => nodes.map((node) => node.dataset.textKind));
   check(
     'it asks which kind first, rather than opening a composer',
-    JSON.stringify(offered) === JSON.stringify(['short', 'long', 'big']),
+    JSON.stringify(offered) === JSON.stringify(['short', 'story', 'big']),
     offered.join(' / '),
   );
   const chooser = await page.locator('[data-text-chooser]').innerText();
@@ -157,23 +158,23 @@ async function run() {
     `${Math.round(placed.bubble.width)}px of ${placed.vw}px`,
   );
 
-  /* ===================== long ===================== */
-  section('A LONG MESSAGE: TITLE, PREVIEW, READ MORE');
+  /* ===================== story ===================== */
+  section('A STORY: TITLE, PREVIEW, READ MORE');
 
-  const longTitle = `The whole story ${stamp.slice(0, 3)}`;
-  const longBody =
+  const storyTitle = `The whole story ${stamp.slice(0, 3)}`;
+  const storyBody =
     'It started on a Tuesday and by the end of the week everything about the plan had changed, ' +
     'which is the part nobody warns you about when they tell you to just start. ' +
     'a'.repeat(300);
-  const longId = await post(page, 'long', { title: longTitle, body: longBody });
-  check('a long message posts', Boolean(longId), longId);
+  const storyId = await post(page, 'story', { title: storyTitle, body: storyBody });
+  check('a story posts', Boolean(storyId), storyId);
 
   // Its own page shows all of it.
   check(
     'its own page shows the title',
-    (await page.locator('[data-text-title]').innerText()).includes(longTitle.slice(0, 20)),
+    (await page.locator('[data-text-title]').innerText()).includes(storyTitle.slice(0, 20)),
   );
-  const whole = await page.locator('[data-text-post="long"] [data-text-body]').innerText();
+  const whole = await page.locator('[data-text-post="story"] [data-text-body]').innerText();
   check(
     'and the whole body, not a preview',
     whole.length > 300,
@@ -198,7 +199,7 @@ async function run() {
   // The feed shows a preview and a way in.
   await page.goto('/home', { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle');
-  const card = page.locator(`article:has([data-text-post="long"])`).first();
+  const card = page.locator(`article:has([data-text-post="story"])`).first();
   const feedBody = await card.locator('[data-text-body]').innerText();
   check(
     'the feed shows only the first 50 characters or so',
@@ -209,11 +210,11 @@ async function run() {
   check('the feed shows the title too', (await card.locator('[data-text-title]').count()) === 1);
 
   await card.locator('[data-read-more]').click();
-  await page.waitForURL(new RegExp(`/post/${longId}`), { timeout: 20000 });
+  await page.waitForURL(new RegExp(`/post/${storyId}`), { timeout: 20000 });
   check('Read more opens the whole message', true);
   check(
     'where the body is complete again',
-    (await page.locator('[data-text-post="long"] [data-text-body]').innerText()).length > 300,
+    (await page.locator('[data-text-post="story"] [data-text-body]').innerText()).length > 300,
   );
   check(
     'and it is still the same bubble, with the author above it',
@@ -268,6 +269,117 @@ async function run() {
   check('and still fits inside the bubble', stepped.inside && stepped.noSideScroll);
   check('the longest one still posts', Boolean(longestBig));
 
+  /* ===================== they look like three things ===================== */
+  section('THE THREE ARE TELLABLE APART IN THE FEED');
+
+  await page.goto('/home', { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle');
+  const looks = await page.evaluate(() => {
+    const read = (kind) => {
+      const node = document.querySelector(`[data-text-post="${kind}"] [data-speech-bubble]`);
+      if (!node) return null;
+      const body = node.querySelector('[data-text-body]');
+      return {
+        bubble: getComputedStyle(node).backgroundColor,
+        bubbleImage: getComputedStyle(node).backgroundImage,
+        size: parseFloat(getComputedStyle(body).fontSize),
+        family: getComputedStyle(body).fontFamily,
+        hasTitle: Boolean(node.querySelector('[data-text-title]')),
+      };
+    };
+    return { short: read('short'), story: read('story'), big: read('big') };
+  });
+  check(
+    'all three are on the page to compare',
+    looks.short && looks.story && looks.big,
+    Object.entries(looks)
+      .map(([kind, seen]) => `${kind}: ${seen ? 'yes' : 'MISSING'}`)
+      .join(', '),
+  );
+  check(
+    // Light on dark is what makes a bubble read as speech rather than as a
+    // paragraph with a border.
+    'the bubbles are light surfaces, not the dark card behind them',
+    /255, 255, 255/.test(looks.short.bubble),
+    looks.short.bubble,
+  );
+  check(
+    'a story is tinted away from a short message, so the feed says which it is',
+    looks.story.bubble !== looks.short.bubble,
+    `${looks.short.bubble} against ${looks.story.bubble}`,
+  );
+  check('and only a story carries a title', looks.story.hasTitle && !looks.short.hasTitle);
+  check(
+    'a big message is set far larger than the other two',
+    looks.big.size > looks.short.size * 1.7,
+    `${Math.round(looks.big.size)}px against ${Math.round(looks.short.size)}px`,
+  );
+  check(
+    'in the display face, which the others are not',
+    /Bebas/i.test(looks.big.family) && !/Bebas/i.test(looks.short.family),
+    `${looks.big.family} against ${looks.short.family}`,
+  );
+
+  /* ===================== the colours a big message can take ============== */
+  section('A BIG MESSAGE CARRIES A COLOUR');
+
+  await page.goto('/create?kind=text&text=big', { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-big-styles]', { timeout: 20000 });
+  const swatches = await page
+    .locator('[data-big-style]')
+    .evaluateAll((nodes) => nodes.map((node) => node.dataset.bigStyle));
+  check(
+    'four colours are offered, not a colour picker',
+    swatches.length === 4 && !(await page.locator('input[type=color]').count()),
+    swatches.join(' / '),
+  );
+  check(
+    'and one of them is chosen to begin with',
+    (await page.locator('[data-big-style="glow"]').getAttribute('aria-pressed')) === 'true',
+  );
+
+  await page.fill('#caption', `VIOLET ${stamp.slice(0, 3)}`);
+  await page.locator('[data-big-style="violet"]').click();
+  await wait(400);
+  const painted = await page.evaluate(() => {
+    const bubble = document.querySelector('[data-text-preview] [data-speech-bubble]');
+    const tail = document.querySelector('[data-text-preview] [data-speech-tail]');
+    return {
+      bubble: getComputedStyle(bubble).backgroundImage,
+      tail: getComputedStyle(tail).backgroundImage,
+    };
+  });
+  check(
+    'choosing one paints the preview with it',
+    painted.bubble.includes('gradient'),
+    painted.bubble.slice(0, 60),
+  );
+  check(
+    // The tail takes the bubble's own surface, which is the whole reason it is a
+    // rotated square rather than a border triangle.
+    'and the tail takes the same surface, so the two stay one shape',
+    painted.tail === painted.bubble,
+  );
+
+  await page.locator('[data-post-text]').click();
+  await page.waitForURL(/\/post\//, { timeout: 30000 });
+  const styledId = page.url().split('/post/')[1].split(/[?#]/)[0];
+  check(
+    'the colour is stored on the post, not just shown while writing',
+    (await page.evaluate(async (id) => {
+      const response = await fetch(`/api/v1/posts/${id}`);
+      return (await response.json())?.post?.textStyle ?? null;
+    }, styledId)) === 'violet',
+  );
+  check(
+    'and the posted bubble is painted with it',
+    await page.evaluate(() =>
+      getComputedStyle(
+        document.querySelector('[data-text-post="big"] [data-speech-bubble]'),
+      ).backgroundImage.includes('gradient'),
+    ),
+  );
+
   /* ===================== the limits ===================== */
   section('THE LIMITS HOLD WITHOUT THE COMPOSER');
 
@@ -293,11 +405,11 @@ async function run() {
   for (const [kind, over, cap] of [
     ['short', 900, 200],
     ['big', 400, 30],
-    ['long', 4000, 1000],
+    ['story', 4000, 1000],
   ]) {
     await page.goto(`/create?kind=text&text=${kind}`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('textarea#caption', { timeout: 20000 });
-    if (kind === 'long') {
+    if (kind === 'story') {
       await page.evaluate(() => {
         document.querySelector('#text_title')?.removeAttribute('maxlength');
       });
@@ -339,7 +451,7 @@ async function run() {
       stored !== null && stored.caption === cap,
       stored ? `${stored.caption} characters against a ${cap} limit` : 'could not read it back',
     );
-    if (kind === 'long') {
+    if (kind === 'story') {
       check(
         'and its title is clamped to 30 as well',
         stored.title === 30,
@@ -464,9 +576,9 @@ async function run() {
   check('a big message fits a phone', onPhone.fits && onPhone.sideways <= 0, `${onPhone.vw}px wide`);
   check('and is still large on it', onPhone.size >= 24, `${Math.round(onPhone.size)}px`);
 
-  await small.goto(`/post/${longId}`, { waitUntil: 'domcontentloaded' });
+  await small.goto(`/post/${storyId}`, { waitUntil: 'domcontentloaded' });
   await small.waitForLoadState('networkidle');
-  const longOnPhone = await small.evaluate(() => ({
+  const storyOnPhone = await small.evaluate(() => ({
     sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth,
     bubbleWithin: (() => {
       const bubble = document.querySelector('[data-speech-bubble]').getBoundingClientRect();
@@ -474,8 +586,8 @@ async function run() {
     })(),
   }));
   check(
-    'and a long one stays inside the screen',
-    longOnPhone.bubbleWithin && longOnPhone.sideways <= 0,
+    'and a story stays inside the screen',
+    storyOnPhone.bubbleWithin && storyOnPhone.sideways <= 0,
   );
 
   await browser.close();

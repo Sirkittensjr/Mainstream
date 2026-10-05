@@ -223,9 +223,17 @@ export interface Post {
    * lib/text-posts.ts. Optional because a database that has not run migration
    * 0011 does not return the column.
    */
-  text_kind?: 'short' | 'long' | 'big' | null;
-  /** A long message's title. Only ever set when `text_kind` is 'long'. */
+  text_kind?: 'short' | 'story' | 'big' | 'long' | null;
+  /** A story's title. Only ever set when `text_kind` is 'story'. */
   text_title?: string | null;
+  /**
+   * How a BIG message is coloured: glow, night, violet or dusk.
+   *
+   * Null for every other kind, and for a big message written before the colours
+   * existed — which reads as `glow`, the quietest of the four. Optional because
+   * a database that has not run migration 0012 does not return the column.
+   */
+  text_style?: string | null;
   removed: boolean;
   removed_reason: string | null;
   /**

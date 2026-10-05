@@ -5,7 +5,24 @@ import { VideoIcon } from '@/components/Icons';
 import { requireViewer } from '@/lib/session';
 import { CreateForm } from './CreateForm';
 import { TextComposer } from './TextComposer';
-import { TEXT_KINDS, TEXT_KIND_COPY, textKindOf } from '@/lib/text-posts';
+import { TEXT_KINDS, TEXT_KIND_COPY, textKindOf, type TextKind } from '@/lib/text-posts';
+import { BubbleLinesIcon, ChevronIcon, StoryIcon } from '@/components/Icons';
+
+/**
+ * The accent each kind carries, here and in the feed.
+ *
+ * Blue, purple, pink — three coordinated colours rather than three unrelated
+ * ones, and the same association the bubbles use: a story's bubble is tinted
+ * toward this purple, and a big message's default colour runs through this pink.
+ */
+const TEXT_KIND_LOOK: Record<
+  TextKind,
+  { Icon: typeof BubbleLinesIcon; tile: string; ink: string }
+> = {
+  short: { Icon: BubbleLinesIcon, tile: 'bg-[#38BDF8]/15', ink: 'text-[#7DD3FC]' },
+  story: { Icon: StoryIcon, tile: 'bg-aura/15', ink: 'text-aura' },
+  big: { Icon: BubbleLinesIcon, tile: 'bg-fay/15', ink: 'text-fay' },
+};
 
 export const metadata: Metadata = { title: 'New post' };
 export const dynamic = 'force-dynamic';
@@ -93,33 +110,50 @@ export default async function CreatePage({
             ) : (
               /* Which of the three. A link each rather than a control, so a
                  composer can be linked to directly and the back button goes
-                 back to the choice rather than out of the page. */
+                 back to the choice rather than out of the page.
+
+                 Each carries its own accent — blue, purple, pink — and the feed
+                 carries the same association through: a story's bubble is
+                 tinted toward its purple, a big message's default colour is the
+                 pink. The colour is how somebody recognises which of the three
+                 they are looking at before they read a word. */
               <div className="space-y-3" data-text-chooser>
-                {TEXT_KINDS.map((option) => (
-                  <Link
-                    key={option}
-                    href={`/create?kind=text&text=${option}`}
-                    data-text-kind={option}
-                    className="card flex min-h-[72px] w-full items-center gap-4 p-4 transition hover:bg-white/[0.06]"
-                  >
-                    <span
-                      aria-hidden="true"
-                      className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-white/10 bg-white/[0.06] text-white ${
-                        option === 'big' ? 'font-statement text-xl' : 'font-display font-bold'
-                      } ${option === 'short' ? 'text-[13px]' : option === 'long' ? 'text-[11px]' : ''}`}
+                {TEXT_KINDS.map((option) => {
+                  const { Icon, tile, ink } = TEXT_KIND_LOOK[option];
+                  return (
+                    <Link
+                      key={option}
+                      href={`/create?kind=text&text=${option}`}
+                      data-text-kind={option}
+                      className="card flex w-full items-center gap-4 p-4 transition hover:bg-white/[0.06]"
                     >
-                      {option === 'short' ? 'Aa' : option === 'long' ? 'Aa+' : 'A'}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block font-display text-[17px] font-bold">
-                        {TEXT_KIND_COPY[option].label}
+                      <span
+                        aria-hidden="true"
+                        className={`grid h-14 w-14 shrink-0 place-items-center rounded-2xl ${tile} ${ink}`}
+                      >
+                        {option === 'big' ? (
+                          <span className="font-statement text-[26px] leading-none">Aa</span>
+                        ) : (
+                          <Icon width={26} height={26} />
+                        )}
                       </span>
-                      <span className="mt-0.5 block text-sm text-white/50">
-                        {TEXT_KIND_COPY[option].hint}
+                      <span className="min-w-0 flex-1">
+                        <span className="block font-display text-[17px] font-bold">
+                          {TEXT_KIND_COPY[option].label}
+                        </span>
+                        <span className="mt-0.5 block text-sm text-white/55">
+                          {TEXT_KIND_COPY[option].hint}
+                        </span>
+                        {TEXT_KIND_COPY[option].limits.map((line) => (
+                          <span key={line} className="mt-1 block text-[12px] text-white/35">
+                            {line}
+                          </span>
+                        ))}
                       </span>
-                    </span>
-                  </Link>
-                ))}
+                      <ChevronIcon width={18} height={18} className="shrink-0 text-white/30" />
+                    </Link>
+                  );
+                })}
               </div>
             )}
           </>
