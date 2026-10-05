@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createVideoPostAction } from '@/app/actions';
 import {
@@ -15,6 +15,21 @@ import {
   VolumeIcon,
 } from '@/components/Icons';
 import { CATEGORIES, type Category, type Media, type TextOverlay } from '@/lib/types';
+import {
+  canRedo,
+  canUndo,
+  emptyHistory,
+  record,
+  redo,
+  undo,
+} from '@/lib/video/history';
+
+/** Everything the editor can change, as one value. See `project` below. */
+interface EditProject {
+  clips: Clip[];
+  overlays: TextOverlay[];
+  muted: boolean;
+}
 import {
   FULL_FRAME,
   type Clip,
@@ -208,6 +223,59 @@ export function VideoStudio({
   /** Which editing tool is open, so arriving to pick a cover can start there. */
   const [editorTool, setEditorTool] = useState<EditorTool>('trim');
   const [overlays, setOverlays] = useState<TextOverlay[]>([]);
+
+  /* --------------------------------------------------------- undo and redo */
+
+  /**
+   * The editing project, as one value, so a step back restores all of it.
+   *
+   * Clips, text and whether the post is silent: everything the editor changes
+   * and nothing it does not. The recordings are referenced, never copied —
+   * `Clip.src` is an object URL that outlives any snapshot.
+   */
+  const project = useMemo(
+    () => ({ clips, overlays, muted: mutedOnPost }),
+    [clips, overlays, mutedOnPost],
+  );
+  const [history, setHistory] = useState(() => emptyHistory<EditProject>());
+  /**
+   * Held in a ref as well, because `remember` is called from event handlers that
+   * close over the render they were made in. Reading the live project off a ref
+   * is what keeps a drag from recording the state two frames ago.
+   */
+  const live = useRef(project);
+  live.current = project;
+
+  /** Records the state being LEFT, before a change lands. See lib/video/history. */
+  const remember = useCallback((label: string) => {
+    setHistory((current) => record(current, live.current, label));
+  }, []);
+
+  const restore = useCallback((next: EditProject) => {
+    setClips(next.clips);
+    setOverlays(next.overlays);
+    setMutedOnPost(next.muted);
+    // Whatever was rendered was rendered from the other version of this.
+    setFinished(null);
+  }, []);
+
+  const stepBack = useCallback(() => {
+    setHistory((current) => {
+      const stepped = undo(current, live.current);
+      if (!stepped) return current;
+      restore(stepped.state);
+      return stepped.history;
+    });
+  }, [restore]);
+
+  const stepForward = useCallback(() => {
+    setHistory((current) => {
+      const stepped = redo(current, live.current);
+      if (!stepped) return current;
+      restore(stepped.state);
+      return stepped.history;
+    });
+  }, [restore]);
 
   /** Set when the camera hands a take over for its cover to be chosen. */
   const [coverWanted, setCoverWanted] = useState(false);
@@ -660,20 +728,37 @@ export function VideoStudio({
         }}
         tool={editorTool}
         onTool={setEditorTool}
+        canUndo={canUndo(history)}
+        canRedo={canRedo(history)}
+        onUndo={stepBack}
+        onRedo={stepForward}
         onTrimClip={(id, patch) => {
+          // Labelled per clip, so a whole drag is one step back rather than
+          // forty — see lib/video/history.
+          remember(`trim:${id}`);
           setClips((current) => updateClip(current, id, patch));
           // The rendered video is now out of date, so it is thrown away rather
           // than posted as the pre-trim version.
           setFinished(null);
         }}
         onPatchClip={(id, patch) => {
+          // Volume and crop are different decisions about the same clip, so they
+          // get their own labels and do not collapse into each other.
+          remember(`${Object.keys(patch).join('+') || 'clip'}:${id}`);
           setClips((current) => updateClip(current, id, patch));
           setFinished(null);
         }}
-        onMuted={setMutedOnPost}
-        onOverlays={setOverlays}
+        onMuted={(next) => {
+          remember('muted');
+          setMutedOnPost(next);
+        }}
+        onOverlays={(next) => {
+          remember('text');
+          setOverlays(next);
+        }}
         onAddClip={left > 0.5 ? () => setRecording(true) : undefined}
         onDeleteClip={(id) => {
+          remember(`delete:${id}`);
           // Computed out here rather than inside the updater: an updater can be
           // called twice, and moving the whole screen twice is not idempotent.
           const kept = clips.filter((entry) => entry.id !== id);
@@ -711,7 +796,12 @@ export function VideoStudio({
             setFinished(null);
           }}
           onDone={() => {
-            setStage(clips.length > 1 ? 'clips' : 'compose');
+            // Back to the PROJECT, never onward to posting. Finishing a trim is
+            // not a decision to publish: with one clip this used to land on the
+            // compose screen, so trimming the only clip walked somebody into the
+            // posting form they had not asked for. The clip list has its own way
+            // forward, and that button is the one that means "done editing".
+            setStage('clips');
             setEditingId(null);
           }}
         />

@@ -470,6 +470,29 @@ async function run() {
   /* ===================== per-clip trimming ===================== */
   section('EACH CLIP TRIMS ON ITS OWN');
 
+  /**
+   * Still editing, not posting.
+   *
+   * The rule being guarded: finishing an edit is never a decision to publish.
+   * Called after every editing action below, because the way this went wrong
+   * was one branch — the clip editor's Done, with a single clip — walking
+   * somebody into the posting form they had not asked for.
+   */
+  /** Whether one of the two history buttons is offered. */
+  const enabled = async (which) =>
+    page.locator(`[data-editor-${which}]`).evaluate((node) => !node.disabled);
+
+  const stillEditing = async (what) => {
+    check(
+      `${what} leaves you in the editor`,
+      (await page.locator('[data-editor-fullscreen]').count()) === 1 &&
+        (await page.locator('[data-post-stage]').count()) === 0,
+      await page.evaluate(() =>
+        document.querySelector('[data-post-stage]') ? 'ON THE POSTING SCREEN' : 'in the editor',
+      ),
+    );
+  };
+
   const wholeProject = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
   check('the scrubber covers the whole project', wholeProject > 5, `${wholeProject}s`);
 
@@ -498,6 +521,7 @@ async function run() {
   await setRange(page.locator('[data-editor-trim="end"]'), Math.max(1, clipOneEnd - 2));
   await wait(700);
   const afterFirstTrim = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+  await stillEditing('trimming clip 1');
   check(
     'trimming clip 1 shortens the whole project',
     afterFirstTrim < wholeProject - 1,
@@ -515,6 +539,7 @@ async function run() {
   await setRange(page.locator('[data-editor-trim="end"]'), Math.max(1, clipTwoEnd - 1.5));
   await wait(700);
   const afterSecondTrim = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+  await stillEditing('trimming clip 2');
   check(
     'trimming clip 2 shortens it again',
     afterSecondTrim < afterFirstTrim - 0.8,
@@ -559,6 +584,7 @@ async function run() {
   await setRange(page.locator('[data-editor-trim="end"]'), Math.max(1, clipThreeEnd - 1));
   await wait(700);
   const afterThird = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+  await stillEditing('trimming clip 3');
   check(
     'and the project is shorter again',
     afterThird < beforeThird - 0.5,
@@ -591,6 +617,7 @@ async function run() {
   await page.mouse.up();
   await wait(700);
   const afterDrag = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+  await stillEditing('dragging a trim grip');
   check(
     'dragging a trim handle on the timeline cuts the clip',
     afterDrag < beforeDrag - 0.2,
@@ -923,6 +950,7 @@ async function run() {
     await wait(350);
     levels.push(await levelNow());
   }
+  await stillEditing('setting a clip’s volume');
   check(
     'each clip kept its own level',
     levels[0] === 100 && levels[1] === 0 && levels[2] === half,
@@ -960,6 +988,109 @@ async function run() {
   await page.locator('[data-editor-tool="trim"]').click();
   await wait(200);
 
+  /* ===================== undo and redo ===================== */
+  section('A STEP BACK, AND FORWARD AGAIN');
+
+  await page.locator('[data-editor-tool="trim"]').click();
+  await page.locator('[data-editor-clip="2"]').click();
+  await wait(300);
+  const beforeUndo = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+  const endBeforeUndo = Number(await page.locator('[data-editor-trim="end"]').inputValue());
+  await setRange(page.locator('[data-editor-trim="end"]'), Math.max(0.5, endBeforeUndo - 0.5));
+  await wait(600);
+  const afterCut = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+  check('a trim shortens the project', afterCut < beforeUndo - 0.2, `${beforeUndo}s -> ${afterCut}s`);
+
+  check('and Undo becomes available once there is something to undo', await enabled('undo'));
+  await page.locator('[data-editor-undo]').click();
+  await wait(600);
+  const afterUndo = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+  check(
+    'Undo puts the trim back',
+    Math.abs(afterUndo - beforeUndo) < 0.12,
+    `${afterCut}s -> ${afterUndo}s, against ${beforeUndo}s before the cut`,
+  );
+  await stillEditing('undoing');
+
+  check('and Redo is now offered', await enabled('redo'));
+  await page.locator('[data-editor-redo]').click();
+  await wait(600);
+  const afterRedo = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+  check(
+    'Redo takes the trim away again',
+    Math.abs(afterRedo - afterCut) < 0.12,
+    `${afterUndo}s -> ${afterRedo}s, against ${afterCut}s after the cut`,
+  );
+
+  // One DRAG is one step back, not forty: the handler fires on every pointermove
+  // and the history coalesces them. See lib/video/history.
+  await page.locator('[data-editor-clip="0"]').click();
+  await wait(300);
+  // Reset it first: by this point in the run the clip has been trimmed three
+  // times and is near its floor, so there would be nothing left to drag off and
+  // the test would be measuring the clamp rather than the drag.
+  await page.locator('[data-editor-trim-reset]').click();
+  await wait(500);
+  const beforeDragUndo = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+  const dragRail = await page.locator('[data-editor-track]').boundingBox();
+  const dragGrip = await page.locator('[data-editor-handle="end"]').boundingBox();
+  // Aimed relative to where the grip ALREADY is, not at a fixed fraction of the
+  // rail: this clip has been trimmed three times by now, so a fixed target to
+  // the right of its end would lengthen it instead of cutting it.
+  const endAt = Number(
+    await page.locator('[data-editor-handle="end"]').getAttribute('aria-valuenow'),
+  );
+  const wholeSource = Number(await page.locator('[data-editor-trim="end"]').getAttribute('max'));
+  const endFraction = wholeSource > 0 ? endAt / wholeSource : 1;
+  await page.mouse.move(dragGrip.x + dragGrip.width / 2, dragGrip.y + dragGrip.height / 2);
+  await page.mouse.down();
+  for (const part of [0.9, 0.8, 0.7, 0.65]) {
+    await page.mouse.move(
+      dragRail.x + dragRail.width * endFraction * part,
+      dragGrip.y + dragGrip.height / 2,
+    );
+    await wait(50);
+  }
+  await page.mouse.up();
+  await wait(600);
+  const afterDragCut = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+  check(
+    'a drag cuts the clip',
+    afterDragCut < beforeDragUndo - 0.1,
+    `${beforeDragUndo}s -> ${afterDragCut}s`,
+  );
+  await page.locator('[data-editor-undo]').click();
+  await wait(600);
+  check(
+    'and ONE undo puts the whole drag back, not one pointermove of it',
+    Math.abs(
+      Number(await page.locator('[data-editor-timeline]').getAttribute('max')) - beforeDragUndo,
+    ) < 0.12,
+    `${afterDragCut}s -> ${await page.locator('[data-editor-timeline]').getAttribute('max')}s`,
+  );
+
+  // Volume is undoable too, and it is a different kind of change from a trim.
+  await page.locator('[data-editor-tool="sound"]').click();
+  await page.locator('[data-editor-clip="0"]').click();
+  await wait(300);
+  await setRange(page.locator('[data-editor-clip-volume]'), 0.25);
+  await wait(400);
+  check(
+    'a volume change takes',
+    (await page.locator('[data-editor-clip-volume-value]').innerText()).startsWith('25'),
+    await page.locator('[data-editor-clip-volume-value]').innerText(),
+  );
+  await page.locator('[data-editor-undo]').click();
+  await wait(600);
+  check(
+    'and Undo restores the level it had',
+    (await page.locator('[data-editor-clip-volume-value]').innerText()).startsWith('100'),
+    await page.locator('[data-editor-clip-volume-value]').innerText(),
+  );
+  await stillEditing('undoing a volume change');
+  await page.locator('[data-editor-tool="trim"]').click();
+  await wait(200);
+
   /* ===================== the clip's own shape ===================== */
   section('CROP CHANGES THE CLIP, NOT JUST A LABEL');
 
@@ -982,11 +1113,40 @@ async function run() {
       (await page.locator('[data-editor-shape="Original"]').getAttribute('aria-pressed')) ===
         'false',
   );
-  // Put it back: the rest of the run is about a 9:16 project.
-  await page.locator('[data-editor-shape="Original"]').click();
+  await stillEditing('cropping a clip');
+
+  // AND ONLY THAT CLIP. Clip 1's shape must not become every clip's shape.
+  await page.locator('[data-editor-clip="1"]').click();
   await wait(400);
   check(
-    'and it goes back to the original',
+    'the next clip keeps its own shape rather than inheriting the crop',
+    (await page.locator('[data-editor-shape="Original"]').getAttribute('aria-pressed')) === 'true' &&
+      (await page.locator('[data-editor-shape="1:1"]').getAttribute('aria-pressed')) === 'false',
+  );
+  await page.locator('[data-editor-shape="4:5"]').click();
+  await wait(400);
+  check(
+    'and can be cropped differently',
+    (await page.locator('[data-editor-shape="4:5"]').getAttribute('aria-pressed')) === 'true',
+  );
+  await page.locator('[data-editor-clip="2"]').click();
+  await wait(400);
+  check(
+    'while a third is untouched by either',
+    (await page.locator('[data-editor-shape="Original"]').getAttribute('aria-pressed')) === 'true',
+  );
+
+  // Put them all back: the rest of the run is about a 9:16 project.
+  for (const position of [0, 1]) {
+    await page.locator(`[data-editor-clip="${position}"]`).click();
+    await wait(300);
+    await page.locator('[data-editor-shape="Original"]').click();
+    await wait(300);
+  }
+  await page.locator('[data-editor-clip="0"]').click();
+  await wait(300);
+  check(
+    'and they go back to the original',
     (await page.locator('[data-editor-shape="Original"]').getAttribute('aria-pressed')) === 'true',
   );
   await page.locator('[data-editor-tool="trim"]').click();

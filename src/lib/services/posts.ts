@@ -141,8 +141,10 @@ export interface CreatePostInput {
   contentWarning?: boolean;
   /** Which of the three shapes a text post is. See lib/text-posts.ts. */
   textKind?: TextKind | null;
-  /** A long message's title. Only ever set alongside `textKind: 'long'`. */
+  /** A story's title. Only ever set alongside `textKind: 'story'`. */
   textTitle?: string | null;
+  /** How a big message is coloured. Only ever set alongside `textKind: 'big'`. */
+  textStyle?: string | null;
 }
 
 /**
@@ -168,6 +170,9 @@ let warningsStored: boolean | null = null;
  */
 let textKindsStored: boolean | null = null;
 
+/** The same again for `text_style`, which arrived one migration later. */
+let stylesStored: boolean | null = null;
+
 export async function createPost(input: CreatePostInput): Promise<Post> {
   const store = db();
   const post: Post = {
@@ -181,6 +186,7 @@ export async function createPost(input: CreatePostInput): Promise<Post> {
     content_warning: input.contentWarning === true,
     text_kind: input.textKind ?? null,
     text_title: input.textTitle ?? null,
+    text_style: input.textStyle ?? null,
     removed: false,
     removed_reason: null,
     created_at: new Date().toISOString(),
@@ -190,11 +196,14 @@ export async function createPost(input: CreatePostInput): Promise<Post> {
   if (textKindsStored === false) {
     delete post.text_kind;
     delete post.text_title;
+    delete post.text_style;
   }
+  if (stylesStored === false) delete post.text_style;
   try {
     await store.insert('posts', post);
     warningsStored ??= true;
     textKindsStored ??= true;
+    stylesStored ??= true;
   } catch (error) {
     if (isMissingColumn(error, 'posts', 'text_kind')) {
       textKindsStored = false;
@@ -205,6 +214,15 @@ export async function createPost(input: CreatePostInput): Promise<Post> {
       );
       delete post.text_kind;
       delete post.text_title;
+      delete post.text_style;
+      await store.insert('posts', post);
+      return finish(post, store, input);
+    }
+    if (isMissingColumn(error, 'posts', 'text_style')) {
+      // 0011 ran but 0012 did not: kinds work, colours do not. The big message
+      // still posts and is drawn in `glow`, which is what null means anyway.
+      stylesStored = false;
+      delete post.text_style;
       await store.insert('posts', post);
       return finish(post, store, input);
     }

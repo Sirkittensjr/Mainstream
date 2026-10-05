@@ -12,6 +12,7 @@ import {
   TextIcon,
   TrashIcon,
   TrimIcon,
+  UndoIcon,
   VolumeIcon,
 } from '@/components/Icons';
 import { ClipPlayer, type ClipPlayerHandle } from './ClipPlayer';
@@ -138,6 +139,10 @@ export function VideoEditor({
   onDeleteClip,
   onRetake,
   onNext,
+  canUndo = false,
+  canRedo = false,
+  onUndo,
+  onRedo,
 }: {
   /** The whole project, in order. One clip is a project of one. */
   clips: Clip[];
@@ -160,6 +165,11 @@ export function VideoEditor({
   /** Back to the camera, dropping the take being edited. */
   onRetake: () => void;
   onNext: () => void;
+  /** One step back through the editing, and forward again. */
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }) {
   const player = useRef<ClipPlayerHandle>(null);
   const [playing, setPlaying] = useState(false);
@@ -404,7 +414,32 @@ export function VideoEditor({
         >
           <ChevronIcon direction="left" width={22} height={22} />
         </button>
-        <p className="text-[15px] font-semibold tracking-wide text-white">Edit</p>
+        {/* Undo and redo sit with the title rather than in the tool rail: they
+            are not a tool, they apply to whatever was last done, and a thumb
+            looking for them looks at the top of the screen. */}
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onUndo}
+            disabled={!canUndo}
+            data-editor-undo
+            aria-label="Undo"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-white transition active:bg-white/10 disabled:opacity-25"
+          >
+            <UndoIcon width={18} height={18} />
+          </button>
+          <p className="text-[15px] font-semibold tracking-wide text-white">Edit</p>
+          <button
+            type="button"
+            onClick={onRedo}
+            disabled={!canRedo}
+            data-editor-redo
+            aria-label="Redo"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-white transition active:bg-white/10 disabled:opacity-25"
+          >
+            <UndoIcon width={18} height={18} className="-scale-x-100" />
+          </button>
+        </div>
         <button
           type="button"
           onClick={onNext}
@@ -722,29 +757,29 @@ export function VideoEditor({
           )}
 
           {tool === 'sound' && (
-            // PER CLIP. `Clip.volume` has always existed and the render has
-            // always honoured it — `renderClips` routes each clip through its own
-            // gain node — but the only control was one switch over the finished
-            // post, so three clips could be loud or silent together and nothing
-            // in between. This edits the open clip and nothing else.
-            <div className="space-y-2 pt-1">
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    onPatchClip?.(clip.id, { volume: clip.volume > 0 ? 0 : 1 })
-                  }
-                  aria-pressed={clip.volume === 0}
-                  data-editor-clip-mute
-                  aria-label={clip.volume > 0 ? 'Mute this clip' : 'Unmute this clip'}
-                  className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border transition ${
-                    clip.volume === 0
-                      ? 'border-fay bg-fay/15 text-white'
-                      : 'border-white/10 bg-white/[0.04] text-white/70'
-                  }`}
+            // PER CLIP, and it says so. `Clip.volume` has always existed and the
+            // render has always honoured it — `renderClips` routes each clip
+            // through its own gain node — but the only control was one switch
+            // over the finished post, so three clips could be loud or silent
+            // together and nothing in between. This edits the open clip and
+            // nothing else, and names it so that is not in doubt.
+            <div className="space-y-2 pt-1" data-editor-sound-panel={clip.id}>
+              <div className="flex items-baseline justify-between">
+                <p className="text-[12px] font-semibold text-white/80">
+                  Volume ·{' '}
+                  <span className="text-white/55">
+                    {many ? `Clip ${index + 1} of ${clips.length}` : 'this clip'}
+                  </span>
+                </p>
+                <span
+                  data-editor-clip-volume-value
+                  className="text-[13px] font-bold tabular-nums text-white"
                 >
-                  <VolumeIcon muted={clip.volume === 0} width={17} height={17} />
-                </button>
+                  {Math.round(clip.volume * 100)}%
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3">
                 <label className="sr-only" htmlFor="editor-clip-volume">
                   Volume for this clip
                 </label>
@@ -761,20 +796,30 @@ export function VideoEditor({
                   }
                   className="scrub flex-1"
                 />
-                <span
-                  data-editor-clip-volume-value
-                  className="w-10 shrink-0 text-right text-[12px] font-semibold tabular-nums text-white/70"
+                <button
+                  type="button"
+                  onClick={() => onPatchClip?.(clip.id, { volume: clip.volume > 0 ? 0 : 1 })}
+                  aria-pressed={clip.volume === 0}
+                  data-editor-clip-mute
+                  className={`flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-[12px] font-semibold transition ${
+                    clip.volume === 0
+                      ? 'border-fay bg-fay/15 text-white'
+                      : 'border-white/10 bg-white/[0.04] text-white/70'
+                  }`}
                 >
-                  {Math.round(clip.volume * 100)}%
-                </span>
+                  <VolumeIcon muted={clip.volume === 0} width={15} height={15} />
+                  {clip.volume === 0 ? 'Muted' : 'Mute'}
+                </button>
               </div>
+
               <p className="text-[11px] text-white/45">
-                {many ? `Clip ${index + 1} of ${clips.length} only. ` : ''}
-                Each clip keeps its own level, in the preview and in the posted video.
+                Only this clip. The others keep their own levels, in the preview and in
+                the posted video.
               </p>
+
               {/* The whole post, which is a different question from how loud any
                   one clip is: it is whether this video is watched silent. */}
-              <div className="flex gap-2">
+              <div className="flex gap-2 pt-0.5">
                 {[
                   { on: true, label: 'Sound on', hint: 'The post plays audio' },
                   { on: false, label: 'Sound off', hint: 'The post is silent' },

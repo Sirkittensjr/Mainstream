@@ -306,6 +306,39 @@ export function TrashIcon(props: IconProps) {
   );
 }
 
+/**
+ * A step back. Mirrored with `-scale-x-100` for redo, so the pair is obviously
+ * the same action in two directions rather than two unrelated arrows.
+ */
+/** A speech bubble with lines in it: a short message. */
+export function BubbleLinesIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 7.2A2.7 2.7 0 0 1 6.7 4.5h10.6A2.7 2.7 0 0 1 20 7.2v6.6a2.7 2.7 0 0 1-2.7 2.7H9.6L5.6 20v-3.5H6.7A2.7 2.7 0 0 1 4 13.8Z" />
+      <path d="M7.6 8.6h8.8M7.6 12.4h5.6" />
+    </svg>
+  );
+}
+
+/** A page with lines and a heading rule: a story. */
+export function StoryIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="4.5" y="3.8" width="15" height="16.4" rx="2.6" />
+      <path d="M8 8h8M8 12h8M8 16h5" />
+    </svg>
+  );
+}
+
+export function UndoIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 10.5h9.5a5 5 0 0 1 0 10H9" />
+      <path d="M7.5 6 4 10.5 7.5 15" />
+    </svg>
+  );
+}
+
 export function ChevronIcon({ direction = 'right', ...props }: IconProps & { direction?: 'left' | 'right' }) {
   return (
     <svg {...base(props)}>

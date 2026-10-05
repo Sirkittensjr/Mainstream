@@ -6,7 +6,7 @@
  * get and how loud they are:
  *
  *   short   a quick thought, up to 200 characters
- *   long    a title and up to 1,000 characters, previewed in the feed
+ *   story   a title and up to 1,000 characters, previewed in the feed
  *   big     up to 30 characters, set very large, meant as a statement
  *
  * STORED ON THE EXISTING POST, not in a table of its own. A text post has
@@ -21,29 +21,78 @@
  * exists in a textarea's `maxLength` is a suggestion.
  */
 
-export const TEXT_KINDS = ['short', 'long', 'big'] as const;
+export const TEXT_KINDS = ['short', 'story', 'big'] as const;
 export type TextKind = (typeof TEXT_KINDS)[number];
+
+/**
+ * What a story message used to be called.
+ *
+ * Read, never written. The kind was `long` for exactly as long as it took to
+ * name the feature properly, and a draft or a row written in that window still
+ * has to open as the thing it is.
+ */
+const KIND_ALIASES: Record<string, TextKind> = { long: 'story' };
 
 export const TEXT_LIMITS = {
   short: { body: 200 },
-  long: { title: 30, body: 1000 },
+  story: { title: 30, body: 1000 },
   big: { body: 30 },
 } as const;
 
-/** How much of a long message's body the feed shows before "Read more". */
-export const LONG_PREVIEW = 50;
+/** How much of a story's body the feed shows before "Read more". */
+export const STORY_PREVIEW = 50;
 
 /** What each kind is for, shown on the chooser and used by the tests. */
-export const TEXT_KIND_COPY: Record<TextKind, { label: string; hint: string }> = {
-  short: { label: 'Short Message', hint: 'Share a quick thought.' },
-  long: { label: 'Long Message', hint: 'Tell the full story.' },
-  big: { label: 'BIG Message', hint: 'Make a statement.' },
+export const TEXT_KIND_COPY: Record<
+  TextKind,
+  { label: string; hint: string; limits: string[] }
+> = {
+  short: {
+    label: 'Short Message',
+    hint: 'Share a quick thought.',
+    limits: ['Max 200 characters'],
+  },
+  story: {
+    label: 'Story Message',
+    hint: 'Tell the full story.',
+    limits: ['Title (max 30 characters)', 'Body (max 1,000 characters)'],
+  },
+  big: {
+    label: 'Big Message',
+    hint: 'Make a statement.',
+    limits: ['Max 30 characters'],
+  },
 };
 
 /** The kind a post is, forgiving anything that is not one of the three. */
 export function textKindOf(value: unknown): TextKind | null {
-  return TEXT_KINDS.includes(value as TextKind) ? (value as TextKind) : null;
+  if (TEXT_KINDS.includes(value as TextKind)) return value as TextKind;
+  return KIND_ALIASES[value as string] ?? null;
 }
+
+/**
+ * How a BIG message is coloured.
+ *
+ * Four, not a picker. The brief is a dark bubble with one or two FayTarra
+ * colours on it, or a two-colour gradient behind white — and the way that stays
+ * tasteful is by being a short list somebody chooses from rather than two
+ * colour wells they can put orange on yellow with.
+ *
+ * `glow` is the default because it is the quietest of the four: the statement
+ * is the type, and the colour is on the words rather than behind them.
+ */
+export const BIG_STYLES = ['glow', 'night', 'violet', 'dusk'] as const;
+export type BigStyle = (typeof BIG_STYLES)[number];
+
+export const BIG_STYLE_COPY: Record<BigStyle, string> = {
+  glow: 'Glow',
+  night: 'Night',
+  violet: 'Violet',
+  dusk: 'Dusk',
+};
+
+export const bigStyleOf = (value: unknown): BigStyle =>
+  BIG_STYLES.includes(value as BigStyle) ? (value as BigStyle) : 'glow';
 
 /**
  * How a post should be DRAWN.
@@ -85,35 +134,35 @@ export function normaliseTextPost(
     .slice(0, limits.body);
 
   const title =
-    kind === 'long'
+    kind === 'story'
       ? String(titleInput ?? '')
           .replace(/\s+/g, ' ')
           .trim()
-          .slice(0, TEXT_LIMITS.long.title)
+          .slice(0, TEXT_LIMITS.story.title)
       : null;
 
   if (!body) {
     return {
       ok: false,
       error:
-        kind === 'long' ? 'Write the message before posting it.' : 'Write something to post.',
+        kind === 'story' ? 'Write the message before posting it.' : 'Write something to post.',
     };
   }
-  if (kind === 'long' && !title) {
-    return { ok: false, error: 'A long message needs a title.' };
+  if (kind === 'story' && !title) {
+    return { ok: false, error: 'A story needs a title.' };
   }
   return { ok: true, kind, title: title || null, body };
 }
 
 /**
- * The part of a long message the feed shows.
+ * The part of a story the feed shows.
  *
  * Cut at a word boundary where there is one near enough, because a preview that
  * stops mid-word reads as broken rather than as abbreviated. Nothing is cut at
  * all when the body is already within the limit, so a short "long" message
  * shows whole and offers no Read more it does not need.
  */
-export function previewOf(body: string, limit = LONG_PREVIEW): { text: string; clipped: boolean } {
+export function previewOf(body: string, limit = STORY_PREVIEW): { text: string; clipped: boolean } {
   const whole = body.trim();
   if (whole.length <= limit) return { text: whole, clipped: false };
 

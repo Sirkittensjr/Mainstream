@@ -20,6 +20,7 @@ export function toCardData(view: PostView): PostCardData {
     // as a short message when there are words and nothing else.
     textKind: view.post.text_kind ?? null,
     textTitle: view.post.text_title ?? null,
+    textStyle: view.post.text_style ?? null,
     contentWarning: view.post.content_warning === true,
     createdAt: view.post.created_at,
     likes: view.likes,

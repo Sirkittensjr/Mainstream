@@ -4,7 +4,15 @@ import { useActionState, useState } from 'react';
 import { createPostAction } from '@/app/actions';
 import { SpeechBubble } from '@/components/SpeechBubble';
 import { CATEGORIES } from '@/lib/types';
-import { TEXT_KIND_COPY, TEXT_LIMITS, type TextKind } from '@/lib/text-posts';
+import {
+  BIG_STYLES,
+  BIG_STYLE_COPY,
+  TEXT_KIND_COPY,
+  TEXT_LIMITS,
+  type BigStyle,
+  type TextKind,
+} from '@/lib/text-posts';
+import { BIG_LOOKS } from '@/components/SpeechBubble';
 
 /**
  * Writing one of the three text posts.
@@ -29,16 +37,18 @@ export function TextComposer({ kind }: { kind: TextKind }) {
   );
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  const [style, setStyle] = useState<BigStyle>('glow');
 
   const limits = TEXT_LIMITS[kind];
-  const titleLimit = kind === 'long' ? TEXT_LIMITS.long.title : 0;
-  const ready = body.trim().length > 0 && (kind !== 'long' || title.trim().length > 0);
+  const titleLimit = kind === 'story' ? TEXT_LIMITS.story.title : 0;
+  const ready = body.trim().length > 0 && (kind !== 'story' || title.trim().length > 0);
 
   return (
     <form action={formAction} className="space-y-5">
       <input type="hidden" name="text_kind" value={kind} />
+      {kind === 'big' && <input type="hidden" name="text_style" value={style} />}
 
-      {kind === 'long' && (
+      {kind === 'story' && (
         <div>
           <div className="flex items-baseline justify-between">
             <label className="label" htmlFor="text_title">
@@ -62,7 +72,7 @@ export function TextComposer({ kind }: { kind: TextKind }) {
       <div>
         <div className="flex items-baseline justify-between">
           <label className="label" htmlFor="caption">
-            {kind === 'long' ? 'Message' : TEXT_KIND_COPY[kind].label}
+            {kind === 'story' ? 'Message' : TEXT_KIND_COPY[kind].label}
           </label>
           <Counter used={body.length} of={limits.body} name="body" />
         </div>
@@ -70,13 +80,13 @@ export function TextComposer({ kind }: { kind: TextKind }) {
           id="caption"
           name="caption"
           value={body}
-          rows={kind === 'long' ? 9 : kind === 'big' ? 2 : 4}
+          rows={kind === 'story' ? 9 : kind === 'big' ? 2 : 4}
           maxLength={limits.body}
-          autoFocus={kind !== 'long'}
+          autoFocus={kind !== 'story'}
           placeholder={
             kind === 'big'
               ? 'LET US GO'
-              : kind === 'long'
+              : kind === 'story'
                 ? 'Take your time. @mention anyone you want to bring in.'
                 : 'What is up? @mention anyone you want to bring in.'
           }
@@ -85,12 +95,49 @@ export function TextComposer({ kind }: { kind: TextKind }) {
         />
       </div>
 
+      {/* FOUR, not a colour picker. Two wells would let somebody put orange on
+          yellow; a short list cannot be made unreadable. */}
+      {kind === 'big' && (
+        <div>
+          <p className="label mb-2">Colour</p>
+          <div className="flex gap-2" data-big-styles>
+            {BIG_STYLES.map((option) => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => setStyle(option)}
+                aria-pressed={style === option}
+                aria-label={BIG_STYLE_COPY[option]}
+                data-big-style={option}
+                className={`flex-1 rounded-2xl border p-1.5 transition ${
+                  style === option ? 'border-fay' : 'border-white/10 hover:border-white/25'
+                }`}
+              >
+                <span
+                  aria-hidden="true"
+                  className={`grid h-12 place-items-center rounded-xl ${BIG_LOOKS[option].bubble}`}
+                >
+                  <span
+                    className={`font-statement text-[20px] leading-none ${BIG_LOOKS[option].text}`}
+                  >
+                    Aa
+                  </span>
+                </span>
+                <span className="mt-1 block text-center text-[11px] text-white/50">
+                  {BIG_STYLE_COPY[option]}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* What it will look like, which for a BIG message is most of the point. */}
       {ready && (
         <div data-text-preview>
           <p className="label mb-2">Preview</p>
           <div className="card overflow-hidden py-3">
-            <SpeechBubble kind={kind} title={title} body={body} />
+            <SpeechBubble kind={kind} title={title} body={body} style={style} />
           </div>
         </div>
       )}

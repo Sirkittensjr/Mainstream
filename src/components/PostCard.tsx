@@ -34,9 +34,11 @@ export interface PostCardData {
   videoViews: number;
   createdAt: string;
   /** Which of the three shapes a text post is. Null for a post with media. */
-  textKind?: 'short' | 'long' | 'big' | null;
-  /** A long message's title. */
+  textKind?: 'short' | 'story' | 'big' | 'long' | null;
+  /** A story's title. */
   textTitle?: string | null;
+  /** How a big message is coloured. */
+  textStyle?: string | null;
   /** The author asked for this to stay covered until somebody taps it. */
   contentWarning?: boolean;
   likes: number;
@@ -199,6 +201,7 @@ export function PostCard({
           kind={bubble}
           title={data.textTitle}
           body={data.caption}
+          style={data.textStyle}
           preview={!full}
           postId={data.id}
         />

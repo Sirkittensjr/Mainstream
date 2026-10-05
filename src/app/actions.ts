@@ -5,7 +5,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { CATEGORIES, type Category } from '@/lib/types';
-import { normaliseTextPost, textKindOf } from '@/lib/text-posts';
+import { bigStyleOf, normaliseTextPost, textKindOf } from '@/lib/text-posts';
 import { sanitiseAvatarUrl, sanitiseMedia } from '@/lib/media';
 import { PROFILE_DEFAULT, isProfileColorKey } from '@/lib/profile-theme';
 import { checkLimit } from '@/lib/services/rate-limit';
@@ -310,6 +310,8 @@ export async function createPostAction(_prev: unknown, formData: FormData) {
         .filter(Boolean),
       textKind: made.kind,
       textTitle: made.title,
+      // Only a big message carries one, and only ever one of the four.
+      textStyle: made.kind === 'big' ? bigStyleOf(formData.get('text_style')) : null,
     });
     revalidatePath('/home');
     revalidatePath('/discover');

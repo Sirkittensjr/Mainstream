@@ -57,6 +57,7 @@ export function serialisePost(view: PostView) {
     // the way the app does rather than guessing from the absence of media.
     textKind: view.post.text_kind ?? null,
     textTitle: view.post.text_title ?? null,
+    textStyle: view.post.text_style ?? null,
     createdAt: view.post.created_at,
     counts: {
       likes: view.likes,
