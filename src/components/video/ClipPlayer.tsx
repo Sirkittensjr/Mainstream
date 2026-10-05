@@ -11,6 +11,7 @@ import {
 } from 'react';
 import type { Clip } from '@/lib/video/clips';
 import { locate, timeline, timelineDuration, type Segment } from '@/lib/video/playlist';
+import { placeInFrame } from '@/lib/video/preview';
 
 /**
  * Plays a multi-clip project as one video, with no gap at the joins.
@@ -33,6 +34,20 @@ import { locate, timeline, timelineDuration, type Segment } from '@/lib/video/pl
  * times a second, so a clip would overrun its trim by up to 250ms before anyone
  * noticed — long enough to show frames that were trimmed away and to put a
  * stutter on every join. A frame-rate loop catches the boundary within ~16ms.
+ *
+ * EACH CLIP AT ITS OWN LEVEL, through Web Audio. `HTMLMediaElement.volume` is
+ * read-only on iOS Safari — setting it to 0.5 does nothing on an iPhone — so a
+ * preview that relied on it played every clip at full volume on exactly the
+ * phone this editor is for. Each slot is routed through its own gain node
+ * instead, set to the volume of whichever clip that slot holds, which is the
+ * same thing `renderClips` does to the finished file. The levels are re-applied
+ * the moment a clip's volume changes, not when the clip is next loaded. Where
+ * Web Audio is unavailable it falls back to `volume`, and a level of 0 always
+ * mutes the element too, which works everywhere.
+ *
+ * EACH CLIP IN ITS OWN CROP AND TURN, laid out by `placeInFrame` with the same
+ * arithmetic the render uses, so the preview is the finished frame rather than
+ * the raw source.
  *
  * It draws no controls. The editor overlays its own, so this is only the
  * picture and the clock.
@@ -105,6 +120,11 @@ export const ClipPlayer = forwardRef<
    * never gave slot 0 a `src` at all. Nothing played.
    */
   const holding = useRef<[number, number]>([-1, -1]);
+  /**
+   * The same, as state, for the one thing that has to re-render when it moves:
+   * each slot's crop and turn are those of the clip it holds.
+   */
+  const [held, setHeld] = useState<[number, number]>([-1, -1]);
   const frame = useRef(0);
   const playing = useRef(false);
   /** Set once a real gesture has played both elements — see `warm`. */
@@ -113,6 +133,104 @@ export const ClipPlayer = forwardRef<
   const segments = useMemo(() => timeline(clips), [clips]);
   const total = timelineDuration(segments);
 
+  /* ---------------------------------------------------------- the sound */
+
+  /** Read from inside callbacks that must not be rebuilt when they change. */
+  const live = useRef({ segments, muted });
+  live.current = { segments, muted };
+  /** One gain per slot, once a gesture has let us make them. */
+  const audio = useRef<{ context: AudioContext; gains: GainNode[] } | null>(null);
+
+  /** Sets one slot to the level of the clip it holds. */
+  const level = useCallback(
+    (slot: number) => {
+      const element = elementFor(slot);
+      if (!element) return;
+      const segment = live.current.segments[holding.current[slot]];
+      const volume = segment ? segment.clip.volume : 1;
+      const route = audio.current;
+      if (route) {
+        route.gains[slot].gain.value = volume;
+        try {
+          // The gain does the work; the element passes the source through whole.
+          element.volume = 1;
+        } catch {
+          // Read-only, and already 1.
+        }
+      } else {
+        try {
+          element.volume = volume;
+        } catch {
+          // Read-only here (iOS). Mute below still covers a level of 0.
+        }
+      }
+      element.muted = live.current.muted || volume === 0;
+      // What was actually applied, for anyone checking the preview is honest.
+      element.dataset.clipVolume = String(volume);
+      element.dataset.clipAudio = route ? 'gain' : 'element';
+    },
+    [elementFor],
+  );
+
+  /**
+   * Routes both slots through gain nodes. Only ever from a gesture — an audio
+   * context made outside one starts suspended and plays nothing — and only once,
+   * because an element can be given to `createMediaElementSource` only once.
+   */
+  const route = useCallback(() => {
+    if (audio.current) {
+      if (audio.current.context.state === 'suspended') void audio.current.context.resume();
+      return;
+    }
+    const AudioContextClass =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    const a = elementFor(0);
+    const b = elementFor(1);
+    if (!AudioContextClass || !a || !b) return;
+    try {
+      const context = new AudioContextClass();
+      const gains = [a, b].map((element) => {
+        const gain = context.createGain();
+        context.createMediaElementSource(element).connect(gain).connect(context.destination);
+        return gain;
+      });
+      audio.current = { context, gains };
+      void context.resume();
+    } catch {
+      audio.current = null;
+    }
+    level(0);
+    level(1);
+  }, [elementFor, level]);
+
+  useEffect(
+    () => () => {
+      void audio.current?.context.close().catch(() => undefined);
+      audio.current = null;
+    },
+    [],
+  );
+
+  /* ---------------------------------------------------- crop and turn */
+
+  const box = useRef<HTMLDivElement>(null);
+  const [frameSize, setFrameSize] = useState({ width: 0, height: 0 });
+  useEffect(() => {
+    const node = box.current;
+    if (!node) return;
+    const measure = () => setFrameSize({ width: node.clientWidth, height: node.clientHeight });
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  /** Each slot's own pixel size, once its metadata has said. */
+  const [natural, setNatural] = useState<{ width: number; height: number }[]>([
+    { width: 0, height: 0 },
+    { width: 0, height: 0 },
+  ]);
+
   /** Puts a segment into a slot, seeked to its first kept frame and paused. */
   const load = useCallback(
     (slot: number, segment: Segment | null) => {
@@ -120,11 +238,13 @@ export const ClipPlayer = forwardRef<
       if (!element) return;
       if (!segment) {
         holding.current[slot] = -1;
+        setHeld([holding.current[0], holding.current[1]]);
         return;
       }
       holding.current[slot] = segment.index;
+      setHeld([holding.current[0], holding.current[1]]);
       if (element.src !== segment.clip.src) element.src = segment.clip.src;
-      element.volume = segment.clip.volume;
+      level(slot);
       const settle = () => {
         // `fastSeek` where it exists: this runs at every join and an exact seek
         // costs a decode we do not need for a frame nobody will scrub to.
@@ -137,7 +257,7 @@ export const ClipPlayer = forwardRef<
       if (element.readyState >= 1) settle();
       else element.addEventListener('loadedmetadata', settle, { once: true });
     },
-    [elementFor],
+    [elementFor, level],
   );
 
   /**
@@ -275,6 +395,7 @@ export const ClipPlayer = forwardRef<
       play: () => {
         const element = elementFor(active.current);
         if (!element) return;
+        route();
         warm();
         playing.current = true;
         onPlayingChange?.(true);
@@ -289,6 +410,7 @@ export const ClipPlayer = forwardRef<
         else {
           const element = elementFor(active.current);
           if (!element) return;
+          route();
           warm();
           playing.current = true;
           onPlayingChange?.(true);
@@ -301,7 +423,7 @@ export const ClipPlayer = forwardRef<
       seek,
       isPaused: () => !playing.current,
     }),
-    [elementFor, onPlayingChange, seek, stop, warm],
+    [elementFor, onPlayingChange, route, seek, stop, warm],
   );
 
   // One loop for the component's life. It costs nothing while paused and saves
@@ -318,6 +440,18 @@ export const ClipPlayer = forwardRef<
    * playback mid-clip.
    */
   const shape = clips.map((clip) => `${clip.id}:${clip.trimStart}:${clip.trimEnd}`).join('|');
+
+  /**
+   * A volume change applies NOW, to whichever slot holds that clip — including
+   * the one playing. It used to be set only when a clip was loaded, so moving
+   * the slider for the clip on screen did nothing until the preview next came
+   * round to it.
+   */
+  const levels = clips.map((clip) => clip.volume).join('|');
+  useEffect(() => {
+    level(0);
+    level(1);
+  }, [levels, muted, level]);
   useEffect(() => {
     const element = elementFor(active.current);
     const index = holding.current[active.current];
@@ -342,23 +476,66 @@ export const ClipPlayer = forwardRef<
     // zero height — measured at 390x0. The two videos inside are
     // `absolute inset-0`, so whatever className arrives must be positioned.
     <div className={className} data-clip-player={clips.length}>
-      {[slotA, slotB].map((slotRef, slot) => (
-        <video
-          key={`clip-slot-${slot}`}
-          ref={slotRef}
-          playsInline
-          muted={muted}
-          preload="auto"
-          data-clip-slot={slot}
-          // Both fill the frame; only the active one is visible. Kept mounted and
-          // laid out so the waiting one can decode its first frame in advance.
-          className={`absolute inset-0 h-full w-full ${
-            fit === 'cover' ? 'object-cover' : 'object-contain'
-          } ${
-            visible === slot ? 'opacity-100' : 'pointer-events-none opacity-0'
-          }`}
-        />
-      ))}
+      {/* The frame. Clips everything outside it, which is how a crop that
+          zooms in reads as a crop rather than as a bigger picture. */}
+      <div ref={box} className="absolute inset-0 overflow-hidden">
+        {[slotA, slotB].map((slotRef, slot) => {
+          const clip = segments[held[slot]]?.clip;
+          const place = clip
+            ? placeInFrame(
+                clip,
+                natural[slot].width > 0
+                  ? natural[slot]
+                  : { width: clip.sourceWidth, height: clip.sourceHeight },
+                frameSize,
+                fit,
+              )
+            : null;
+          return (
+            <video
+              key={`clip-slot-${slot}`}
+              ref={slotRef}
+              playsInline
+              // Muted is set imperatively with the level — see `level` — so the
+              // two can never disagree. Starting muted is harmless: nothing
+              // plays before a gesture, and the gesture applies the real level.
+              muted
+              preload="auto"
+              data-clip-slot={slot}
+              data-clip-crop={clip ? `${clip.crop.x},${clip.crop.y},${clip.crop.width},${clip.crop.height}` : ''}
+              data-clip-rotation={clip?.rotation ?? 0}
+              onLoadedMetadata={(event) => {
+                const { videoWidth, videoHeight } = event.currentTarget;
+                setNatural((current) =>
+                  current.map((size, index) =>
+                    index === slot ? { width: videoWidth, height: videoHeight } : size,
+                  ),
+                );
+                level(slot);
+              }}
+              // Both fill the frame; only the active one is visible. Kept mounted
+              // and laid out so the waiting one can decode its first frame in
+              // advance. Until the frame has a size, `object-cover` stands in —
+              // the same picture for an uncropped clip.
+              className={`absolute ${
+                place ? 'max-w-none object-fill' : `inset-0 h-full w-full ${fit === 'cover' ? 'object-cover' : 'object-contain'}`
+              } ${visible === slot ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+              style={
+                place
+                  ? {
+                      left: place.left,
+                      top: place.top,
+                      width: place.width,
+                      height: place.height,
+                      transform: place.rotate ? `rotate(${place.rotate}deg)` : undefined,
+                      transformOrigin: `${place.originX}px ${place.originY}px`,
+                    }
+                  : undefined
+              }
+            />
+          );
+        })}
+      </div>
     </div>
   );
 });
