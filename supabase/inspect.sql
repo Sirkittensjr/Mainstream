@@ -154,6 +154,38 @@ checks as (
 
   union all
   select 12,
+         'Text post kinds (0011)',
+         case when exists (select 1 from information_schema.columns
+                           where table_schema='public' and table_name='posts'
+                             and column_name='text_kind')
+              then 'installed' else 'not installed' end,
+         case when exists (select 1 from information_schema.columns
+                           where table_schema='public' and table_name='posts'
+                             and column_name='text_kind')
+              then 'Good.'
+              else 'Migration 0011 adds them (additive). Until then Story and Big Messages are refused at Post, and Short Messages post as normal.' end
+
+  union all
+  select 13,
+         'Text post colours and the Story name (0012)',
+         case when exists (select 1 from information_schema.columns
+                           where table_schema='public' and table_name='posts'
+                             and column_name='text_style')
+               and exists (select 1 from pg_constraint
+                           where conname = 'posts_text_kind_check'
+                             and pg_get_constraintdef(oid) like '%story%')
+              then 'installed' else 'not installed' end,
+         case when exists (select 1 from information_schema.columns
+                           where table_schema='public' and table_name='posts'
+                             and column_name='text_style')
+               and exists (select 1 from pg_constraint
+                           where conname = 'posts_text_kind_check'
+                             and pg_get_constraintdef(oid) like '%story%')
+              then 'Good.'
+              else 'Migration 0012 adds them (additive; run 0011 first). Until then a Big Message in any colour but Glow is refused at Post.' end
+
+  union all
+  select 14,
          'Supabase Auth users',
          (select count(*) || ' total, ' || count(email_confirmed_at) || ' confirmed' from auth.users),
          'Informational.'

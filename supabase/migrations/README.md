@@ -15,8 +15,8 @@ has never been installed.
 
 | Row 1 says | Run |
 | --- | --- |
-| `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including every migration — `0010` included. |
-| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`, `0006`, `0007`, `0008`, `0009` and `0010`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
+| `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including every migration — `0012` included. |
+| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`, `0006`, `0007`, `0008`, `0009`, `0010`, `0011` and `0012`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
 | anything between | Stop and ask. A half-installed schema needs looking at, not a migration. |
 
 If the storage bucket row shows `none`, create it in the dashboard
@@ -409,3 +409,52 @@ total and does not depend on them.
 the log. Videos play, post, upload and feed exactly as before; nothing 500s and
 no count is shown. `/api/health` names `0010` under `schema.migrations` until
 the column and the table exist.
+
+---
+
+## 0011_text_posts.sql
+
+Text posts in three kinds. Additive, safe to run twice. **No existing post is
+changed.**
+
+| Step | Statement | What it touches | Risk |
+| --- | --- | --- | --- |
+| 1 | `add column if not exists text_kind text, text_title text` on `posts` | Two nullable columns | None. Every existing post reads as null, and a kind-less text post is drawn as a Short Message |
+| 2 | Check constraints on the kind, the title and the body length per kind | Adds constraints | None to existing rows: every one of them has a null kind, which every check allows |
+
+## 0012_text_post_styles.sql
+
+The Story name and Big Message colours. Additive, safe to run twice; run
+`0011` first.
+
+| Step | Statement | What it touches | Risk |
+| --- | --- | --- | --- |
+| 1 | `add column if not exists text_style text` on `posts` | One nullable column | None. Null reads as Glow |
+| 2 | Re-creates the kind, body and title checks to accept `story` alongside `long` | Replaces three constraints | None. Everything the old checks allowed, the new ones allow |
+| 3 | A check that a style belongs to a big message and is one of the four | Adds a constraint | None to existing rows |
+
+**Not running them** does not break posting, but it does stop Story and Big
+Messages. The app will not store a post that would come back looking different
+from its preview, so on a database without these columns:
+
+| Database has | Short | Story | Big, Glow | Big, any other colour |
+| --- | --- | --- | --- | --- |
+| neither | posts | refused | refused | refused |
+| `0011` only | posts | posts | posts | refused |
+| `0011` and `0012` | posts | posts | posts | posts |
+
+A database that ran an EARLIER copy of `0011`, from before the middle kind was
+renamed, only knows it as `long`. A story still posts there: the app stores it
+as `long`, which reads back as `story`. The current `0011` accepts both names,
+so running it again after `0012` cannot take stories away.
+
+A refused post stays in the composer with a message saying it was not posted,
+and the server log names the migration to run. Photo and video posts are
+untouched in every row: they never send these columns. Until the columns
+exist, `/api/health` lists them under `schema.missingColumns` and names `0011`
+and `0012` in `schema.note` — though, like every column check there, only once
+`posts` has a row to look at.
+
+Before this, a missing column made the app quietly drop the kind and post the
+words anyway, so a Big Message arrived in the feed as a small white Short
+Message and a Story lost its title for good. That is why it refuses now.

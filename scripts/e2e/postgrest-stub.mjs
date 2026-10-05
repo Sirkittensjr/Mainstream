@@ -101,8 +101,12 @@ function filtered(table, params, res) {
   return rows;
 }
 
-/** Columns to pretend this database does not have. See the PATCH branch. */
-const MISSING_COLUMNS = new Set(
+/**
+ * Columns to pretend this database does not have. See the POST and PATCH
+ * branches. `POST /__missing` replaces the set while running, which is how a
+ * suite rehearses a migration being applied under a server that keeps going.
+ */
+let MISSING_COLUMNS = new Set(
   (process.env.MISSING_COLUMNS ?? '').split(',').map((entry) => entry.trim()).filter(Boolean),
 );
 
@@ -118,6 +122,7 @@ const MISSING_COLUMNS = new Set(
  */
 const ADDED_COLUMNS = {
   users: ['username_changed_at', 'profile_bg', 'profile_box', 'top_creators'],
+  posts: ['text_kind', 'text_title', 'text_style'],
 };
 
 function withColumns(table, rows) {
@@ -174,7 +179,19 @@ function rest(req, res, url) {
 
   return body(req).then((payload) => {
     if (req.method === 'POST') {
-      const rows = (Array.isArray(payload) ? payload : [payload]).map((row) => ({
+      // The same PGRST204 as the PATCH branch below, for an insert. Nothing is
+      // stored when any row names a missing column, as with a real database.
+      const incoming = Array.isArray(payload) ? payload : [payload];
+      const absentOnInsert = incoming
+        .flatMap((row) => Object.keys(row ?? {}))
+        .find((column) => MISSING_COLUMNS.has(`${table}.${column}`));
+      if (absentOnInsert) {
+        return json(res, 400, {
+          code: 'PGRST204',
+          message: `Could not find the '${absentOnInsert}' column of '${table}' in the schema cache`,
+        });
+      }
+      const rows = incoming.map((row) => ({
         id: row.id ?? randomUUID(),
         ...row,
       }));
@@ -244,6 +261,13 @@ createServer((req, res) => {
     });
   }
   if (url.pathname === '/__dump') return json(res, 200, data);
+  // Which columns are "not there", changed while running: `{columns: [...]}`.
+  if (url.pathname === '/__missing' && req.method === 'POST') {
+    return body(req).then((payload) => {
+      MISSING_COLUMNS = new Set(payload?.columns ?? []);
+      json(res, 200, { missing: [...MISSING_COLUMNS] });
+    });
+  }
 
   if (url.pathname.startsWith('/rest/v1/')) return rest(req, res, url);
 

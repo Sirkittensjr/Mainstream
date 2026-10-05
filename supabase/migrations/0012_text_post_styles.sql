@@ -1,10 +1,10 @@
 -- Two changes to the text posts added in 0011, both small.
 --
 -- 1. The middle kind is a STORY. It was called `long` for exactly as long as it
---    took to name the feature properly. Nothing has been written as `long` in
---    any deployment — 0011 is part of the same unreleased feature — but the
---    constraint accepts both so a row written in that window still opens, and
---    the app reads `long` as `story` either way.
+--    took to name the feature properly. The constraint accepts both: a row
+--    written as `long` still opens, and the app itself writes `long` when it
+--    meets a database that has run 0011 but not this file. It reads `long` as
+--    `story` either way.
 --
 -- 2. A big message carries which of four colour treatments it was given.
 --    Null means `glow`, the quietest, which is also what every big message

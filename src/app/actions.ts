@@ -5,7 +5,8 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
 import { CATEGORIES, type Category } from '@/lib/types';
-import { bigStyleOf, normaliseTextPost, textKindOf } from '@/lib/text-posts';
+import { bigStyleOf, normaliseTextPost, TEXT_KIND_COPY, textKindOf } from '@/lib/text-posts';
+import { isTextPostNotStorable } from '@/lib/services/insert-post';
 import { sanitiseAvatarUrl, sanitiseMedia } from '@/lib/media';
 import { PROFILE_DEFAULT, isProfileColorKey } from '@/lib/profile-theme';
 import { checkLimit } from '@/lib/services/rate-limit';
@@ -299,20 +300,32 @@ export async function createPostAction(_prev: unknown, formData: FormData) {
     if (!made.ok) return { error: made.error };
 
     const textCategoryInput = String(formData.get('category') || 'Life') as Category;
-    const textPost = await createPost({
-      authorId: viewer.id,
-      caption: made.body,
-      media: [],
-      category: CATEGORIES.includes(textCategoryInput) ? textCategoryInput : 'Life',
-      tags: String(formData.get('tags') || '')
-        .split(/[\s,]+/)
-        .map((tag) => tag.slice(0, 30))
-        .filter(Boolean),
-      textKind: made.kind,
-      textTitle: made.title,
-      // Only a big message carries one, and only ever one of the four.
-      textStyle: made.kind === 'big' ? bigStyleOf(formData.get('text_style')) : null,
-    });
+    let textPost: Awaited<ReturnType<typeof createPost>>;
+    try {
+      textPost = await createPost({
+        authorId: viewer.id,
+        caption: made.body,
+        media: [],
+        category: CATEGORIES.includes(textCategoryInput) ? textCategoryInput : 'Life',
+        tags: String(formData.get('tags') || '')
+          .split(/[\s,]+/)
+          .map((tag) => tag.slice(0, 30))
+          .filter(Boolean),
+        textKind: made.kind,
+        textTitle: made.title,
+        // Only a big message carries one, and only ever one of the four.
+        textStyle: made.kind === 'big' ? bigStyleOf(formData.get('text_style')) : null,
+      });
+    } catch (error) {
+      // The database is behind the code and could only have stored this as a
+      // different-looking post. Say so and keep the draft, rather than posting
+      // a big message as a small white bubble. The server log names the
+      // migration; see insert-post.ts.
+      if (!isTextPostNotStorable(error)) throw error;
+      return {
+        error: `${TEXT_KIND_COPY[made.kind].label}s can't be posted on FayTarra just yet, so this one hasn't been posted. Your words are still here.`,
+      };
+    }
     revalidatePath('/home');
     revalidatePath('/discover');
     revalidatePath(`/u/${viewer.username}`);

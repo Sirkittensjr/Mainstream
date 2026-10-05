@@ -1112,6 +1112,39 @@ production. `POST /__seed` takes `{table: [rows]}` for state the app has no UI
 for — a profile with sixty followers, say — and `GET /__dump` returns
 everything it holds.
 
+### 15b. Text posts on a database that is behind — `text-posts-schema-flow.mjs`
+
+The regression guard for a Big Message composed as violet arriving in the feed
+as a small white Short Message. That happened only on Supabase: a project that
+had not run `0011` had no `text_kind` column, and the app dropped the kind and
+colour and stored the words anyway. The local JSON driver stores whatever it is
+handed, so no suite on it could have shown it.
+
+This one runs the app on the Supabase driver against the PostgREST stub, and
+moves the database underneath ONE running server with `POST /__missing`: no
+text columns, then `0011` without `0012`, then both. At each step a post either
+keeps exactly the shape its preview showed or is refused with the draft left in
+the composer, and the stub's `/__dump` is read to prove nothing else was stored.
+The last step checks that running the migration takes effect on the very next
+post, with no restart in between.
+
+`NEXT_PUBLIC_SUPABASE_URL` is baked in at build time and the server reads it
+too, so this needs a build pointed at the stub:
+
+```bash
+STUB_PORT=54321 OUTBOX=/tmp/fay-outbox.jsonl node scripts/e2e/gotrue-stub.mjs &
+PORT=55300 GOTRUE_PORT=54321 node scripts/e2e/postgrest-stub.mjs &
+NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:55300 NEXT_PUBLIC_SUPABASE_ANON_KEY=stub npm run build
+PORT=3100 SUPABASE_URL=http://127.0.0.1:55300 SUPABASE_ANON_KEY=stub \
+  SUPABASE_SERVICE_ROLE_KEY=stub-secret node .next/standalone/server.js &
+BASE_URL=http://localhost:3100 STUB=http://127.0.0.1:55300 \
+  node scripts/e2e/text-posts-schema-flow.mjs
+```
+
+The stub's `MISSING_COLUMNS` now applies to inserts as well as updates, and
+`POST /__missing` with `{"columns": ["posts.text_style"]}` changes it while
+running.
+
 ### 16. What each page costs — `perf-report.mjs` + `seed-perf.py`
 
 The instrumented stand-in counts every query and every row a page asks for, so

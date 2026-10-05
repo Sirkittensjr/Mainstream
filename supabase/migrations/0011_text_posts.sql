@@ -13,7 +13,9 @@
 -- a post with no kind is drawn as a short message, so old text posts gain the
 -- bubble without being touched.
 --
--- Safe to re-run.
+-- Safe to re-run, and safe to re-run AFTER 0012: its checks accept `story`
+-- (the name 0012 gives the middle kind) as well as `long`, so running this file
+-- again later cannot take stories away.
 
 alter table public.posts
   add column if not exists text_kind text,
@@ -24,7 +26,7 @@ alter table public.posts
   drop constraint if exists posts_text_kind_check;
 alter table public.posts
   add constraint posts_text_kind_check
-  check (text_kind is null or text_kind in ('short', 'long', 'big'));
+  check (text_kind is null or text_kind in ('short', 'story', 'long', 'big'));
 
 -- The title belongs to long messages, and nothing else.
 alter table public.posts
@@ -33,7 +35,7 @@ alter table public.posts
   add constraint posts_text_title_check
   check (
     text_title is null
-    or (text_kind = 'long' and char_length(text_title) between 1 and 30)
+    or (text_kind in ('story', 'long') and char_length(text_title) between 1 and 30)
   );
 
 -- The body limits, enforced by the database as well as by the app: a caption
@@ -45,11 +47,11 @@ alter table public.posts
   check (
     text_kind is null
     or (text_kind = 'short' and char_length(caption) <= 200)
-    or (text_kind = 'long' and char_length(caption) <= 1000)
+    or (text_kind in ('story', 'long') and char_length(caption) <= 1000)
     or (text_kind = 'big' and char_length(caption) <= 30)
   );
 
 comment on column public.posts.text_kind is
-  'short | long | big for a text post; null for media posts and for text posts written before 0011 (drawn as short).';
+  'short | story | big for a text post (long is the old name of story); null for media posts and for text posts written before 0011 (drawn as short).';
 comment on column public.posts.text_title is
   'Title of a long message, 1-30 characters. Null for every other kind.';
