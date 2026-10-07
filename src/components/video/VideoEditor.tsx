@@ -35,7 +35,7 @@ import {
   type Clip,
   type Rotation,
 } from '@/lib/video/clips';
-import { timeline, timelineDuration } from '@/lib/video/playlist';
+import { locate, timeline, timelineDuration } from '@/lib/video/playlist';
 import { formatPreciseSeconds, formatSeconds } from '@/lib/video/limits';
 import { MAX_TEXT_OVERLAYS, MAX_TEXT_OVERLAY_LENGTH, type TextOverlay } from '@/lib/types';
 
@@ -181,8 +181,20 @@ export function VideoEditor({
   const [playing, setPlaying] = useState(false);
   /** Project time, driven by the player. */
   const [at, setAt] = useState(0);
-  /** Which clip the tools are about. */
-  const [selected, setSelected] = useState(0);
+  /**
+   * Which clip the tools are about — by ID, and the one thing the picture is
+   * made to follow (see the effect below `clip`).
+   *
+   * It was a position in the list, kept apart from whatever the player happened
+   * to be showing, and the two came apart: the player went back to Clip 1 at
+   * the end of a play-through, or on a trim, or was sent to where a clip USED
+   * to end, and the tools went on editing Clip 3 under a picture of Clip 1. A
+   * position also changes meaning when a clip before it is deleted; an id does
+   * not.
+   */
+  const [selectedId, setSelectedId] = useState<string | null>(clips[0]?.id ?? null);
+  /** Where the selection last was, for when its clip is deleted from under it. */
+  const lastIndex = useRef(0);
   /** Which line of text is being edited, if any. */
   const [pickedText, setPickedText] = useState<number | null>(null);
   /** The clip Delete is asking about. Null when it is not asking. */
@@ -207,17 +219,42 @@ export function VideoEditor({
   const total = timelineDuration(segments);
   const many = clips.length > 1;
 
-  // A clip can be dropped from under the selection — Retake and Delete both do it.
-  const index = Math.min(selected, Math.max(0, clips.length - 1));
+  // A clip can be dropped from under the selection — Retake and Delete both do
+  // it. Then it is the clip that took its place, which is also the one the
+  // player falls to.
+  const found = selectedId === null ? -1 : clips.findIndex((each) => each.id === selectedId);
+  const index = found >= 0 ? found : Math.min(lastIndex.current, Math.max(0, clips.length - 1));
   const clip = clips[index];
   const frames = useClipFrames(clips, clip?.id ?? null);
 
-  /** Keeps the selection following the playhead while it plays. */
   useEffect(() => {
-    if (!playing) return;
-    const here = segments.find((segment) => at >= segment.startsAt && at < segment.endsAt);
-    if (here && here.index !== index) setSelected(here.index);
-  }, [at, index, playing, segments]);
+    lastIndex.current = index;
+    if (clip && clip.id !== selectedId) setSelectedId(clip.id);
+  }, [clip, index, selectedId]);
+
+  /**
+   * THE PICTURE IS THE SELECTED CLIP. Whenever the selection changes, or the
+   * selected clip's trim does, the player is told to show it — and it does
+   * nothing if it already is, inside what the clip keeps. While playing, the
+   * player leads instead and the selection follows it (`onClipShown`).
+   */
+  const selectedStart = clip?.trimStart;
+  const selectedEnd = clip?.trimEnd;
+  useEffect(() => {
+    if (playing || !clip) return;
+    player.current?.showClip(clip.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clip?.id, selectedStart, selectedEnd, playing]);
+
+  /**
+   * Seeks in PROJECT time, and selects the clip that lands in — so a seek can
+   * never leave the picture on one clip and the tools on another.
+   */
+  function seekProject(seconds: number) {
+    player.current?.seek(seconds);
+    const landed = locate(segments, seconds)?.segment;
+    if (landed) setSelectedId(landed.clip.id);
+  }
 
   /* -------------------------------------------------------------- the text */
 
@@ -286,18 +323,13 @@ export function VideoEditor({
    */
   function scrubTo(clientX: number) {
     if (zoomed) {
-      const segment = segments[index];
-      if (!segment) return;
       const source = Math.min(Math.max(sourceAt(clientX), clip.trimStart), clip.trimEnd);
-      player.current?.seek(segment.startsAt + (source - clip.trimStart));
+      player.current?.showClip(clip.id, source);
       return;
     }
-    const seconds = acrossStrip(clientX) * total;
-    player.current?.seek(seconds);
-    // A line being timed is about the whole video, not about a clip.
-    if (timing) return;
-    const landed = segments.find((each) => seconds < each.endsAt) ?? segments[segments.length - 1];
-    if (landed && landed.index !== index) setSelected(landed.index);
+    // Even while a line of text is being timed: the selection is outlined only
+    // when it is not, but it must still be the clip on screen when it is.
+    seekProject(acrossStrip(clientX) * total);
   }
 
   /** Dragging anywhere on the strip scrubs it. */
@@ -340,7 +372,7 @@ export function VideoEditor({
       const entry = overlays[position];
       if (entry) {
         const span = windowOf(entry, total);
-        player.current?.seek(edge === 'from' ? span.from : Math.max(span.from, span.to - 0.1));
+        seekProject(edge === 'from' ? span.from : Math.max(span.from, span.to - 0.1));
       }
     };
     window.addEventListener('pointermove', move);
@@ -377,12 +409,11 @@ export function VideoEditor({
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', release);
       window.removeEventListener('pointercancel', release);
-      // Show the cut that was just made.
-      const segment = segments[index];
-      if (!segment) return;
-      player.current?.seek(
-        edge === 'start' ? segment.startsAt : Math.max(0, segment.endsAt - 0.15),
-      );
+      // Show the cut that was just made — by id, against the clips as they are
+      // now. This closure holds the clips from when the drag began, and its
+      // `segment.endsAt` was where this clip USED to end: after trimming Clip 2
+      // shorter, that is inside Clip 3, and Clip 3 is what it showed.
+      player.current?.showClip(clip.id, edge);
     };
 
     window.addEventListener('pointermove', move);
@@ -394,8 +425,8 @@ export function VideoEditor({
   function pick(segmentIndex: number) {
     const segment = segments[segmentIndex];
     if (!segment) return;
-    setSelected(segmentIndex);
-    player.current?.seek(segment.startsAt);
+    setSelectedId(segment.clip.id);
+    player.current?.showClip(segment.clip.id, 'start');
   }
 
   if (!clip) return null;
@@ -438,6 +469,7 @@ export function VideoEditor({
     <div
       className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-ink-950"
       data-editor-fullscreen
+      data-editor-selected-clip={clip.id}
     >
       {/* ===================== 1. the top bar ===================== */}
       <div
@@ -659,7 +691,7 @@ export function VideoEditor({
             value={Math.min(Math.max(at, 0), total)}
             aria-label="Position in the video"
             data-editor-timeline
-            onChange={(event) => player.current?.seek(Number(event.target.value))}
+            onChange={(event) => seekProject(Number(event.target.value))}
             style={
               {
                 '--scrub-track': `linear-gradient(to right, #FF3D9A ${progress}%, rgba(255,255,255,0.22) ${progress}%)`,
@@ -691,6 +723,7 @@ export function VideoEditor({
             fit={fit}
             onTime={setAt}
             onPlayingChange={setPlaying}
+            onClipShown={setSelectedId}
             className="absolute inset-0"
           />
           <button
@@ -778,7 +811,7 @@ export function VideoEditor({
                   onChange={(event) => {
                     const next = Math.max(0, Math.min(Number(event.target.value), clip.trimEnd - 0.3));
                     onTrimClip(clip.id, { trimStart: next, trimEnd: clip.trimEnd });
-                    player.current?.seek(segments[index]?.startsAt ?? 0);
+                    player.current?.showClip(clip.id, next);
                   }}
                   className="scrub scrub-sm min-w-0 flex-1"
                 />
@@ -802,10 +835,7 @@ export function VideoEditor({
                       Math.max(Number(event.target.value), clip.trimStart + 0.3),
                     );
                     onTrimClip(clip.id, { trimStart: clip.trimStart, trimEnd: next });
-                    const here = segments[index];
-                    if (here) {
-                      player.current?.seek(here.startsAt + Math.max(0, next - clip.trimStart - 0.15));
-                    }
+                    player.current?.showClip(clip.id, Math.max(clip.trimStart, next - 0.15));
                   }}
                   className="scrub scrub-sm min-w-0 flex-1"
                 />
@@ -993,7 +1023,7 @@ export function VideoEditor({
               onAt={(seconds) => {
                 cover.onAt(seconds);
                 // Shown large, in the video, rather than only in the thumbnail.
-                player.current?.seek(seconds);
+                seekProject(seconds);
               }}
               onFile={cover.onFile}
               onClear={cover.onClear}

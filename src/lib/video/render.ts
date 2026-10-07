@@ -1,5 +1,5 @@
 import { type Clip, clipDuration, outputFrame, totalDuration } from './clips';
-import { loadVideo, seekTo } from './capture';
+import { loadVideo, seekTo, unlockedVideo } from './capture';
 
 /**
  * Turning a list of clips into one video, in the browser.
@@ -154,6 +154,12 @@ export async function renderClips(clips: Clip[], options: RenderOptions = {}): P
   context.fillStyle = '#000';
   context.fillRect(0, 0, output.width, output.height);
 
+  // One element per clip, made and released NOW, while this is still the tap
+  // on Next: nothing above has awaited. iOS refuses to play an element with
+  // sound outside a tap unless it has been started inside one, and every clip
+  // plays long after this. See `unlockedVideo`.
+  const unlocked = clips.map((clip) => unlockedVideo(clip.src));
+
   const AudioContextClass =
     window.AudioContext ??
     (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -204,7 +210,7 @@ export async function renderClips(clips: Clip[], options: RenderOptions = {}): P
     });
   });
 
-  const opened: HTMLVideoElement[] = [];
+  const opened: HTMLVideoElement[] = [...unlocked];
   const cleanUp = () => {
     for (const video of opened) {
       video.pause();
@@ -250,9 +256,8 @@ export async function renderClips(clips: Clip[], options: RenderOptions = {}): P
     for (const [index, clip] of clips.entries()) {
       options.signal?.throwIfAborted();
       try {
-        const video = await loadVideo(clip.src, { settleMs: 15000 });
+        const video = await loadVideo(clip.src, { settleMs: 15000, element: unlocked[index] });
         prepared.push(video);
-        opened.push(video);
       } catch {
         throw new Error(
           clips.length > 1

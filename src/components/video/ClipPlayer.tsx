@@ -59,6 +59,13 @@ export interface ClipPlayerHandle {
   toggle: () => void;
   /** Seek, in PROJECT time — how far into the finished video. */
   seek: (projectTime: number) => void;
+  /**
+   * Puts this clip on screen, by id, read against the clips as they are NOW.
+   * `'start'` and `'end'` are its first and last kept frames, a number is a
+   * time in its own source. With nothing given it stays where it is if that is
+   * already this clip, inside what it keeps, and otherwise goes to its start.
+   */
+  showClip: (clipId: string, where?: 'start' | 'end' | number) => void;
   isPaused: () => boolean;
 }
 
@@ -83,10 +90,17 @@ export const ClipPlayer = forwardRef<
     /** Project time, every frame while playing. */
     onTime?: (projectTime: number) => void;
     onPlayingChange?: (playing: boolean) => void;
+    /**
+     * The clip on screen changed because playback moved on: a join, or the end
+     * of the video going back to the top. The ONLY time this player changes
+     * clips on its own — everything else it shows, it was asked to — so a
+     * caller that keeps a "selected clip" follows it from here.
+     */
+    onClipShown?: (clipId: string) => void;
     className?: string;
   }
 >(function ClipPlayer(
-  { clips, muted, fit = 'cover', onTime, onPlayingChange, className = '' },
+  { clips, muted, fit = 'cover', onTime, onPlayingChange, onClipShown, className = '' },
   ref,
 ) {
   const slotA = useRef<HTMLVideoElement>(null);
@@ -112,19 +126,31 @@ export const ClipPlayer = forwardRef<
     setVisible(slot);
   }, []);
   /**
-   * Which segment each slot currently holds, by index into `segments`.
+   * Which clip each slot currently holds, by CLIP ID.
    *
-   * -1 means "nothing loaded yet", and starting there matters: claiming slot 0
-   * already held clip 0 made the effect below think it was mid-playback on the
-   * very first render, so it took the "keep the playhead where it is" path and
-   * never gave slot 0 a `src` at all. Nothing played.
+   * It was an index into `segments`, and an index is a position, not a clip:
+   * delete Clip 1 and the slot still playing Clip 1's file claimed to hold the
+   * new Clip 1 — the old Clip 2 — so the editor's tools and the picture were
+   * about different clips. An id cannot drift like that.
+   *
+   * null means "nothing loaded yet", and starting there matters: claiming slot 0
+   * already held the first clip made the effect below think it was mid-playback
+   * on the very first render, so it never gave slot 0 a `src` at all.
    */
-  const holding = useRef<[number, number]>([-1, -1]);
+  const holding = useRef<[string | null, string | null]>([null, null]);
   /**
    * The same, as state, for the one thing that has to re-render when it moves:
    * each slot's crop and turn are those of the clip it holds.
    */
-  const [held, setHeld] = useState<[number, number]>([-1, -1]);
+  const [held, setHeld] = useState<[string | null, string | null]>([null, null]);
+  /**
+   * One count per slot, bumped by every load. A slot's metadata can arrive
+   * after it has already been pointed at another clip — tapping through clips
+   * faster than they open — and a handler from the earlier load then moved the
+   * newer clip to the earlier one's time. Each handler now checks it is still
+   * the latest before it touches the element.
+   */
+  const loads = useRef<[number, number]>([0, 0]);
   const frame = useRef(0);
   const playing = useRef(false);
   /** Set once a real gesture has played both elements — see `warm`. */
@@ -135,9 +161,27 @@ export const ClipPlayer = forwardRef<
 
   /* ---------------------------------------------------------- the sound */
 
-  /** Read from inside callbacks that must not be rebuilt when they change. */
+  /**
+   * Read from inside callbacks that must not be rebuilt when they change — and
+   * by anything that has to see the clips as they are NOW. A pointer handler
+   * holds the clips from when the drag began; asking the player to show "the
+   * end of Clip 2" through those showed where Clip 2 USED to end, which after
+   * trimming it shorter was inside Clip 3.
+   */
   const live = useRef({ segments, muted });
   live.current = { segments, muted };
+  const segmentOf = useCallback(
+    (clipId: string | null) =>
+      clipId === null ? undefined : live.current.segments.find((each) => each.clip.id === clipId),
+    [],
+  );
+  const onClipShownRef = useRef(onClipShown);
+  onClipShownRef.current = onClipShown;
+  /** Tells the caller which clip playback has moved on to. */
+  const announce = useCallback(() => {
+    const id = holding.current[active.current];
+    if (id) onClipShownRef.current?.(id);
+  }, []);
   /** One gain per slot, once a gesture has let us make them. */
   const audio = useRef<{ context: AudioContext; gains: GainNode[] } | null>(null);
 
@@ -146,7 +190,7 @@ export const ClipPlayer = forwardRef<
     (slot: number) => {
       const element = elementFor(slot);
       if (!element) return;
-      const segment = live.current.segments[holding.current[slot]];
+      const segment = segmentOf(holding.current[slot]);
       const volume = segment ? segment.clip.volume : 1;
       const route = audio.current;
       if (route) {
@@ -169,7 +213,7 @@ export const ClipPlayer = forwardRef<
       element.dataset.clipVolume = String(volume);
       element.dataset.clipAudio = route ? 'gain' : 'element';
     },
-    [elementFor],
+    [elementFor, segmentOf],
   );
 
   /**
@@ -231,28 +275,36 @@ export const ClipPlayer = forwardRef<
     { width: 0, height: 0 },
   ]);
 
-  /** Puts a segment into a slot, seeked to its first kept frame and paused. */
+  /**
+   * Puts a segment into a slot, at `sourceTime` (its first kept frame unless
+   * told otherwise), paused unless `andPlay`.
+   */
   const load = useCallback(
-    (slot: number, segment: Segment | null) => {
+    (slot: number, segment: Segment | null, sourceTime?: number, andPlay = false) => {
       const element = elementFor(slot);
       if (!element) return;
+      loads.current[slot] += 1;
+      const token = loads.current[slot];
       if (!segment) {
-        holding.current[slot] = -1;
+        holding.current[slot] = null;
         setHeld([holding.current[0], holding.current[1]]);
         return;
       }
-      holding.current[slot] = segment.index;
+      holding.current[slot] = segment.clip.id;
       setHeld([holding.current[0], holding.current[1]]);
       if (element.src !== segment.clip.src) element.src = segment.clip.src;
       level(slot);
+      const at = sourceTime ?? segment.clip.trimStart;
       const settle = () => {
-        // `fastSeek` where it exists: this runs at every join and an exact seek
-        // costs a decode we do not need for a frame nobody will scrub to.
+        // A later load got here first: this one is about a clip that is no
+        // longer the one in the slot.
+        if (loads.current[slot] !== token) return;
         try {
-          element.currentTime = segment.clip.trimStart;
+          element.currentTime = at;
         } catch {
           // Metadata has not arrived; the loadedmetadata handler will retry.
         }
+        if (andPlay) void element.play().catch(() => undefined);
       };
       if (element.readyState >= 1) settle();
       else element.addEventListener('loadedmetadata', settle, { once: true });
@@ -294,17 +346,19 @@ export const ClipPlayer = forwardRef<
       // If the waiting slot somehow holds the wrong clip — a seek landed oddly,
       // or a trim moved the boundary — load it now. A frame of black beats
       // playing the wrong clip.
-      if (holding.current[waiting] !== segment.index) load(waiting, segment);
+      const ready = holding.current[waiting] === segment.clip.id;
+      if (!ready) load(waiting, segment, undefined, true);
 
       const previous = elementFor(active.current);
       show(waiting);
       if (previous) previous.pause();
-      void element.play().catch(() => undefined);
+      if (ready) void element.play().catch(() => undefined);
+      announce();
 
       // The slot just freed takes the clip after this one.
-      load(waiting === 0 ? 1 : 0, segments[segment.index + 1] ?? null);
+      load(waiting === 0 ? 1 : 0, live.current.segments[segment.index + 1] ?? null);
     },
-    [elementFor, load, segments, show],
+    [announce, elementFor, load, show],
   );
 
   const report = useCallback(
@@ -322,10 +376,11 @@ export const ClipPlayer = forwardRef<
 
   /** Back to the first frame of the first clip, both slots primed. */
   const reset = useCallback(() => {
+    const { segments: now } = live.current;
     show(0);
-    load(0, segments[0] ?? null);
-    load(1, segments[1] ?? null);
-  }, [load, segments, show]);
+    load(0, now[0] ?? null);
+    load(1, now[1] ?? null);
+  }, [load, show]);
 
   /**
    * The clock. Reads where the playing element is, turns it into project time,
@@ -336,8 +391,7 @@ export const ClipPlayer = forwardRef<
     if (!playing.current) return;
 
     const element = elementFor(active.current);
-    const index = holding.current[active.current];
-    const segment = segments[index];
+    const segment = segmentOf(holding.current[active.current]);
     if (!element || !segment) return;
 
     const into = Math.min(Math.max(element.currentTime - segment.clip.trimStart, 0), segment.length);
@@ -346,47 +400,83 @@ export const ClipPlayer = forwardRef<
     const done = element.currentTime >= segment.clip.trimEnd - BOUNDARY_SLACK || element.ended;
     if (!done) return;
 
-    const next = segments[index + 1];
+    const next = live.current.segments[segment.index + 1];
     if (next) {
       advance(next);
       return;
     }
-    // The end of the last clip. Back to the top, paused, like a short video.
+    // The end of the last clip. Back to the top, paused, like a short video —
+    // and SAID, because the picture is now Clip 1 whatever was selected before.
+    // Not saying it was how the editor came to show Clip 1 under "Clip 3 of 3".
     stop();
     reset();
     report(0);
-  }, [advance, elementFor, report, reset, segments, stop]);
+    announce();
+  }, [advance, announce, elementFor, report, reset, segmentOf, stop]);
+
+  /**
+   * Puts `segment` on screen at `sourceTime` in its own source, playing on if
+   * it was playing, with the clip after it waiting in the other slot.
+   */
+  const place = useCallback(
+    (segment: Segment, sourceTime: number) => {
+      const wasPlaying = playing.current;
+      const element = elementFor(active.current);
+      if (holding.current[active.current] === segment.clip.id && element && element.readyState >= 1) {
+        // Already on screen: just move the playhead.
+        element.currentTime = sourceTime;
+      } else {
+        // Land the target in the active slot so nothing else has to change. A
+        // load still on its way into this slot is superseded, not raced.
+        for (const slot of [0, 1]) elementFor(slot)?.pause();
+        load(active.current, segment, sourceTime, wasPlaying);
+      }
+      const after = live.current.segments[segment.index + 1] ?? null;
+      const other = active.current === 0 ? 1 : 0;
+      if (holding.current[other] !== (after?.clip.id ?? null)) load(other, after);
+    },
+    [elementFor, load],
+  );
 
   const seek = useCallback(
     (projectTime: number) => {
-      const found = locate(segments, projectTime);
+      const found = locate(live.current.segments, projectTime);
       if (!found) return;
-      const { segment, sourceTime } = found;
-      const wasPlaying = playing.current;
-
-      // Already on screen: just move the playhead.
-      if (holding.current[active.current] === segment.index) {
-        const element = elementFor(active.current);
-        if (element) element.currentTime = sourceTime;
-      } else {
-        // Land the target in the active slot so nothing else has to change, and
-        // prime the other with whatever follows.
-        for (const slot of [0, 1]) elementFor(slot)?.pause();
-        load(active.current, segment);
-        const element = elementFor(active.current);
-        if (element) {
-          const go = () => {
-            element.currentTime = sourceTime;
-            if (wasPlaying) void element.play().catch(() => undefined);
-          };
-          if (element.readyState >= 1) go();
-          else element.addEventListener('loadedmetadata', go, { once: true });
-        }
-        load(active.current === 0 ? 1 : 0, segments[segment.index + 1] ?? null);
-      }
+      place(found.segment, found.sourceTime);
       report(projectTime);
     },
-    [elementFor, load, report, segments],
+    [place, report],
+  );
+
+  const showClip = useCallback(
+    (clipId: string, where?: 'start' | 'end' | number) => {
+      const segment = segmentOf(clipId);
+      if (!segment) return;
+      const { trimStart, trimEnd, sourceDuration } = segment.clip;
+      const element = elementFor(active.current);
+      let sourceTime: number;
+      if (typeof where === 'number') {
+        sourceTime = Math.min(Math.max(where, 0), Math.max(0, sourceDuration));
+      } else if (where === 'start') {
+        sourceTime = trimStart;
+      } else if (where === 'end') {
+        sourceTime = Math.max(trimStart, trimEnd - 0.15);
+      } else if (holding.current[active.current] === clipId) {
+        // Already on its way in, to where it was asked to be: a seek into this
+        // clip that is still opening it. Sending it to its start now would undo
+        // that seek — the timeline moved, and the picture went somewhere else.
+        if (!element || element.readyState < 1) return;
+        const now = element.currentTime;
+        // Already this clip, inside what it keeps: nothing to do.
+        if (now >= trimStart - 0.02 && now <= trimEnd + 0.02) return;
+        sourceTime = Math.min(Math.max(now, trimStart), Math.max(trimStart, trimEnd - 0.05));
+      } else {
+        sourceTime = trimStart;
+      }
+      place(segment, sourceTime);
+      report(segment.startsAt + Math.min(Math.max(sourceTime - trimStart, 0), segment.length));
+    },
+    [elementFor, place, report, segmentOf],
   );
 
   useImperativeHandle(
@@ -421,9 +511,10 @@ export const ClipPlayer = forwardRef<
         }
       },
       seek,
+      showClip,
       isPaused: () => !playing.current,
     }),
-    [elementFor, onPlayingChange, route, seek, stop, warm],
+    [elementFor, onPlayingChange, route, seek, showClip, stop, warm],
   );
 
   // One loop for the component's life. It costs nothing while paused and saves
@@ -452,18 +543,45 @@ export const ClipPlayer = forwardRef<
     level(0);
     level(1);
   }, [levels, muted, level]);
+  /** The clips as they were at the last re-prime, to find where a removed one sat. */
+  const before = useRef<Segment[]>([]);
   useEffect(() => {
+    const previous = before.current;
+    before.current = segments;
     const element = elementFor(active.current);
-    const index = holding.current[active.current];
-    const segment = segments[index];
-    // Mid-playback, keep the playhead where it is if it is still inside the clip
-    // on screen; a trim to a LATER clip should not jump the preview back to the
-    // start. Otherwise — including the first render, when nothing is loaded and
-    // the index is -1 — prime from the top.
-    if (segment && element && element.src && element.currentTime >= segment.clip.trimStart - 0.5) {
-      load(active.current === 0 ? 1 : 0, segments[segment.index + 1] ?? null);
+    const id = holding.current[active.current];
+    const segment = segmentOf(id);
+
+    // The clip on screen is still in the project: it STAYS on screen. This used
+    // to jump back to Clip 1 whenever the playhead was more than half a second
+    // before the clip's new start — which is exactly what dragging a start grip
+    // forward does — and nobody told the editor, so it went on saying "Clip 3
+    // of 3" over Clip 1. Now the playhead is moved inside what the clip keeps.
+    if (segment && element && element.src) {
+      const { trimStart, trimEnd } = segment.clip;
+      if (!playing.current && element.readyState >= 1) {
+        const now = element.currentTime;
+        if (now < trimStart - 0.02 || now > trimEnd + 0.02) {
+          element.currentTime = Math.min(Math.max(now, trimStart), Math.max(trimStart, trimEnd - 0.05));
+        }
+      }
+      const after = segments[segment.index + 1] ?? null;
+      const other = active.current === 0 ? 1 : 0;
+      if (holding.current[other] !== (after?.clip.id ?? null)) load(other, after);
       return;
     }
+
+    // The clip on screen was removed. The one that took its place, not Clip 1 —
+    // the same clip an editor's selection falls to.
+    const was = id === null ? -1 : previous.findIndex((each) => each.clip.id === id);
+    if (was >= 0 && segments.length > 0) {
+      const replacement = segments[Math.min(was, segments.length - 1)];
+      place(replacement, replacement.clip.trimStart);
+      report(replacement.startsAt);
+      return;
+    }
+
+    // Nothing loaded yet — the first render — so prime from the top.
     reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shape]);
@@ -480,7 +598,7 @@ export const ClipPlayer = forwardRef<
           zooms in reads as a crop rather than as a bigger picture. */}
       <div ref={box} className="absolute inset-0 overflow-hidden">
         {[slotA, slotB].map((slotRef, slot) => {
-          const clip = segments[held[slot]]?.clip;
+          const clip = segments.find((each) => each.clip.id === held[slot])?.clip;
           const place = clip
             ? placeInFrame(
                 clip,
@@ -502,6 +620,7 @@ export const ClipPlayer = forwardRef<
               muted
               preload="auto"
               data-clip-slot={slot}
+              data-clip-id={clip?.id ?? ''}
               data-clip-crop={clip ? `${clip.crop.x},${clip.crop.y},${clip.crop.width},${clip.crop.height}` : ''}
               data-clip-rotation={clip?.rotation ?? 0}
               onLoadedMetadata={(event) => {
