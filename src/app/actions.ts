@@ -6,8 +6,8 @@ import { redirect } from 'next/navigation';
 import { CATEGORIES, type Category } from '@/lib/types';
 import { bigStyleOf, normaliseTextPost, TEXT_KIND_COPY, textKindOf } from '@/lib/text-posts';
 import { isTextPostNotStorable } from '@/lib/services/insert-post';
-import { sanitiseAvatarUrl, sanitiseMedia } from '@/lib/media';
-import { PROFILE_DEFAULT, isProfileColorKey } from '@/lib/profile-theme';
+import { mediaKindForUrl, sanitiseAvatarUrl, sanitiseMedia } from '@/lib/media';
+import { PROFILE_DEFAULT, isProfileBackgroundKey, isProfileColorKey } from '@/lib/profile-theme';
 import { checkLimit } from '@/lib/services/rate-limit';
 import { getViewer, requireAdmin, requireViewer } from '@/lib/session';
 import { clearAdminVerification } from '@/lib/services/admin-step-up';
@@ -42,6 +42,7 @@ import {
   unfollow,
   updateProfile,
   updateProfileColours,
+  updateProfileCover,
 } from '@/lib/services/users';
 import { changeUsername, deleteAccount, signOut } from '@/lib/services/account';
 import {
@@ -484,7 +485,8 @@ export async function updateProfileAction(_prev: unknown, formData: FormData) {
  */
 export async function updateProfileColoursAction(background: string, box: string) {
   const viewer = await requireViewer('/settings');
-  if (!isProfileColorKey(background) || !isProfileColorKey(box)) {
+  // A background may be one of the gradients too; a box is always one colour.
+  if (!isProfileBackgroundKey(background) || !isProfileColorKey(box)) {
     return { ok: false as const, error: 'That is not one of the colours.' };
   }
 
@@ -496,6 +498,28 @@ export async function updateProfileColoursAction(background: string, box: string
     background === PROFILE_DEFAULT ? null : background,
     box === PROFILE_DEFAULT ? null : box,
   );
+  if (!saved.ok) return { ok: false as const, error: saved.error };
+
+  revalidatePath('/settings');
+  revalidatePath(`/u/${viewer.username}`);
+  return { ok: true as const };
+}
+
+/**
+ * The photo behind somebody's profile, or null to go back to their colour.
+ *
+ * Only an IMAGE FayTarra itself stored and checked — the same rule an avatar
+ * follows — so nothing a caller sends can point a profile at someone else's
+ * server or at a video. Like the colours, it takes no id: it is always the
+ * signed-in person's own profile.
+ */
+export async function updateProfileCoverAction(url: string | null) {
+  const viewer = await requireViewer('/settings');
+  const cover = url === null ? null : sanitiseAvatarUrl(url);
+  if (url !== null && (!cover || mediaKindForUrl(cover) !== 'image')) {
+    return { ok: false as const, error: 'That is not a picture uploaded here.' };
+  }
+  const saved = await updateProfileCover(viewer.id, cover);
   if (!saved.ok) return { ok: false as const, error: saved.error };
 
   revalidatePath('/settings');

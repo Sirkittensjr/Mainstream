@@ -117,13 +117,14 @@ const railStats = (page) =>
 const apiStats = (page, handle) =>
   page.evaluate(async (h) => (await (await fetch(`/api/v1/users/${h}`)).json()).stats, handle);
 
+// The five kinds FayTarra makes. Video is one door — the studio's chooser,
+// which offers recording and choosing a file both.
 const FULL = [
   ['short-message', '/create?kind=text&text=short'],
   ['story-message', '/create?kind=text&text=story'],
   ['big-message', '/create?kind=text&text=big'],
   ['photo', '/create?kind=photo'],
-  ['upload-video', '/create/video?upload=1'],
-  ['record-video', '/create/video'],
+  ['video', '/create/video?upload=1'],
 ];
 
 async function run() {
@@ -186,10 +187,14 @@ async function run() {
     .locator('[data-create-post-sheet] [data-create-option]')
     .evaluateAll((nodes) => nodes.map((n) => [n.dataset.createOption, n.getAttribute('href')]));
   check(
-    'Short, Story and Big Message, Photo, Upload video, Record video',
+    'Short, Story and Big Message, Photo, Video',
     JSON.stringify(options) === JSON.stringify(FULL),
     options.map(([k]) => k).join(', '),
   );
+  const accents = await page
+    .locator('[data-create-post-sheet] [data-create-option]')
+    .evaluateAll((nodes) => nodes.map((n) => n.dataset.createAccent));
+  check('each in a colour of its own', new Set(accents).size === FULL.length, accents.join(' '));
   const statuses = await page.evaluate(
     async (hrefs) => Promise.all(hrefs.map(async (h) => (await fetch(h)).status)),
     FULL.map(([, href]) => href),
@@ -201,6 +206,24 @@ async function run() {
     'Story Message opens the story composer',
     (await page.locator('#text_title').count()) === 1,
     page.url(),
+  );
+
+  section('HOME — THE COMPOSER, EVERY KIND IN COLOUR');
+  await page.goto('/home', { waitUntil: 'networkidle' });
+  const quick = await page
+    .locator('[data-create-composer] [data-create-quick]')
+    .evaluateAll((nodes) => nodes.map((n) => [n.dataset.createQuick, n.getAttribute('href')]));
+  check(
+    'the composer on Home offers the same five',
+    JSON.stringify(quick) === JSON.stringify(FULL),
+    quick.map(([k]) => k).join(', '),
+  );
+  await page.locator('[data-create-quick="video"]').click();
+  await page.waitForURL(/create\/video\?upload=1/, { timeout: 10000 });
+  check(
+    'Video opens the studio, offering recording and a file',
+    (await page.locator('button', { hasText: 'Choose a file' }).count()) === 1 &&
+      (await page.locator('button', { hasText: 'Record a video' }).count()) === 1,
   );
 
   section('RAIL — YOUR PROFILE, REAL NUMBERS');

@@ -8,6 +8,8 @@ const SIZES = {
   md: 'h-11 w-11 text-sm',
   lg: 'h-16 w-16 text-lg',
   xl: 'h-24 w-24 text-3xl',
+  /** A profile's own picture: 96 on a phone, 144 on a desktop. */
+  profile: 'h-24 w-24 text-3xl lg:h-36 lg:w-36 lg:text-5xl',
 } as const;
 
 /**
@@ -23,6 +25,7 @@ const PIXELS: Record<keyof typeof SIZES, number> = {
   md: 44,
   lg: 64,
   xl: 96,
+  profile: 144,
 };
 
 const GRADIENTS = [

@@ -41,6 +41,9 @@ create table if not exists public.users (
   -- value — an unrecognised key renders as the default.
   profile_bg    text,
   profile_box   text,
+  -- A picture to fill the profile's background, from FayTarra's own storage:
+  -- the address, never the image. Null means the colour above is used.
+  profile_cover_url text,
   -- The three accounts this person picked as their favourites, in order.
   -- Null or empty means the default: the first three accounts they followed.
   top_creators  text[],
@@ -53,6 +56,8 @@ alter table public.users add column if not exists username_changed_at timestampt
 -- Present for databases created before profile colours existed.
 alter table public.users add column if not exists profile_bg text;
 alter table public.users add column if not exists profile_box text;
+-- Present for databases created before profile background photos existed.
+alter table public.users add column if not exists profile_cover_url text;
 -- Present for databases created before the Top 3 existed.
 alter table public.users add column if not exists top_creators text[];
 
@@ -608,7 +613,7 @@ begin
     execute format(
       'grant select (id, username, display_name, bio, avatar_url, location, '
       'interests, role, status, status_reason, trusted, profile_bg, profile_box, '
-      'top_creators, created_at, last_active_at) '
+      'profile_cover_url, top_creators, created_at, last_active_at) '
       'on public.users to %I', api_role);
   end loop;
 
@@ -617,7 +622,7 @@ begin
   if exists (select 1 from pg_roles where rolname = 'authenticated') then
     grant update (
       display_name, bio, avatar_url, location, interests,
-      profile_bg, profile_box, top_creators
+      profile_bg, profile_box, profile_cover_url, top_creators
     ) on public.users to authenticated;
   end if;
 

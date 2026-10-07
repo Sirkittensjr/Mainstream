@@ -24,6 +24,12 @@ export interface ProfileColor {
   hex: string;
   /** 'light' means text on top of it has to be dark. */
   tone: ProfileTone;
+  /**
+   * A gradient, for the backgrounds that are one. `hex` is then its solid
+   * stand-in: what anything that needs ONE colour reads — the text on an
+   * active tab is painted in the background colour, for instance.
+   */
+  gradient?: string;
 }
 
 /**
@@ -49,12 +55,82 @@ export const PROFILE_COLORS: readonly ProfileColor[] = [
   { key: 'purple-bright', label: 'Bright purple', hex: '#B18BFF', tone: 'light' },
 ] as const;
 
+/**
+ * Backgrounds that are a FayTarra gradient rather than one colour.
+ *
+ * Backgrounds only: a box has to be one colour to read text off, and the box
+ * swatches stay the list above. Five deep ones that take white text and one
+ * bright one that takes dark, the same rule the solid colours follow.
+ */
+export const PROFILE_GRADIENTS: readonly ProfileColor[] = [
+  {
+    key: 'fay-sunset',
+    label: 'FayTarra sunset',
+    hex: '#4A1A5E',
+    tone: 'dark',
+    gradient: 'linear-gradient(135deg, #2E1466 0%, #6E1B5C 52%, #7A3E10 100%)',
+  },
+  {
+    key: 'fay-aurora',
+    label: 'Aurora',
+    hex: '#2E1A6A',
+    tone: 'dark',
+    gradient: 'linear-gradient(140deg, #140F45 0%, #3E1A86 48%, #8E2266 100%)',
+  },
+  {
+    key: 'fay-ocean',
+    label: 'Ocean',
+    hex: '#0C3060',
+    tone: 'dark',
+    gradient: 'linear-gradient(140deg, #04182F 0%, #0B4473 50%, #3A1A80 100%)',
+  },
+  {
+    key: 'fay-ember',
+    label: 'Ember',
+    hex: '#4E1420',
+    tone: 'dark',
+    gradient: 'linear-gradient(140deg, #220810 0%, #6A1A26 50%, #8E4612 100%)',
+  },
+  {
+    key: 'fay-forest',
+    label: 'Forest',
+    hex: '#0A3529',
+    tone: 'dark',
+    gradient: 'linear-gradient(140deg, #031A14 0%, #0A4433 52%, #1A5E52 100%)',
+  },
+  {
+    key: 'fay-glow',
+    label: 'Glow',
+    hex: '#E7A6D6',
+    tone: 'light',
+    gradient: 'linear-gradient(135deg, #B18BFF 0%, #FF8CC6 52%, #FFC786 100%)',
+  },
+] as const;
+
 /** The key that means "leave it as FayTarra looks everywhere else". */
 export const PROFILE_DEFAULT = 'default';
 
 export function profileColor(key: string | null | undefined): ProfileColor | null {
   if (!key || key === PROFILE_DEFAULT) return null;
   return PROFILE_COLORS.find((colour) => colour.key === key) ?? null;
+}
+
+/** A profile background: one of the colours, or one of the gradients. */
+export function profileBackground(key: string | null | undefined): ProfileColor | null {
+  if (!key || key === PROFILE_DEFAULT) return null;
+  return (
+    PROFILE_COLORS.find((colour) => colour.key === key) ??
+    PROFILE_GRADIENTS.find((gradient) => gradient.key === key) ??
+    null
+  );
+}
+
+/** Is this a key a BACKGROUND may hold? The colours and the gradients. */
+export function isProfileBackgroundKey(value: unknown): value is string {
+  return (
+    isProfileColorKey(value) ||
+    (typeof value === 'string' && PROFILE_GRADIENTS.some((gradient) => gradient.key === value))
+  );
 }
 
 /** Is this a key this deployment knows? Used before anything is stored. */
@@ -88,6 +164,14 @@ export interface ProfileSkin {
   box: ProfileColor | null;
 }
 
+export interface ProfileSkinOptions {
+  /**
+   * A photo fills the background. Its brightness is unknown and it sits under
+   * a dark scrim, so the text on the page itself is treated as on a dark one.
+   */
+  photo?: boolean;
+}
+
 /**
  * The custom properties for one person's choices, or null when they have made
  * none and the profile should look exactly as it always has.
@@ -95,19 +179,21 @@ export interface ProfileSkin {
 export function profileSkin(
   backgroundKey: string | null | undefined,
   boxKey: string | null | undefined,
+  { photo = false }: ProfileSkinOptions = {},
 ): ProfileSkin | null {
-  const background = profileColor(backgroundKey);
+  const background = profileBackground(backgroundKey);
   const box = profileColor(boxKey);
-  if (!background && !box) return null;
+  if (!background && !box && !photo) return null;
 
   const boxInk = ink(box?.tone ?? 'dark');
-  const pageInk = ink(background?.tone ?? 'dark');
+  const pageInk = ink(photo ? 'dark' : (background?.tone ?? 'dark'));
 
   return {
     background,
     box,
     style: {
-      '--profile-bg': background?.hex ?? 'transparent',
+      '--profile-bg': background?.hex ?? (photo ? '#07070C' : 'transparent'),
+      '--profile-bg-image': background?.gradient ?? 'none',
       '--profile-box': box?.hex ?? 'rgba(15, 15, 22, 0.70)',
       '--profile-ink': boxInk.ink,
       '--profile-muted': boxInk.muted,
