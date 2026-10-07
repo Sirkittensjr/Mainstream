@@ -377,7 +377,9 @@ Covers, in the order somebody walks it:
   44px; a thumb-sized timeline; a new take landing on Trim; the end handle
   shortening what is kept and the timeline following it; Reset restoring the whole
   take; text appearing over the video as it is typed and moving up the frame;
-  sound off silencing the preview; the cover tool being the same `CoverPicker` the
+  the clip's own Mute silencing the preview (and, after posting, the file itself,
+  decoded to RMS 0); Next rendering over the editor before the posting screen, and
+  Post not rendering a second time; the cover tool being the same `CoverPicker` the
   posting screen uses; and Retake dropping the take it goes back past rather than
   adding a second clip.
 - **The posting stage.** That it says so, offers a way back to editing, shows the
@@ -522,6 +524,20 @@ make a second one impossible.
 OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
   node scripts/e2e/multi-clip-flow.mjs
 ```
+
+**The editor as a whole.** The video is measured under every tool and must be
+the same height in each, and over half the screen — it used to drop from 358px
+to 227px on a 390x664 phone the moment Sound opened. The top strip is the whole
+project with the selected clip outlined, zooming into one clip only for Trim.
+Each clip's level is read off the PREVIEW (`data-clip-volume` on the slot on
+screen), including a slider moved while it plays, and the suite asserts it goes
+through a Web Audio gain node (`data-clip-audio="gain"`), because
+`HTMLMediaElement.volume` is read-only on iOS Safari. Mute and unmute must bring
+a 50% clip back to 50%. Crop and Turn are read off the preview too: a square crop
+of a 9:16 clip is magnified ~1.78x, as the render will. Next renders over the
+editor; Cancel lands back with every edit; the posting screen previews the
+rendered file; its Edit chip reopens this editor with every clip; an unchanged
+project is not rendered twice, and Post only uploads.
 
 **What was wrong, and where.** Not in the camera and not in the backend. The
 camera accumulates segments correctly — `addSource` appends with a functional

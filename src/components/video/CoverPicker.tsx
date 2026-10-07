@@ -23,6 +23,7 @@ export function CoverPicker({
   onAt,
   onFile,
   onClear,
+  compact = false,
 }: {
   /** The image currently winning: the supplied one, or the scrubbed frame. */
   preview: string | null;
@@ -36,18 +37,28 @@ export function CoverPicker({
   onAt: (seconds: number) => void;
   onFile: (file: File | undefined) => void;
   onClear: () => void;
+  /**
+   * The editor's version: no heading or explanation, and a small 9:16 thumbnail,
+   * because it shares a short panel under the video and the video is where the
+   * chosen frame is shown large. The posting screen keeps the full one.
+   */
+  compact?: boolean;
 }) {
   return (
     <>
-      <h2 id="cover-heading" className="text-sm font-semibold text-white/70">
-        Choose cover
-      </h2>
-      <p className="mt-1 text-xs text-white/40">
-        What people see before they press play. The start of the video unless you pick
-        something else.
-      </p>
+      {!compact && (
+        <>
+          <h2 id="cover-heading" className="text-sm font-semibold text-white/70">
+            Choose cover
+          </h2>
+          <p className="mt-1 text-xs text-white/40">
+            What people see before they press play. The start of the video unless you pick
+            something else.
+          </p>
+        </>
+      )}
 
-      <div className="mt-3 flex items-start gap-3">
+      <div className={`flex items-start ${compact ? 'gap-2.5' : 'mt-3 gap-3'}`}>
         {/* One preview, whichever kind of cover is winning. */}
         {preview ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -55,10 +66,16 @@ export function CoverPicker({
             src={preview}
             alt={isCustom ? 'The image chosen as this cover' : 'The frame chosen as this cover'}
             data-cover-preview={isCustom ? 'custom' : 'frame'}
-            className="h-20 w-20 shrink-0 rounded-xl bg-black object-contain"
+            className={`shrink-0 bg-black ${
+              compact ? 'h-[52px] w-[30px] rounded-md object-cover' : 'h-20 w-20 rounded-xl object-contain'
+            }`}
           />
         ) : (
-          <div className="h-20 w-20 shrink-0 rounded-xl bg-white/[0.04]" />
+          <div
+            className={`shrink-0 bg-white/[0.04] ${
+              compact ? 'h-[52px] w-[30px] rounded-md' : 'h-20 w-20 rounded-xl'
+            }`}
+          />
         )}
 
         <div className="min-w-0 flex-1">
@@ -81,28 +98,35 @@ export function CoverPicker({
             </>
           ) : (
             <>
-              <label htmlFor="thumbnail" className="text-xs text-white/40">
-                Drag to pick a frame
+              <label
+                htmlFor="thumbnail"
+                className={compact ? 'flex h-3.5 items-center text-[12px] font-semibold leading-none text-white/80' : 'text-xs text-white/40'}
+              >
+                {compact ? 'Cover · drag to pick a frame' : 'Drag to pick a frame'}
               </label>
               {/* Full width and 44px tall so a thumb can work it. */}
-              <input
-                id="thumbnail"
-                type="range"
-                min={0}
-                max={Math.max(0.1, max - 0.1)}
-                step={0.1}
-                value={at}
-                aria-label="Cover frame position"
-                aria-valuetext={`${formatPreciseSeconds(at)} of ${formatSeconds(max)}`}
-                onChange={(event) => onAt(Number(event.target.value))}
-                className="mt-1 h-11 w-full accent-fay"
-              />
-              <label
-                htmlFor="cover-file"
-                className="btn-quiet inline-block cursor-pointer px-3 py-2 text-xs"
-              >
-                Upload thumbnail
-              </label>
+              <div className={compact ? 'mt-1 flex h-9 items-center gap-2' : ''}>
+                <input
+                  id="thumbnail"
+                  type="range"
+                  min={0}
+                  max={Math.max(0.1, max - 0.1)}
+                  step={0.1}
+                  value={at}
+                  aria-label="Cover frame position"
+                  aria-valuetext={`${formatPreciseSeconds(at)} of ${formatSeconds(max)}`}
+                  onChange={(event) => onAt(Number(event.target.value))}
+                  className={`accent-fay ${compact ? 'h-9 min-w-0 flex-1' : 'mt-1 h-11 w-full'}`}
+                />
+                <label
+                  htmlFor="cover-file"
+                  className={`btn-quiet inline-flex cursor-pointer items-center text-xs ${
+                    compact ? 'h-9 shrink-0 px-3 py-0' : 'px-3 py-2'
+                  }`}
+                >
+                  {compact ? 'Upload' : 'Upload thumbnail'}
+                </label>
+              </div>
             </>
           )}
 

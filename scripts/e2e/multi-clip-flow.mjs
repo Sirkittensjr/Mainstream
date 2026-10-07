@@ -256,6 +256,66 @@ async function run() {
     )}px, clips ${Math.round(bands.clips.height)}px`,
   );
 
+  // THE VIDEO DOES NOT MOVE. Every tool's panel is the same short height, so
+  // the picture is as large with Sound or Text open as with Trim. It used to
+  // drop from 358px to 227px on this screen the moment Sound opened.
+  const videoHeights = {};
+  for (const tool of ['trim', 'sound', 'text', 'cover', 'crop', 'trim']) {
+    await page.locator(`[data-editor-tool="${tool}"]`).click();
+    await wait(200);
+    videoHeights[tool] = await page.evaluate(() =>
+      Math.round(
+        document.querySelector('[data-editor-stage]').firstElementChild.getBoundingClientRect()
+          .height,
+      ),
+    );
+  }
+  const heights = Object.values(videoHeights);
+  check(
+    'the video is the same size whichever tool is open',
+    Math.max(...heights) - Math.min(...heights) <= 1,
+    Object.entries(videoHeights)
+      .map(([tool, height]) => `${tool} ${height}px`)
+      .join(', '),
+  );
+  check(
+    'and it is the focus: over half the screen tall',
+    Math.min(...heights) >= bands.vh * 0.5,
+    `${Math.min(...heights)}px of ${bands.vh}px`,
+  );
+
+  // THE STRIP IS THE WHOLE VIDEO, the selected clip outlined in it — except with
+  // Trim open, when it zooms into that clip so its grips stay put under a thumb.
+  await page.locator('[data-editor-tool="sound"]').click();
+  await wait(250);
+  const wholeStrip = await page.evaluate(() => {
+    const track = document.querySelector('[data-editor-track]');
+    const outline = track.querySelector('[data-editor-track-selected]');
+    const box = track.getBoundingClientRect();
+    const lit = outline?.getBoundingClientRect();
+    return {
+      mode: track.dataset.editorTrackMode,
+      outlined: outline ? Number(outline.dataset.editorTrackSelected) : null,
+      share: lit ? lit.width / box.width : 0,
+    };
+  });
+  check(
+    'away from Trim, the strip shows the whole project',
+    wholeStrip.mode === 'project',
+    wholeStrip.mode,
+  );
+  check(
+    'with the selected clip outlined in it, at its share of the video',
+    wholeStrip.outlined === 0 && wholeStrip.share > 0.1 && wholeStrip.share < 0.6,
+    `clip ${wholeStrip.outlined}, ${(wholeStrip.share * 100).toFixed(0)}% of the strip`,
+  );
+  await page.locator('[data-editor-tool="trim"]').click();
+  await wait(250);
+  check(
+    'and Trim zooms it into that one clip',
+    (await page.locator('[data-editor-track]').getAttribute('data-editor-track-mode')) === 'clip',
+  );
+
   const picture = await page.evaluate(() => {
     const shown = [...document.querySelectorAll('[data-clip-slot]')].find(
       (v) => Number(getComputedStyle(v).opacity) > 0.5,
@@ -263,11 +323,21 @@ async function run() {
     const box = shown.getBoundingClientRect();
     const source = shown.videoWidth / shown.videoHeight;
     const drawn = box.width / source / box.height;
+    // The picture is laid out by the same arithmetic as the render — see
+    // lib/video/preview — so "cover" is a measurement, not a CSS keyword: the
+    // picture reaches every edge of the 9:16 frame, at its own aspect ratio.
+    const frame = shown.closest('[data-editor-stage]').firstElementChild.getBoundingClientRect();
+    const covers =
+      box.left <= frame.left + 1 &&
+      box.top <= frame.top + 1 &&
+      box.right >= frame.right - 1 &&
+      box.bottom >= frame.bottom - 1;
+    const unstretched = Math.abs(box.width / box.height - source) < 0.01;
     return {
-      ratio: box.width / box.height,
-      width: box.width,
-      height: box.height,
-      fit: getComputedStyle(shown).objectFit,
+      ratio: frame.width / frame.height,
+      width: frame.width,
+      height: frame.height,
+      fit: covers && unstretched ? 'cover' : `covers=${covers} unstretched=${unstretched}`,
       crop: Number.isFinite(drawn) ? Math.max(0, 1 - 1 / Math.max(1, drawn)) : 1,
       vw: window.innerWidth,
       vh: window.innerHeight,
@@ -847,7 +917,9 @@ async function run() {
   );
   check(
     'and names the clip it means',
-    /Delete clip 4 of 4\?/.test(await page.locator('[data-editor-confirm-delete]').innerText()),
+    /Delete clip\?[\s\S]*Clip 4 of 4/.test(
+      await page.locator('[data-editor-confirm-delete]').innerText(),
+    ),
     (await page.locator('[data-editor-confirm-delete]').innerText()).replace(/\n/g, ' '),
   );
   check(
@@ -912,6 +984,93 @@ async function run() {
     (await page.locator('[data-editor-fullscreen]').count()) === 1,
   );
 
+  // BACK ASKS TOO. Back is a retake — it reopens the camera and drops the LAST
+  // take so it can be filmed again — and it used to do that on the tap, with no
+  // question, which is the same loss Delete now asks about.
+  await page.locator('[data-editor-add-clip]').click();
+  await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 20000 });
+  await record(page, 2);
+  await page.locator('[data-camera-next]').click();
+  await page.waitForSelector('[data-editor-fullscreen]', { timeout: 20000 });
+  const withRetakeable = await page.locator('[data-editor-clip]').count();
+  const lengthBeforeBack = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+
+  await page.locator('[data-editor-retake]').click();
+  await wait(300);
+  check(
+    'Back asks before it discards anything',
+    (await page.locator('[data-editor-confirm-retake]').count()) === 1 &&
+      (await page.locator('[data-editor-fullscreen]').count()) === 1,
+  );
+  const backQuestion = (await page.locator('[data-editor-confirm-retake]').innerText()).replace(
+    /\n/g,
+    ' ',
+  );
+  check(
+    'and says plainly that it retakes the last clip and keeps the rest',
+    new RegExp(`Retake clip ${withRetakeable}\\?`).test(backQuestion) &&
+      /discards clip/.test(backQuestion) &&
+      /other clips and their edits are kept/.test(backQuestion),
+    backQuestion,
+  );
+  check(
+    'with the clip it would discard lit in the row, and no other',
+    await page.evaluate((last) => {
+      const red = (position) =>
+        getComputedStyle(document.querySelector(`[data-editor-clip="${position}"]`))
+          .borderTopColor.includes('248, 113, 113');
+      return red(last) && [...Array(last).keys()].every((position) => !red(position));
+    }, withRetakeable - 1),
+  );
+
+  await page.locator('[data-editor-confirm-retake] [data-editor-confirm-no]').click();
+  await wait(400);
+  check(
+    'No closes it and changes nothing',
+    (await page.locator('[data-editor-confirm-retake]').count()) === 0 &&
+      (await page.locator('[data-editor-fullscreen]').count()) === 1 &&
+      (await page.locator('[data-editor-clip]').count()) === withRetakeable &&
+      Number(await page.locator('[data-editor-timeline]').getAttribute('max')) === lengthBeforeBack,
+    `${await page.locator('[data-editor-clip]').count()} clips still here`,
+  );
+
+  // A tap outside the question is the same answer as No.
+  await page.locator('[data-editor-retake]').click();
+  await page.waitForSelector('[data-editor-confirm-retake]', { timeout: 5000 });
+  await page.mouse.click(20, 200);
+  await wait(400);
+  check(
+    'and so does a tap outside it',
+    (await page.locator('[data-editor-confirm-retake]').count()) === 0 &&
+      (await page.locator('[data-editor-clip]').count()) === withRetakeable,
+  );
+
+  // Yes retakes: the camera opens with the last take dropped and every other
+  // clip, with its edits, still in the project.
+  await page.locator('[data-editor-retake]').click();
+  await page.waitForSelector('[data-editor-confirm-retake] [data-editor-confirm-yes]', {
+    timeout: 5000,
+  });
+  await page.locator('[data-editor-confirm-retake] [data-editor-confirm-yes]').click();
+  await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 20000 });
+  check('Yes goes back to the camera to retake', true);
+  await page.locator('[data-camera-next]').click();
+  await page.waitForSelector('[data-editor-fullscreen]', { timeout: 20000 });
+  check(
+    'having dropped only the last clip',
+    (await page.locator('[data-editor-clip]').count()) === withRetakeable - 1,
+    `${withRetakeable} -> ${await page.locator('[data-editor-clip]').count()} clips`,
+  );
+  check(
+    'and kept the others exactly as they were edited',
+    Math.abs(
+      Number(await page.locator('[data-editor-timeline]').getAttribute('max')) - lengthWithThree,
+    ) < 0.01,
+    `${lengthWithThree}s before, ${await page
+      .locator('[data-editor-timeline]')
+      .getAttribute('max')}s after`,
+  );
+
   /* ===================== each clip's own level ===================== */
   section('SOUND IS PER CLIP, NOT ONE SWITCH OVER THE LOT');
 
@@ -956,6 +1115,84 @@ async function run() {
     levels[0] === 100 && levels[1] === 0 && levels[2] === half,
     levels.map((value) => `${value}%`).join(' / '),
   );
+
+  // Mute is a level of 0, and unmuting brings back the level the clip HAD —
+  // not full volume, which is what a plain on/off would do to a clip at 50%.
+  await page.locator('[data-editor-clip="2"]').click();
+  await wait(300);
+  await page.locator('[data-editor-clip-mute]').click();
+  await wait(250);
+  const mutedNow = await levelNow();
+  await page.locator('[data-editor-clip-mute]').click();
+  await wait(250);
+  const unmuted = await levelNow();
+  check(
+    'Mute silences a clip at any level, and unmute brings that level back',
+    mutedNow === 0 && unmuted === half,
+    `${half}% -> ${mutedNow}% -> ${unmuted}%`,
+  );
+
+  /** The level the PREVIEW actually applied to the clip on screen. */
+  const shownSlot = () =>
+    page.evaluate(() => {
+      const shown = [...document.querySelectorAll('[data-clip-slot]')].find(
+        (video) => Number(getComputedStyle(video).opacity) > 0.5,
+      );
+      return shown
+        ? {
+            volume: Number(shown.dataset.clipVolume),
+            muted: shown.muted,
+            audio: shown.dataset.clipAudio,
+            paused: shown.paused,
+          }
+        : null;
+    });
+
+  // THE PREVIEW, not just the panel: each clip plays at its own level.
+  const applied = [];
+  for (const position of [0, 1, 2]) {
+    await page.locator(`[data-editor-clip="${position}"]`).click();
+    await wait(450);
+    applied.push(await shownSlot());
+  }
+  check(
+    'the preview plays each clip at its own level',
+    applied.every(
+      (slot, position) => slot && Math.abs(slot.volume * 100 - levels[position]) < 1,
+    ),
+    applied.map((slot) => `${Math.round((slot?.volume ?? -1) * 100)}%`).join(' / '),
+  );
+  check(
+    'and the muted clip is muted in the preview, the others are not',
+    applied[1]?.muted === true && applied[0]?.muted === false && applied[2]?.muted === false,
+    applied.map((slot) => (slot?.muted ? 'muted' : 'sound')).join(' / '),
+  );
+
+  // A change applies NOW, to the clip that is playing. It used to wait until the
+  // preview next loaded that clip.
+  await page.locator('[data-editor-clip="2"]').click();
+  await wait(300);
+  await page.locator('[data-editor-playpause]').click();
+  await wait(400);
+  await setRange(page.locator('[data-editor-clip-volume]'), 0.3);
+  await wait(250);
+  const live = await shownSlot();
+  check(
+    'moving the slider changes the clip while it plays, without stopping it',
+    live && Math.abs(live.volume - 0.3) < 0.01 && live.paused === false,
+    JSON.stringify(live),
+  );
+  check(
+    // `HTMLMediaElement.volume` is read-only on iOS Safari, so a preview built on
+    // it plays every clip at full volume on an iPhone. A gain node is not.
+    'through a Web Audio gain node, which is what works on an iPhone',
+    live?.audio === 'gain',
+    live?.audio,
+  );
+  await page.locator('[data-editor-playpause]').click();
+  await wait(250);
+  await setRange(page.locator('[data-editor-clip-volume]'), half / 100);
+  await wait(300);
 
   // And they survive the other editing somebody does afterwards.
   await page.locator('[data-editor-tool="trim"]').click();
@@ -1106,7 +1343,32 @@ async function run() {
     (await page.locator('[data-editor-shape="Original"]').getAttribute('aria-pressed')) === 'true',
   );
   await page.locator('[data-editor-shape="1:1"]').click();
-  await wait(400);
+  await wait(500);
+  /** The clip on screen: its crop, its turn, and how it sits in the frame. */
+  const previewShape = () =>
+    page.evaluate(() => {
+      const frame = document
+        .querySelector('[data-editor-stage]')
+        .firstElementChild.getBoundingClientRect();
+      const shown = [...document.querySelectorAll('[data-clip-slot]')].find(
+        (video) => Number(getComputedStyle(video).opacity) > 0.5,
+      );
+      const box = shown.getBoundingClientRect();
+      return {
+        crop: shown.dataset.clipCrop,
+        rotation: Number(shown.dataset.clipRotation),
+        transform: shown.style.transform,
+        zoom: box.height / frame.height,
+      };
+    });
+  const squared = await previewShape();
+  check(
+    // A 9:16 recording cropped square and met with `cover` in a 9:16 frame is
+    // magnified ~1.78x — the preview shows the square, the way the render will.
+    'the preview shows the crop, not the raw frame',
+    squared.crop !== '0,0,1,1' && squared.zoom > 1.5,
+    `crop ${squared.crop}, ${squared.zoom.toFixed(2)}x`,
+  );
   check(
     'choosing a square crops the clip',
     (await page.locator('[data-editor-shape="1:1"]').getAttribute('aria-pressed')) === 'true' &&
@@ -1123,6 +1385,26 @@ async function run() {
     (await page.locator('[data-editor-shape="Original"]').getAttribute('aria-pressed')) === 'true' &&
       (await page.locator('[data-editor-shape="1:1"]').getAttribute('aria-pressed')) === 'false',
   );
+  const uncropped = await previewShape();
+  check(
+    'and is previewed whole',
+    uncropped.crop === '0,0,1,1' && Math.abs(uncropped.zoom - 1) < 0.05,
+    `crop ${uncropped.crop}, ${uncropped.zoom.toFixed(2)}x`,
+  );
+  // Turn is previewed too, and four turns are back where they started.
+  await page.locator('[data-editor-rotate]').click();
+  await wait(400);
+  const turned = await previewShape();
+  check(
+    'Turn rotates the clip in the preview',
+    turned.rotation === 90 && turned.transform.includes('rotate(90deg)'),
+    `${turned.rotation}° ${turned.transform}`,
+  );
+  for (let turn = 0; turn < 3; turn += 1) {
+    await page.locator('[data-editor-rotate]').click();
+    await wait(250);
+  }
+  check('and four turns are no turn', (await previewShape()).rotation === 0);
   await page.locator('[data-editor-shape="4:5"]').click();
   await wait(400);
   check(
@@ -1171,12 +1453,64 @@ async function run() {
     keptLengths.push(to - from);
   }
 
+  // NEXT RENDERS FIRST, over the editor, and Cancel goes back into it.
   await page.locator('[data-editor-next]').click();
-  await page.waitForSelector('[data-post-stage]', { timeout: 20000 });
+  const preparingShown = await page
+    .waitForSelector('[data-editor-preparing]', { timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
+  check('Next puts the video together over the editor, with progress', preparingShown);
+  await page.locator('[data-editor-preparing-cancel]').click();
+  await page
+    .waitForSelector('[data-editor-preparing]', { state: 'detached', timeout: 15000 })
+    .catch(() => undefined);
+  await wait(300);
+  check(
+    'Cancel goes back into the editor rather than on to posting',
+    (await page.locator('[data-editor-fullscreen]').count()) === 1 &&
+      (await page.locator('[data-post-stage]').count()) === 0,
+  );
+  check(
+    'with every edit intact',
+    Math.abs(Number(await page.locator('[data-editor-timeline]').getAttribute('max')) - projectLength) <
+      0.05 && (await page.locator('[data-editor-clip]').count()) === 3,
+    `${await page.locator('[data-editor-timeline]').getAttribute('max')}s, ${await page
+      .locator('[data-editor-clip]')
+      .count()} clips`,
+  );
 
-  // A real preview of the combined video, not a sentence describing it.
+  // For real this time.
+  const renderStarted = Date.now();
+  await page.locator('[data-editor-next]').click();
+  await page.waitForSelector('[data-post-stage]', { timeout: 180000 });
+  check(
+    'and only once it is rendered does it move to posting',
+    true,
+    `${((Date.now() - renderStarted) / 1000).toFixed(1)}s to render ${projectLength.toFixed(1)}s of video`,
+  );
+
+  // A real preview of the combined video, not a sentence describing it — and
+  // now the rendered FILE, every edit in it, rather than the clips replayed.
   const previewKind = await page.locator('[data-post-preview]').getAttribute('data-post-preview');
-  check('the posting screen previews the video', previewKind !== null, `kind: ${previewKind}`);
+  check('the posting screen previews the rendered video', previewKind === 'file', `kind: ${previewKind}`);
+
+  // The posting screen's Edit goes back to THIS editor, every clip in it. On a
+  // phone it used to open the desktop clip editor on clip 1 alone.
+  await page.locator('button.chip', { hasText: /^Edit$/ }).click();
+  await page.waitForSelector('[data-editor-fullscreen]', { timeout: 10000 });
+  check(
+    'the posting screen’s Edit reopens this editor with all three clips',
+    (await page.locator('[data-editor-clip]').count()) === 3,
+    `${await page.locator('[data-editor-clip]').count()} clips`,
+  );
+  // Nothing changed, so there is nothing to render again.
+  await page.locator('[data-editor-next]').click();
+  const renderedAgain = await page
+    .waitForSelector('[data-editor-preparing]', { timeout: 1500 })
+    .then(() => true)
+    .catch(() => false);
+  await page.waitForSelector('[data-post-stage]', { timeout: 30000 });
+  check('and with nothing changed, Next goes straight back without rendering again', !renderedAgain);
   const shape = await page.locator('[data-post-preview]').evaluate((el) => {
     const box = el.getBoundingClientRect();
     return {
@@ -1207,11 +1541,21 @@ async function run() {
   const title = `Two clips ${stamp}`;
   await page.fill('#video-title', title);
 
+  let renderedAtPost = false;
+  const watchPost = setInterval(async () => {
+    try {
+      if (/Preparing your video/i.test(await page.locator('body').innerText())) renderedAtPost = true;
+    } catch {
+      /* the page navigated */
+    }
+  }, 200);
   const postedUrl = await (async () => {
     await page.locator('[data-post-button]').click();
     await page.waitForURL(/\/post\//, { timeout: 180000 });
     return page.url();
   })();
+  clearInterval(watchPost);
+  check('Post uploads the video Next rendered rather than rendering again', !renderedAtPost);
   const postId = postedUrl.split('/post/')[1];
   check('a three-clip video posts', Boolean(postId), postedUrl);
 
@@ -1464,6 +1808,15 @@ async function run() {
   // the camera, and dropping the only take goes back to it rather than to an
   // editor with nothing in it.
   await android.page.locator('[data-editor-retake]').click();
+  await android.page.waitForSelector('[data-editor-confirm-retake]', { timeout: 5000 });
+  check(
+    'Back on the only clip says it discards this recording',
+    /Discard this recording\?[\s\S]*discards this recording/.test(
+      await android.page.locator('[data-editor-confirm-retake]').innerText(),
+    ),
+    (await android.page.locator('[data-editor-confirm-retake]').innerText()).replace(/\n/g, ' '),
+  );
+  await android.page.locator('[data-editor-confirm-retake] [data-editor-confirm-yes]').click();
   await android.page.waitForSelector('button[aria-label="Start recording"]', { timeout: 20000 });
   check('Retake on the only clip goes back to the camera', true);
   check(

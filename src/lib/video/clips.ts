@@ -105,6 +105,19 @@ export function updateClip(clips: Clip[], id: string, patch: Partial<Clip>): Cli
   return clips.map((clip) => (clip.id === id ? normaliseClip({ ...clip, ...patch }) : clip));
 }
 
+/**
+ * What Mute does to a clip's level.
+ *
+ * Mute is a volume of 0 — the one number the render and the preview both read —
+ * rather than a second flag that could disagree with it. Unmuting brings back
+ * the level the clip had before, not full volume: somebody who set a clip to
+ * 50% and muted it for a moment did not ask for it to come back at 100%.
+ */
+export function toggledVolume(volume: number, before: number | undefined): number {
+  if (volume > 0) return 0;
+  return before !== undefined && before > 0 ? before : 1;
+}
+
 /** Keeps a clip's numbers inside the range they are allowed to be in. */
 export function normaliseClip(clip: Clip): Clip {
   const duration = clip.sourceDuration > 0 ? clip.sourceDuration : 0;

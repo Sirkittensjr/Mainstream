@@ -13,6 +13,7 @@ import {
   outputFrame,
   outputSize,
   remainingSeconds,
+  toggledVolume,
   totalDuration,
   updateClip,
 } from './clips';
@@ -265,5 +266,21 @@ describe('deciding whether to re-encode', () => {
 
   it('re-encodes a recording, which has no file to post as-is', () => {
     assert.equal(needsRender([clip()]), true);
+  });
+});
+
+describe('mute is a level of 0, and unmute brings the old level back', () => {
+  it('silences a clip at any level', () => {
+    assert.equal(toggledVolume(1, undefined), 0);
+    assert.equal(toggledVolume(0.5, undefined), 0);
+  });
+
+  it('brings back the level it had, not full volume', () => {
+    assert.equal(toggledVolume(0, 0.5), 0.5);
+  });
+
+  it('falls back to full volume when there is nothing to bring back', () => {
+    assert.equal(toggledVolume(0, undefined), 1);
+    assert.equal(toggledVolume(0, 0), 1);
   });
 });

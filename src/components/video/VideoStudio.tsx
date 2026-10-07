@@ -217,6 +217,30 @@ export function VideoStudio({
 
   /** Playback properties of the finished post, set in the editing stage. */
   const [mutedOnPost, setMutedOnPost] = useState(false);
+
+  /**
+   * The video Next rendered, and the exact project it was rendered from.
+   *
+   * Next renders BEFORE posting, so the posting screen shows the finished file
+   * — every trim, level and crop in it — rather than a promise that it will be
+   * put together later. Valid only while `from` is still the project: every
+   * edit replaces the `clips` array, so an edit after rendering makes this stale
+   * without anybody having to remember to clear it, and undoing back to the
+   * rendered version makes it valid again.
+   */
+  const [prepared, setPrepared] = useState<{
+    from: Clip[];
+    blob: Blob;
+    contentType: string;
+    width: number;
+    height: number;
+    url: string;
+  } | null>(null);
+  /** The render Next is running, shown over the editor. */
+  const [preparing, setPreparing] = useState<{ label: string; ratio: number } | null>(null);
+  const preparingAbort = useRef<AbortController | null>(null);
+  /** Why the last Next stayed in the editor. */
+  const [editProblem, setEditProblem] = useState<string | null>(null);
   /** The posting screen's own preview, for a project with no rendered file yet. */
   const postPlayer = useRef<ClipPlayerHandle>(null);
   const [postPlaying, setPostPlaying] = useState(false);
@@ -396,7 +420,12 @@ export function VideoStudio({
   const segments = clips.map(clipDuration);
   const editing = clips.find((clip) => clip.id === editingId) ?? null;
   /** What the compose screen plays: the combined video if there is one, else the only clip. */
-  const previewUrl = finished?.previewUrl ?? (clips.length === 1 ? clips[0].src : null);
+  const previewUrl =
+    finished?.previewUrl ??
+    (prepared && prepared.from === clips ? prepared.url : null) ??
+    // The raw file only when it IS the video. A trimmed or cropped single clip
+    // used to preview its untouched source here, which is not what posts.
+    (clips.length === 1 && !needsRender(clips) ? clips[0].src : null);
   const simple = clips.length === 1 && !needsRender(clips);
 
   /** Turns a file or a recording into a clip, once we know how long it is. */
@@ -485,6 +514,63 @@ export function VideoStudio({
 
   /* ------------------------------------------------- putting the video together */
 
+  /**
+   * Next, from the editor: render the project with every edit in it, then post.
+   *
+   * Rendering is real time, so this shows progress over the editor and can be
+   * cancelled back into it with nothing lost. A project that needs no render —
+   * one untouched clip that is already the output frame — goes straight on.
+   */
+  async function prepare() {
+    if (preparing) return;
+    setEditProblem(null);
+    if (!needsRender(clips) || (prepared && prepared.from === clips)) {
+      setMobileStage('post');
+      return;
+    }
+    if (!canRender()) {
+      setEditProblem(
+        'This browser cannot put the video together. Try Safari or Chrome, or post a single clip without edits.',
+      );
+      return;
+    }
+    const from = clips;
+    const controller = new AbortController();
+    preparingAbort.current = controller;
+    setPreparing({ label: 'Preparing your video…', ratio: 0 });
+    try {
+      const rendered = await renderClips(from, {
+        signal: controller.signal,
+        onProgress: ({ seconds, total: length, clip, clips: count }) =>
+          setPreparing({
+            label: count > 1 ? `Preparing your video — clip ${clip} of ${count}` : 'Preparing your video…',
+            ratio: length > 0 ? seconds / length : 0,
+          }),
+      });
+      setPrepared({
+        from,
+        blob: rendered.blob,
+        contentType: rendered.mimeType.split(';')[0],
+        width: rendered.width,
+        height: rendered.height,
+        url: trackUrl(URL.createObjectURL(rendered.blob)),
+      });
+      setMobileStage('post');
+    } catch (problem) {
+      // Cancelled: back in the editor exactly as it was, which is the answer.
+      if (!controller.signal.aborted) {
+        setEditProblem(
+          problem instanceof Error && problem.message
+            ? `The video could not be put together: ${problem.message}`
+            : 'The video could not be put together. Try again.',
+        );
+      }
+    } finally {
+      preparingAbort.current = null;
+      setPreparing(null);
+    }
+  }
+
   /** Renders the clips into one video, or hands back the single untouched one. */
   async function build(signal: AbortSignal): Promise<Finished | null> {
     if (finished) return finished;
@@ -494,6 +580,7 @@ export function VideoStudio({
     let contentType: string;
     let size = outputSize(clips);
 
+    const ready = prepared && prepared.from === clips ? prepared : null;
     if (!needsRender(clips)) {
       // One clip, untouched: it is already the video. Re-encoding it would
       // cost minutes and some quality to end up where we started.
@@ -501,6 +588,11 @@ export function VideoStudio({
       blob = only.file as File;
       contentType = contentTypeFor(only.file as File);
       size = { width: only.sourceWidth, height: only.sourceHeight };
+    } else if (ready) {
+      // Rendered by Next, from exactly this project. Not again.
+      blob = ready.blob;
+      contentType = ready.contentType;
+      size = { width: ready.width, height: ready.height };
     } else {
       if (!canRender()) {
         setError(
@@ -543,7 +635,9 @@ export function VideoStudio({
         height: media.height ?? size.height,
         duration: media.duration ?? total,
       },
-      previewUrl: needsRender(clips) ? trackUrl(URL.createObjectURL(blob)) : clips[0].src,
+      previewUrl: !needsRender(clips)
+        ? clips[0].src
+        : (ready?.url ?? trackUrl(URL.createObjectURL(blob))),
     };
     setFinished(built);
     return built;
@@ -748,10 +842,6 @@ export function VideoStudio({
           setClips((current) => updateClip(current, id, patch));
           setFinished(null);
         }}
-        onMuted={(next) => {
-          remember('muted');
-          setMutedOnPost(next);
-        }}
         onOverlays={(next) => {
           remember('text');
           setOverlays(next);
@@ -781,7 +871,10 @@ export function VideoStudio({
           setMobileStage('camera');
           setRecording(true);
         }}
-        onNext={() => setMobileStage('post')}
+        onNext={() => void prepare()}
+        preparing={preparing}
+        onCancelPreparing={() => preparingAbort.current?.abort()}
+        problem={editProblem}
       />
     );
   }
@@ -1074,6 +1167,12 @@ export function VideoStudio({
         <button
           type="button"
           onClick={() => {
+            // On a phone there is one editor and it edits every clip. The desktop
+            // clip editor opened here on `clips[0]` alone.
+            if (phone) {
+              setMobileStage('edit');
+              return;
+            }
             setEditingId(clips[0].id);
             setStage('editing');
           }}
@@ -1084,7 +1183,7 @@ export function VideoStudio({
         </button>
         <button
           type="button"
-          onClick={() => setStage('clips')}
+          onClick={() => (phone ? setMobileStage('edit') : setStage('clips'))}
           disabled={posting}
           className="chip hover:bg-white/10 disabled:opacity-40"
         >

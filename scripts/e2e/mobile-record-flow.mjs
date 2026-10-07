@@ -469,10 +469,34 @@ async function run() {
     'the frame scrubber is there, so there is a video to cover',
   );
 
-  // Retake drops the clip it goes back past, so the camera is empty again.
+  // Back is a retake: it drops the clip it goes back past. It asks first —
+  // the same question Delete asks — rather than losing the take on the tap.
   await page.locator('[data-editor-retake]').click();
+  await page.waitForSelector('[data-editor-confirm-retake]', { timeout: 5000 });
+  const retakeQuestion = (await page.locator('[data-editor-confirm-retake]').innerText()).replace(
+    /\n/g,
+    ' ',
+  );
+  check(
+    'Back asks before discarding the recording',
+    /Discard this recording\?/.test(retakeQuestion) && /discards this recording/.test(retakeQuestion),
+    retakeQuestion,
+  );
+  await page.locator('[data-editor-confirm-retake] [data-editor-confirm-no]').click();
+  await wait(400);
+  check(
+    'No keeps the recording and stays in the editor',
+    (await page.locator('[data-editor-confirm-retake]').count()) === 0 &&
+      (await page.locator('[data-editor-fullscreen]').count()) === 1 &&
+      (await page.locator('[data-editor-clip]').count()) === 1,
+  );
+  await page.locator('[data-editor-retake]').click();
+  await page.waitForSelector('[data-editor-confirm-retake] [data-editor-confirm-yes]', {
+    timeout: 5000,
+  });
+  await page.locator('[data-editor-confirm-retake] [data-editor-confirm-yes]').click();
   await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 20000 });
-  check('Retake returns to the camera', true);
+  check('Yes returns to the camera to retake', true);
 
   await record(page, 3);
   await page.locator('[data-camera-next]').click();
@@ -508,10 +532,20 @@ async function run() {
     const box = shown.getBoundingClientRect();
     const tall = (selector) =>
       document.querySelector(selector)?.getBoundingClientRect().height ?? 0;
+    // Laid out by the render's own arithmetic (lib/video/preview), so "cover" is
+    // measured: the picture reaches every edge of its 9:16 frame, unstretched.
+    const frame = shown.closest('[data-editor-stage]').firstElementChild.getBoundingClientRect();
+    const covers =
+      box.left <= frame.left + 1 &&
+      box.top <= frame.top + 1 &&
+      box.right >= frame.right - 1 &&
+      box.bottom >= frame.bottom - 1;
+    const unstretched =
+      Math.abs(box.width / box.height - shown.videoWidth / shown.videoHeight) < 0.01;
     return {
-      height: box.height,
+      height: frame.height,
       vh: window.innerHeight,
-      fit: getComputedStyle(shown).objectFit,
+      fit: covers && unstretched ? 'cover' : `covers=${covers} unstretched=${unstretched}`,
       controls: tall('[data-editor-controls]'),
       clips: tall('[data-editor-strip]'),
     };
@@ -643,16 +677,33 @@ async function run() {
   );
 
   // --- sound ---
+  // Per clip: a slider and a Mute button. The post-wide "Sound on / Sound off"
+  // cards are gone — they took a third of the screen to say what Mute says.
   await page.locator('[data-editor-tool="sound"]').click();
+  await wait(250);
   check(
-    'sound is on to begin with',
-    !(await page.locator('[data-clip-slot="0"]').evaluate((v) => v.muted)),
+    'Sound is a slider and a Mute button, not post-wide cards',
+    (await page.locator('[data-editor-clip-volume]').count()) === 1 &&
+      (await page.locator('[data-editor-clip-mute]').count()) === 1 &&
+      (await page.locator('[data-editor-sound]').count()) === 0,
   );
-  await page.locator('[data-editor-sound="off"]').click();
+  /** The level the preview actually applied to the clip on screen. */
+  const slotLevel = () =>
+    page.evaluate(() => {
+      const shown = [...document.querySelectorAll('[data-clip-slot]')].find(
+        (video) => Number(getComputedStyle(video).opacity) > 0.5,
+      );
+      return shown ? { volume: shown.dataset.clipVolume, muted: shown.muted } : null;
+    });
+  const loud = await slotLevel();
+  check('sound is on to begin with', loud?.volume === '1' && !loud.muted, JSON.stringify(loud));
+  await page.locator('[data-editor-clip-mute]').click();
   await wait(300);
+  const quiet = await slotLevel();
   check(
-    'turning it off silences the preview too',
-    await page.locator('[data-clip-slot="0"]').evaluate((v) => v.muted),
+    'muting the clip silences the preview too',
+    quiet?.volume === '0' && quiet.muted === true,
+    JSON.stringify(quiet),
   );
 
   // --- cover ---
@@ -666,9 +717,24 @@ async function run() {
 
   check('the editing stage does not scroll sideways', (await sideways(page)) === 0);
 
+  // Next renders the project — every edit in it — before posting, so the
+  // posting screen shows the finished file. A recording always needs it here:
+  // the fake camera's 1216x2160 is not the 1080x1920 output frame.
   await page.locator('[data-editor-next]').click();
-  await page.waitForSelector('#video-title', { timeout: 20000 });
-  check('Next leaves editing for the posting screen', true);
+  const sawPreparingAtNext = await page
+    .waitForSelector('[data-editor-preparing]', { timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
+  check(
+    'Next puts the video together first, over the editor, with progress',
+    sawPreparingAtNext,
+  );
+  await page.waitForSelector('#video-title', { timeout: 120000 });
+  check('and then leaves editing for the posting screen', true);
+  check(
+    'whose preview is the rendered file, not the raw recording',
+    (await page.locator('[data-post-preview]').getAttribute('data-post-preview')) === 'file',
+  );
 
   /* ========================== stage 3: posting ========================== */
   section('POSTING IS ITS OWN STAGE');
@@ -820,7 +886,7 @@ async function run() {
     if (!response.ok) return null;
     const body = await response.json();
     const media = body?.post?.media?.[0] ?? null;
-    return media ? { width: media.width, height: media.height } : null;
+    return media ? { width: media.width, height: media.height, url: media.url } : null;
   }, postId);
   check(
     // THE BUG THIS GUARDS. Wrapping a recording as a File is what lets an
@@ -841,8 +907,40 @@ async function run() {
     // back 1080x1920 skips the pass, and so does every upload from the camera
     // roll. It is only paid when the frame would otherwise be wrong.
     'and the render pass ran only because the camera did not give that frame',
-    sawPreparing,
+    sawPreparingAtNext,
     'the pass runs when the sensor frame is not the output frame',
+  );
+  check(
+    // Next rendered exactly this project and nothing changed since, so Post only
+    // uploads. Rendering twice would cost the length of the video again.
+    'Post uploads the video Next made rather than rendering it again',
+    !sawPreparing,
+  );
+
+  // The clip was muted in the editor. That has to be in the FILE: a silent
+  // audio track, not a flag the player might or might not honour.
+  const silence = await page.evaluate(async (url) => {
+    const response = await fetch(url);
+    if (!response.ok) return { error: `fetch ${response.status}` };
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const context = new Ctx();
+    try {
+      const buffer = await context.decodeAudioData(await response.arrayBuffer());
+      const samples = buffer.getChannelData(0);
+      let total = 0;
+      for (let at = 0; at < samples.length; at += 1) total += samples[at] * samples[at];
+      return { rms: Math.sqrt(total / Math.max(1, samples.length)) };
+    } catch {
+      // No audio track at all is silent too.
+      return { rms: 0, noTrack: true };
+    } finally {
+      void context.close();
+    }
+  }, shot?.url);
+  check(
+    'the muted clip is silent in the posted file itself',
+    !silence.error && silence.rms < 0.002,
+    silence.error ?? (silence.noTrack ? 'no audio track' : `RMS ${silence.rms.toFixed(5)}`),
   );
   check(
     'the upload asked the server where to put it',
@@ -915,10 +1013,6 @@ async function run() {
     (await page.locator('[data-video-text]').count()) >= 1 &&
       (await page.locator('[data-video-text]').first().innerText()).includes(overlayText),
     (await page.locator('[data-video-text]').first().innerText().catch(() => '-')).trim(),
-  );
-  check(
-    'and the video is silent, as it was set to be',
-    await page.locator('video').first().evaluate((v) => v.muted),
   );
   check('it carries the content warning', /content warning|sensitive|Show/i.test(body));
   check('a video element is on the page', (await page.locator('video').count()) >= 1);
@@ -1053,16 +1147,23 @@ async function run() {
     await page.locator('[data-editor-trim="end"]').inputValue(),
   );
 
+  // This one MUST take the render pass — that is how a trim becomes real bytes —
+  // and it takes it at Next, before the posting screen.
   await page.locator('[data-editor-next]').click();
-  await page.waitForSelector('#video-title', { timeout: 20000 });
+  const sawPreparing2 = await page
+    .waitForSelector('[data-editor-preparing]', { timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
+  await page.waitForSelector('#video-title', { timeout: 180000 });
   const trimmedTitle = `Trimmed take ${stamp}`;
   await page.fill('#video-title', trimmedTitle);
 
-  // This one MUST take the render pass — that is how a trim becomes real bytes.
-  let sawPreparing2 = false;
+  let renderedAtPost2 = false;
   const watch2 = setInterval(async () => {
     try {
-      if (/Preparing your video/i.test(await page.locator('body').innerText())) sawPreparing2 = true;
+      if (/Preparing your video/i.test(await page.locator('body').innerText())) {
+        renderedAtPost2 = true;
+      }
     } catch {
       /* navigated */
     }
@@ -1075,8 +1176,9 @@ async function run() {
   check(
     'and it DID go through the render pass, because the bytes had to change',
     sawPreparing2,
-    'the trim is applied by a real pass, not promised',
+    'the trim is applied by a real pass at Next, not promised',
   );
+  check('and Post did not render it a second time', !renderedAtPost2);
 
   // The finished post's own length, asked of the app rather than of a file — this
   // suite runs against the local JSON driver AND against the Supabase stubs, and
