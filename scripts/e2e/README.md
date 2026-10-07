@@ -720,6 +720,26 @@ sits a little higher in the editor than in the finished video, where it is drawn
 over the whole frame. The posting screen and the post itself both use the full-frame
 variant, so the faithful preview is the last thing seen before posting.
 
+### 4g. The desktop layout — `desktop-layout-flow.mjs`
+
+Three columns from 1024px: navigation, the feed, and (from 1280px) the rail. It
+checks the sidebar order — Home, Videos, Discover, one **Create**, Search,
+Messages, Notifications, Admin only for admins — and that Create offers Short,
+Story and Big Message, Photo, Upload video and Record video, each a route that
+answers. The rail's profile card is checked against the profile API (a
+different code path over the same rows), a follow from another account must move
+its follower count, and its Top 3 must match the profile's, in order, in gold,
+silver and bronze, with the profile's editor the only one on the page. On your
+own profile the rail does not repeat your card or Top 3. The feed is wider than
+the old 640px cap. At 1024 the rail folds away; on a phone there is no sidebar
+and no rail, the bottom bar is unchanged, and Home's Create still has its four
+options. A guest gets a Join card and a Create that asks them to sign in.
+
+```bash
+OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
+  node scripts/e2e/desktop-layout-flow.mjs
+```
+
 ### 4f. The finished video, frame by frame — `render-output-flow.mjs`
 
 Renders real projects through the real `renderClips` (bundled with esbuild straight
@@ -1246,7 +1266,7 @@ it:
 
 `auth-flow`, `features-flow`, `video-flow`, `videos-flow`, `video-upload-flow`,
 `video-cover-flow`, `mobile-record-flow`, `multi-clip-flow`, `editor-clip-sync-flow`,
-`messaging-flow`,
+`desktop-layout-flow`, `messaging-flow`,
 `profile-colours-flow`, `top-creators-flow`, `auto-review-flow`, `admin-badge`
 and `social-navigation` create their own accounts and want an EMPTY store
 (`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and

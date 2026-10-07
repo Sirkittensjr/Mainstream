@@ -146,7 +146,7 @@ export function PostCard({
 
   return (
     <article className="card animate-fade-up overflow-hidden">
-      <header className="flex items-start gap-3 p-4 pb-3">
+      <header className="flex items-start gap-3 p-4 pb-3 lg:gap-3.5 lg:px-5 lg:pt-5">
         <Avatar
           username={data.author.username}
           displayName={data.author.displayName}
@@ -156,13 +156,13 @@ export function PostCard({
           <span className="flex min-w-0 items-center gap-1.5">
             <Link
               href={`/u/${data.author.username}`}
-              className="truncate font-semibold leading-tight hover:underline"
+              className="truncate font-semibold leading-tight hover:underline lg:text-[16px]"
             >
               {data.author.displayName}
             </Link>
             {data.author.isAdmin && <AdminBadge />}
           </span>
-          <p className="mt-0.5 truncate text-[13px] text-white/45">
+          <p className="mt-0.5 truncate text-[13px] text-white/45 lg:text-[13.5px]">
             @{data.author.username} · {timeAgo(data.createdAt)}
           </p>
         </div>
@@ -176,7 +176,7 @@ export function PostCard({
       </header>
 
       {(data.reason || data.category) && (
-        <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+        <div className="flex flex-wrap items-center gap-2 px-4 pb-3 lg:px-5">
           <Link
             href={`/discover?category=${encodeURIComponent(data.category)}`}
             className="chip hover:bg-white/10"
@@ -204,12 +204,13 @@ export function PostCard({
           style={data.textStyle}
           preview={!full}
           postId={data.id}
+          className="lg:px-5"
         />
       ) : (
         data.caption && (
-          <Link href={`/post/${data.id}`} className="block px-4 pb-3">
+          <Link href={`/post/${data.id}`} className="block px-4 pb-3 lg:px-5 lg:pb-4">
             <p
-              className={`whitespace-pre-wrap text-[15px] leading-relaxed text-white/90 ${
+              className={`whitespace-pre-wrap text-[15px] leading-relaxed text-white/90 lg:text-base ${
                 compact ? 'line-clamp-3' : ''
               }`}
             >
@@ -230,13 +231,13 @@ export function PostCard({
         />
       )}
 
-      <footer className="flex items-center gap-1 px-2 py-2">
+      <footer className="flex items-center gap-1 px-2 py-2 lg:mt-1 lg:border-t lg:border-white/[0.06] lg:px-3 lg:py-2.5">
         <button
           type="button"
           onClick={toggleLike}
           aria-pressed={liked}
           aria-label={liked ? 'Unlike' : 'Like'}
-          className={`flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium transition ${
+          className={`flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium transition lg:hover:bg-white/[0.06] ${
             liked ? 'text-fay' : 'text-white/55 hover:text-white'
           }`}
         >
@@ -245,7 +246,7 @@ export function PostCard({
         </button>
         <Link
           href={`/post/${data.id}#comments`}
-          className="flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium text-white/55 transition hover:text-white"
+          className="flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium text-white/55 transition hover:text-white lg:hover:bg-white/[0.06]"
           aria-label="Comments"
         >
           <CommentIcon />
@@ -255,7 +256,7 @@ export function PostCard({
           type="button"
           onClick={share}
           aria-label="Share"
-          className="flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium text-white/55 transition hover:text-white"
+          className="flex items-center gap-2 rounded-full px-3 py-2 text-sm font-medium text-white/55 transition hover:text-white lg:hover:bg-white/[0.06]"
         >
           <ShareIcon />
           {copied && <span className="text-xs">Copied</span>}
@@ -387,7 +388,7 @@ function MediaStrip({
         }}
       >
         {media.map((item, i) => (
-          <div key={`${postId}-${i}`} className="w-full shrink-0 snap-center px-2">
+          <div key={`${postId}-${i}`} className="w-full shrink-0 snap-center px-2 lg:px-3">
             {item.kind === 'video' ? (
               <VideoPlayer
                 media={item}
@@ -403,7 +404,7 @@ function MediaStrip({
               // Sized to the column it lands in rather than to whatever came
               // off the camera: a feed of full-resolution phone photos is the
               // single heaviest thing a phone has to download here.
-              <div className="relative aspect-[4/5] max-h-[68vh] w-full overflow-hidden rounded-2xl bg-ink-850">
+              <div className="relative aspect-[4/5] max-h-[68vh] w-full overflow-hidden rounded-2xl bg-ink-850 lg:max-h-[78vh]">
                 <Image
                   src={item.url}
                   alt={
@@ -412,7 +413,7 @@ function MediaStrip({
                       : `Photo by @${author}`
                   }
                   fill
-                  sizes="(max-width: 640px) 100vw, (max-width: 1024px) 640px, 600px"
+                  sizes="(max-width: 640px) 100vw, (max-width: 1024px) 640px, 760px"
                   // The first card is usually on screen before anything is
                   // scrolled, so it is worth fetching straight away; the rest
                   // wait until they are approached.

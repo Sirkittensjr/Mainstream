@@ -3,7 +3,17 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Portal } from './Portal';
-import { CloseIcon, GalleryIcon, ImageIcon, RecordIcon, TextIcon } from './Icons';
+import { TEXT_KIND_COPY } from '@/lib/text-posts';
+import {
+  BubbleLinesIcon,
+  CloseIcon,
+  GalleryIcon,
+  ImageIcon,
+  PlusIcon,
+  RecordIcon,
+  StoryIcon,
+  TextIcon,
+} from './Icons';
 
 /**
  * The general way in to posting: Photo, Text, Upload video, Record video.
@@ -57,6 +67,42 @@ const OPTIONS = [
   },
 ] as const;
 
+/**
+ * Every way in, one step each — what the desktop sidebar's Create opens.
+ *
+ * The same destinations as above with Text spelled out as its three kinds, so
+ * the one Create button is enough on its own: nothing that used to be a
+ * separate "New post" or "Record" item is more than a click away. Each is a
+ * route that already exists — the text chooser's own links, the composer, and
+ * the video studio's two doors.
+ */
+const FULL_OPTIONS = [
+  {
+    key: 'short-message',
+    href: '/create?kind=text&text=short',
+    label: TEXT_KIND_COPY.short.label,
+    blurb: TEXT_KIND_COPY.short.hint,
+    Icon: BubbleLinesIcon,
+  },
+  {
+    key: 'story-message',
+    href: '/create?kind=text&text=story',
+    label: TEXT_KIND_COPY.story.label,
+    blurb: TEXT_KIND_COPY.story.hint,
+    Icon: StoryIcon,
+  },
+  {
+    key: 'big-message',
+    href: '/create?kind=text&text=big',
+    label: TEXT_KIND_COPY.big.label,
+    blurb: TEXT_KIND_COPY.big.hint,
+    Icon: TextIcon,
+  },
+  OPTIONS[0],
+  OPTIONS[2],
+  OPTIONS[3],
+] as const;
+
 export function CreatePostMenu({
   /**
    * `prompt` is the composer row Home wants — wide, quiet, and sitting above the
@@ -65,10 +111,13 @@ export function CreatePostMenu({
   variant = 'button',
   className = '',
 }: {
-  variant?: 'prompt' | 'button';
+  /** `sidebar` is the desktop navigation's one big Create, with every option. */
+  variant?: 'prompt' | 'button' | 'sidebar';
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const sidebar = variant === 'sidebar';
+  const options = sidebar ? FULL_OPTIONS : OPTIONS;
 
   // Escape closes it, like every other sheet in the app.
   useEffect(() => {
@@ -87,14 +136,23 @@ export function CreatePostMenu({
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        data-create-post
+        // The sidebar's is marked apart from the page's own Create post: on a
+        // phone the sidebar is in the page but hidden, and "the" create button
+        // there is still the one on Home or the profile.
+        {...(sidebar ? { 'data-sidebar-create': true } : { 'data-create-post': true })}
         className={
           variant === 'prompt'
             ? `card flex w-full items-center gap-3 p-4 text-left transition hover:bg-white/[0.06] ${className}`
-            : `btn-primary px-6 py-2.5 text-sm ${className}`
+            : sidebar
+              ? `btn-primary w-full py-3 text-[15px] ${className}`
+              : `btn-primary px-6 py-2.5 text-sm ${className}`
         }
       >
-        {variant === 'prompt' ? (
+        {sidebar ? (
+          <>
+            <PlusIcon width={19} height={19} strokeWidth={2.4} /> Create
+          </>
+        ) : variant === 'prompt' ? (
           <>
             <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-fay/15 text-fay-soft">
               <ImageIcon width={18} height={18} />
@@ -128,7 +186,9 @@ export function CreatePostMenu({
             />
             <div
               data-create-post-sheet
-              className="card safe-bottom relative max-h-[88dvh] w-full max-w-md animate-fade-up overflow-y-auto rounded-b-none p-5 pb-7 sm:rounded-3xl sm:p-6"
+              className={`card safe-bottom relative max-h-[88dvh] w-full animate-fade-up overflow-y-auto rounded-b-none p-5 pb-7 sm:rounded-3xl sm:p-6 ${
+                sidebar ? 'max-w-xl' : 'max-w-md'
+              }`}
             >
               <div className="mb-4 flex items-start justify-between gap-4">
                 <div>
@@ -140,8 +200,8 @@ export function CreatePostMenu({
                 </button>
               </div>
 
-              <div className="space-y-2">
-                {OPTIONS.map(({ key, href, label, blurb, Icon }) => (
+              <div className={sidebar ? 'grid gap-2 sm:grid-cols-2' : 'space-y-2'}>
+                {options.map(({ key, href, label, blurb, Icon }) => (
                   <Link
                     key={key}
                     href={href}

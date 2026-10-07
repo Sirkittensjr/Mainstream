@@ -29,6 +29,8 @@ export function TopCreators({
   owner,
   canEdit,
   options,
+  variant = 'profile',
+  editHref,
 }: {
   slots: TopCreatorSlot[];
   /** Whose profile this is, for the empty-state wording. */
@@ -36,15 +38,38 @@ export function TopCreators({
   canEdit: boolean;
   /** Everyone the owner follows. Only sent for their own profile. */
   options: { id: string; username: string; displayName: string; avatarUrl: string | null }[];
+  /**
+   * `rail` is the desktop sidebar's copy of your own Top 3: its own card, and
+   * read-only — the editor lives on the profile, where the Top 3 is, and a
+   * second one beside it would be two controls for one thing. It also leaves
+   * the admin badge off: the rail is a summary, and the badge is on every
+   * profile, post and comment that person has.
+   */
+  variant?: 'profile' | 'rail';
+  /** Where the rail's Edit goes: the owner's own profile, where the editor is. */
+  editHref?: string;
 }) {
+  const rail = variant === 'rail';
   const filled = slots.filter((slot) => slot.person !== null).length;
 
   return (
-    <section className="mt-4 rounded-2xl border border-white/[0.07] bg-black/20 p-4">
+    <section
+      data-top-creators={variant}
+      className={
+        rail ? 'card p-5' : 'mt-4 rounded-2xl border border-white/[0.07] bg-black/20 p-4'
+      }
+    >
       <div className="flex items-center gap-2">
-        <h2 className="label">Top creators</h2>
-        <span className="text-[11px] text-white/30">picked by {canEdit ? 'you' : owner}</span>
-        {canEdit && (
+        <h2 className="label">{rail ? 'Top 3' : 'Top creators'}</h2>
+        {!rail && (
+          <span className="text-[11px] text-white/30">picked by {canEdit ? 'you' : owner}</span>
+        )}
+        {rail && editHref && (
+          <Link href={editHref} className="ml-auto text-xs text-white/40 hover:text-white">
+            Edit
+          </Link>
+        )}
+        {canEdit && !rail && (
           <span className="ml-auto">
             <TopCreatorsEditor
               slots={slots.map((slot) => ({
@@ -63,9 +88,9 @@ export function TopCreators({
         {slots.map((slot) => (
           <li key={slot.position} className="min-w-0">
             {slot.person ? (
-              <Creator position={slot.position} person={slot.person} />
+              <Creator position={slot.position} person={slot.person} badge={!rail} />
             ) : (
-              <EmptySlot position={slot.position} canEdit={canEdit} />
+              <EmptySlot position={slot.position} canEdit={canEdit || rail} />
             )}
           </li>
         ))}
@@ -73,7 +98,7 @@ export function TopCreators({
 
       {filled === 0 && (
         <p className="mt-3 text-[12px] leading-relaxed text-white/35">
-          {canEdit
+          {canEdit || rail
             ? 'The first three accounts you follow become your Top 3, until you pick your own.'
             : `${owner} has not picked a Top 3 yet.`}
         </p>
@@ -138,7 +163,15 @@ type Place = keyof typeof MEDALS;
 
 const medalFor = (position: number) => MEDALS[(position as Place) in MEDALS ? (position as Place) : 1];
 
-function Creator({ position, person }: { position: number; person: PublicUser }) {
+function Creator({
+  position,
+  person,
+  badge = true,
+}: {
+  position: number;
+  person: PublicUser;
+  badge?: boolean;
+}) {
   const medal = medalFor(position);
 
   return (
@@ -191,7 +224,7 @@ function Creator({ position, person }: { position: number; person: PublicUser })
       >
         <span className="inline-flex max-w-full items-center gap-1">
           <span className="truncate">{person.display_name}</span>
-          {isAdminRole(person.role) && <AdminBadge />}
+          {badge && isAdminRole(person.role) && <AdminBadge />}
         </span>
       </span>
       <span
