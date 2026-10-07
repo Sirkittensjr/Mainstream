@@ -20,6 +20,7 @@ import {
 } from '@/lib/video/camera';
 import { RECORD_CAPS, capLabel, formatSeconds } from '@/lib/video/limits';
 import { pickMimeType } from '@/lib/video/render';
+import { ConfirmSheet } from './ConfirmSheet';
 
 /**
  * The camera.
@@ -102,6 +103,12 @@ export function VideoRecorder({
   const [facing, setFacing] = useState<'user' | 'environment'>('user');
   const [status, setStatus] = useState<'starting' | 'ready' | 'recording' | 'denied'>('starting');
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Whether "Last clip" is asking. It throws a take away for good, the same
+   * loss as Back and Delete in the editor, so it asks the same way instead of
+   * happening on the tap.
+   */
+  const [confirmDrop, setConfirmDrop] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [hasMic, setHasMic] = useState(true);
   /**
@@ -503,7 +510,7 @@ export function VideoRecorder({
             {onDropLast && (
               <button
                 type="button"
-                onClick={onDropLast}
+                onClick={() => setConfirmDrop(true)}
                 className="flex items-center gap-1.5 rounded-full bg-black/45 px-3 py-1.5 text-[13px] font-semibold text-white/75 backdrop-blur-md transition active:scale-95"
                 aria-label="Delete the last clip"
                 data-camera-drop-last
@@ -604,6 +611,23 @@ export function VideoRecorder({
                   : 'Hold to record · tap to keep filming'}
         </p>
       </div>
+
+      {confirmDrop && onDropLast && !recording && (
+        <ConfirmSheet
+          kind="drop-last"
+          title={segments.length > 1 ? `Delete clip ${segments.length}?` : 'Delete this clip?'}
+          detail={
+            segments.length > 1
+              ? `This deletes clip ${segments.length} of ${segments.length}, the last one you filmed. Your other clips are kept.`
+              : 'This deletes the clip you filmed so you can film it again.'
+          }
+          onNo={() => setConfirmDrop(false)}
+          onYes={() => {
+            setConfirmDrop(false);
+            onDropLast();
+          }}
+        />
+      )}
     </div>
   );
 }
