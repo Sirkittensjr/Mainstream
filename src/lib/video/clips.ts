@@ -157,7 +157,6 @@ export const OUTPUT_LONG_EDGE = 1080;
 
 /** The vertical short-form frame: 1080x1920, 9:16. */
 export const VERTICAL_OUTPUT = { width: 1080, height: 1920 } as const;
-export const VERTICAL_RATIO = VERTICAL_OUTPUT.width / VERTICAL_OUTPUT.height;
 
 /**
  * Whether a clip's picture is taller than it is wide, after crop and rotation.

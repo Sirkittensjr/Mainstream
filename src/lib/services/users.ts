@@ -3,7 +3,7 @@ import { db, isMissingRelation, supabaseConfigured } from '@/lib/db';
 import { communityCache, refreshCommunity } from './community-cache';
 import { newId } from '@/lib/ids';
 import type { Category, ID, PublicUser, User } from '@/lib/types';
-import { notify } from './notifications';
+import { notifyOnce } from './notifications';
 
 export function toPublicUser(user: User): PublicUser {
   const { email: _email, ...rest } = user;
@@ -16,11 +16,6 @@ export async function getUser(id: ID): Promise<User | null> {
 
 export async function getUserByUsername(username: string): Promise<User | null> {
   const rows = await db().query('users', { where: { username: username.toLowerCase() } });
-  return rows[0] ?? null;
-}
-
-export async function getUserByEmail(email: string): Promise<User | null> {
-  const rows = await db().query('users', { where: { email: email.toLowerCase() } });
   return rows[0] ?? null;
 }
 
@@ -188,7 +183,7 @@ export async function follow(followerId: ID, followingId: ID): Promise<boolean> 
   });
   const actor = await store.get('users', followerId);
   refreshCommunity();
-  await notify({
+  await notifyOnce({
     userId: followingId,
     type: 'follow',
     actorId: followerId,

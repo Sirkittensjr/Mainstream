@@ -7,9 +7,15 @@ import { insertPost, type InsertMemo } from './insert-post';
 import { communityCache, refreshCommunity } from './community-cache';
 import { newId } from '@/lib/ids';
 import type { Category, ID, Media, Post, PublicUser, User } from '@/lib/types';
-import { notify, notifyMentions } from './notifications';
+import { notify, notifyMentions, notifyOnce } from './notifications';
 import { myRatingsForPosts, ratingsIndex, type PostRatingSummary } from './ratings';
-import { followerCounts, followingIds, hiddenUserIds, toPublicUser } from './users';
+import {
+  followerCounts,
+  followingIds,
+  hiddenUserIds,
+  isBlockedEitherWay,
+  toPublicUser,
+} from './users';
 
 /** Recently viewed posts, so a reload does not count twice. */
 const VIEW_COOKIE = 'fay_seen';
@@ -235,6 +241,13 @@ export async function toggleLike(postId: ID, userId: ID): Promise<{ liked: boole
     return { liked: false };
   }
 
+  // Taking a like back is always allowed; giving one is not, on a post that has
+  // been removed or between two people where either has blocked the other. The
+  // UI never offers it, but a request does not have to come from the UI.
+  if (post.removed || (await isBlockedEitherWay(userId, post.author_id))) {
+    return { liked: false };
+  }
+
   await store.insert('likes', {
     id: newId(),
     post_id: postId,
@@ -242,7 +255,7 @@ export async function toggleLike(postId: ID, userId: ID): Promise<{ liked: boole
     created_at: new Date().toISOString(),
   });
   const actor = await store.get('users', userId);
-  await notify({
+  await notifyOnce({
     userId: post.author_id,
     type: 'like',
     actorId: userId,
@@ -252,17 +265,27 @@ export async function toggleLike(postId: ID, userId: ID): Promise<{ liked: boole
   return { liked: true };
 }
 
+/**
+ * Adds a comment, or answers why it could not.
+ *
+ * A block in either direction stops it — with the post's author, and with the
+ * author of the comment being replied to. The comment box is not shown to
+ * somebody who is blocked, but a server action can be called without it.
+ */
 export async function addComment(
   postId: ID,
   userId: ID,
   body: string,
   parentId: ID | null = null,
-): Promise<void> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const trimmed = body.trim();
-  if (!trimmed) return;
+  if (!trimmed) return { ok: false, error: 'Write something first.' };
   const store = db();
   const post = await store.get('posts', postId);
-  if (!post || post.removed) return;
+  if (!post || post.removed) return { ok: false, error: 'That post is no longer available.' };
+  if (await isBlockedEitherWay(userId, post.author_id)) {
+    return { ok: false, error: 'You cannot comment on this post.' };
+  }
 
   // Threads stay one level deep: replying to a reply joins the same thread
   // rather than starting a deeper one.
@@ -270,6 +293,9 @@ export async function addComment(
   if (parent && (parent.post_id !== postId || parent.removed)) parent = null;
   if (parent?.parent_id) parent = await store.get('comments', parent.parent_id);
   const resolvedParent = parent && !parent.removed ? parent : null;
+  if (resolvedParent && (await isBlockedEitherWay(userId, resolvedParent.user_id))) {
+    return { ok: false, error: 'You cannot reply to this comment.' };
+  }
 
   await store.insert('comments', {
     id: newId(),
@@ -314,6 +340,7 @@ export async function addComment(
   }
 
   await notifyMentions(trimmed, userId, `${who} mentioned you in a comment`, postId);
+  return { ok: true };
 }
 
 export async function deleteComment(commentId: ID, userId: ID): Promise<void> {

@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import { CloseIcon } from '@/components/Icons';
 import { MAX_TAGS, MAX_TAG_LENGTH, addTag } from '@/lib/video/hashtags';
 
@@ -15,12 +14,25 @@ export function HashtagField({
   tags,
   onTags,
   disabled = false,
+  draft,
+  onDraft,
 }: {
   tags: string[];
   onTags: (tags: string[]) => void;
   disabled?: boolean;
+  /**
+   * The tag being typed, held by the caller so posting can include it.
+   *
+   * It used to become a chip when the field lost focus — and the thing that
+   * takes focus is usually the Post button. The first chip adds a row above
+   * the button, so it moved ~40px between pressing and releasing and the press
+   * never became a click: type one hashtag, tap Post, nothing happens. Now the
+   * draft stays put in the box, nothing moves, and Post adds it.
+   */
+  draft: string;
+  onDraft: (draft: string) => void;
 }) {
-  const [draft, setDraft] = useState('');
+  const setDraft = onDraft;
   const full = tags.length >= MAX_TAGS;
 
   function commit(raw: string) {
@@ -84,8 +96,8 @@ export function HashtagField({
               onTags(tags.slice(0, -1));
             }
           }}
-          // A tag left in the box when somebody moves on is a tag they meant.
-          onBlur={() => draft.trim() && commit(draft)}
+          // A tag left in the box is a tag they meant: it is added when the
+          // video is posted, rather than here — see `draft` above.
           className="w-full border-0 bg-transparent px-2 py-1.5 text-base focus:ring-0"
         />
       </div>

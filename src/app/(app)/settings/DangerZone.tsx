@@ -15,7 +15,7 @@ export function DangerZone({ username }: { username: string }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="text-sm text-white/40 underline hover:text-fay"
+        className="-my-3 py-3 text-sm text-white/40 underline hover:text-fay"
       >
         Delete my account
       </button>

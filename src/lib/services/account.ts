@@ -668,16 +668,3 @@ export function siteUrl(): string {
   }
   return 'http://localhost:3000';
 }
-
-/**
- * Whether email links can currently be built for a real recipient.
- *
- * Note this is only half the story, and the smaller half: Supabase builds
- * `{{ .ConfirmationURL }}` from the project's own **Site URL**, and falls back
- * to it whenever the `redirectTo` we pass is not on the dashboard's allow
- * list. So a Supabase project still configured with localhost sends localhost
- * links no matter what this app sends. See supabase/templates/README.md.
- */
-export function emailLinksLookProduction(): boolean {
-  return !/localhost|127\.0\.0\.1/.test(siteUrl());
-}

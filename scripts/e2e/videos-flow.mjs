@@ -504,6 +504,8 @@ const run = async () => {
   await C.page.goto(`/u/${b}`, { waitUntil: 'domcontentloaded' });
   await C.page.locator('button[aria-label="More options"], button', { hasText: '•••' }).first().click();
   await C.page.locator('button', { hasText: /^Block/ }).first().click();
+  // Blocking asks first now; this is the confirmation.
+  await C.page.locator('[data-confirm-block-yes]').click();
   await C.page.waitForTimeout(2000);
   await C.page.goto('/videos', { waitUntil: 'domcontentloaded' });
   await C.page.waitForTimeout(800);

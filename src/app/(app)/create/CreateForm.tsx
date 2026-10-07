@@ -5,6 +5,7 @@ import { createPostAction } from '@/app/actions';
 import { CloseIcon, ImageIcon } from '@/components/Icons';
 import { CATEGORIES, type Media } from '@/lib/types';
 import { contentTypeFor, uploadMedia } from '@/lib/video/upload-client';
+import { userFacingError } from '@/lib/user-facing-error';
 
 export function CreateForm({
   /**
@@ -46,7 +47,7 @@ export function CreateForm({
           });
           setMedia((current) => [...current, uploaded]);
         } catch (failure) {
-          setUploadError(failure instanceof Error ? failure.message : 'Upload failed.');
+          setUploadError(userFacingError(failure, 'That upload did not go through. Try again.'));
         }
       }
     } finally {

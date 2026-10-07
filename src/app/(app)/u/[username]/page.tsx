@@ -364,7 +364,7 @@ export default async function ProfilePage({
             {blocked ? (
               <EmptyState
                 title="This profile is hidden"
-                body="You and this person have blocked each other, so posts are not shown."
+                body="One of you has blocked the other, so posts are not shown."
               />
             ) : tab === 'about' ? (
               <section className="card p-6">

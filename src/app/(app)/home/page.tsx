@@ -155,7 +155,7 @@ export default async function HomePage({
             ) : active === 'discover' ? (
               <EmptyState
                 title="Nothing to discover yet"
-                body="Rated posts show up here as the community weighs in. Post something and it could be the first."
+                body="When people start posting, the best of it shows up here. Post something and it could be the first."
                 cta={{ href: '/create', label: 'Create a post' }}
               />
             ) : (

@@ -223,6 +223,7 @@ export function PostCard({
         <MediaStrip
           media={data.media}
           postId={data.id}
+          author={data.author.username}
           warned={data.contentWarning === true}
           videoViews={videoViews}
           onVideoViews={setVideoViews}
@@ -344,12 +345,15 @@ export function PostCard({
 function MediaStrip({
   media,
   postId,
+  author,
   warned,
   videoViews = 0,
   onVideoViews,
 }: {
   media: Media[];
   postId: string;
+  /** Whose post, so a screen reader can say whose photo it is. */
+  author: string;
   warned: boolean;
   /** The watch count as the server rendered it, handed to the player. */
   videoViews?: number;
@@ -402,7 +406,11 @@ function MediaStrip({
               <div className="relative aspect-[4/5] max-h-[68vh] w-full overflow-hidden rounded-2xl bg-ink-850">
                 <Image
                   src={item.url}
-                  alt=""
+                  alt={
+                    media.length > 1
+                      ? `Photo ${i + 1} of ${media.length} by @${author}`
+                      : `Photo by @${author}`
+                  }
                   fill
                   sizes="(max-width: 640px) 100vw, (max-width: 1024px) 640px, 600px"
                   // The first card is usually on screen before anything is

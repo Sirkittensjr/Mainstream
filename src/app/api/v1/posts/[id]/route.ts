@@ -1,6 +1,7 @@
 import { apiError, json, serialisePost } from '@/lib/api';
 import { underReview } from '@/lib/auto-review-rules';
 import { getPost, hydratePosts, listComments } from '@/lib/services/posts';
+import { hiddenUserIds } from '@/lib/services/users';
 import { getViewer } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
@@ -15,6 +16,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   // from a direct link: an endpoint that still serves it makes the hide
   // decorative. The author and an admin are the two who need to see it.
   if (underReview(post) && viewer?.id !== post.author_id && viewer?.role !== 'admin') {
+    return apiError('Not found', 404);
+  }
+  // The same rule as the post page: a block in either direction hides it.
+  if ((await hiddenUserIds(viewer?.id ?? null)).has(post.author_id)) {
     return apiError('Not found', 404);
   }
 

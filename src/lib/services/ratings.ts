@@ -230,13 +230,6 @@ function emptyUser(): UserRatingSummary {
   };
 }
 
-export async function postRating(postId: ID): Promise<PostRatingSummary> {
-  const index = await ratingsIndex();
-  return (
-    index.posts.get(postId) ?? { rating: null, votes: 0, weightedVotes: 0, score: 0, reactions: [] }
-  );
-}
-
 export async function userRating(userId: ID): Promise<UserRatingSummary> {
   const index = await ratingsIndex();
   return index.users.get(userId) ?? emptyUser();
@@ -352,18 +345,33 @@ export async function submitRating(input: SubmitRatingInput): Promise<SubmitResu
     return { ok: true, score, updated: true };
   }
 
-  await store.insert('ratings', {
-    id: newId(),
-    rater_id: rater.id,
-    target_type: input.targetType,
-    target_id: input.targetId,
-    owner_id: ownerId,
-    score,
-    reactions,
-    weight,
-    created_at: nowIso,
-    updated_at: nowIso,
-  });
+  try {
+    await store.insert('ratings', {
+      id: newId(),
+      rater_id: rater.id,
+      target_type: input.targetType,
+      target_id: input.targetId,
+      owner_id: ownerId,
+      score,
+      reactions,
+      weight,
+      created_at: nowIso,
+      updated_at: nowIso,
+    });
+  } catch (error) {
+    // Two requests at once — a double tap — can both find no rating and both
+    // insert. The database's unique (rater, target) refuses the second, which
+    // is the rule working: the rating it lost to is updated instead of the tap
+    // failing.
+    const raced = (
+      await store.query('ratings', {
+        where: { rater_id: rater.id, target_type: input.targetType, target_id: input.targetId },
+      })
+    )[0];
+    if (!raced) throw error;
+    await store.update('ratings', raced.id, { score, reactions, weight, updated_at: nowIso });
+    return { ok: true, score, updated: true };
+  }
 
   await notify({
     userId: ownerId,

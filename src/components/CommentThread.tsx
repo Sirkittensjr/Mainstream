@@ -99,6 +99,7 @@ function CommentRow({
   onError: (message: string | null) => void;
 }) {
   const [replying, setReplying] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [pending, startTransition] = useTransition();
   const router = useRouter();
 
@@ -128,30 +129,54 @@ function CommentRow({
         </p>
 
         <div className="mt-1 flex items-center gap-3">
-          {viewer && (
+          {viewer && !confirmingDelete && (
             <button
               type="button"
               onClick={() => setReplying((open) => !open)}
-              className="text-xs font-semibold text-white/35 transition hover:text-fay"
+              // Padded out to a thumb's worth of target without moving the text.
+              className="-mx-2 -my-1.5 px-2 py-1.5 text-xs font-semibold text-white/35 transition hover:text-fay"
             >
               {replying ? 'Cancel' : 'Reply'}
             </button>
           )}
-          {comment.mine && (
-            <button
-              type="button"
-              disabled={pending}
-              onClick={() =>
-                startTransition(async () => {
-                  await deleteCommentAction(comment.id, postId);
-                  router.refresh();
-                })
-              }
-              className="text-xs text-white/30 transition hover:text-fay"
-            >
-              Delete
-            </button>
-          )}
+          {comment.mine &&
+            (confirmingDelete ? (
+              // A comment cannot be brought back, and Delete sat a few pixels
+              // from Reply — so the first tap asks.
+              <span className="flex items-center gap-1 text-xs" data-comment-confirm-delete>
+                <span className="text-white/55">Delete this comment?</span>
+                <button
+                  type="button"
+                  onClick={() => setConfirmingDelete(false)}
+                  className="px-2 py-1.5 font-semibold text-white/60"
+                >
+                  No
+                </button>
+                <button
+                  type="button"
+                  disabled={pending}
+                  onClick={() =>
+                    startTransition(async () => {
+                      await deleteCommentAction(comment.id, postId);
+                      setConfirmingDelete(false);
+                      router.refresh();
+                    })
+                  }
+                  className="px-2 py-1.5 font-semibold text-fay"
+                >
+                  {pending ? 'Deleting…' : 'Yes, delete'}
+                </button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirmingDelete(true)}
+                data-comment-delete
+                className="-mx-2 -my-1.5 px-2 py-1.5 text-xs text-white/30 transition hover:text-fay"
+              >
+                Delete
+              </button>
+            ))}
         </div>
 
         {replying && viewer && (

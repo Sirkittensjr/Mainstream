@@ -144,9 +144,6 @@ export function survivesWithout(
   return false;
 }
 
-/** The longest a body may be for a given kind. */
-export const bodyLimit = (kind: TextKind): number => TEXT_LIMITS[kind].body;
-
 /**
  * A text post as it will be stored, clamped to its own kind's limits.
  *

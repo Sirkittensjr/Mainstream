@@ -38,6 +38,9 @@ export async function search(query: string, viewerId: ID | null): Promise<Search
     .filter(
       (post) =>
         post.caption.toLowerCase().includes(needle) ||
+        // A Story Message's title is its words too, and usually the ones
+        // somebody remembers it by.
+        (post.text_title ?? '').toLowerCase().includes(needle) ||
         post.tags.some((tag) => tag.toLowerCase().includes(needle)) ||
         post.category.toLowerCase() === needle,
     )

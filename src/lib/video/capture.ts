@@ -39,9 +39,13 @@ export function settleDuration(video: HTMLVideoElement, timeoutMs = 4000): Promi
     };
     const onChange = () => {
       if (!Number.isFinite(video.duration)) return;
-      // Back to the start: the seek below leaves it parked at the end.
+      // Back to the start: the seek below leaves it parked at the end. And
+      // only finished once that seek has LANDED — `currentTime` reads 0 the
+      // moment it is asked for, while the element is still at the end, so
+      // anything that played it next started at the end and played nothing.
+      video.removeEventListener('durationchange', onChange);
+      video.addEventListener('seeked', () => finish(true), { once: true });
       video.currentTime = 0;
-      finish(true);
     };
     video.addEventListener('durationchange', onChange);
     const timer = window.setTimeout(() => finish(false), timeoutMs);
@@ -53,8 +57,20 @@ export function settleDuration(video: HTMLVideoElement, timeoutMs = 4000): Promi
   });
 }
 
-/** A hidden <video> holding this source, once its metadata has arrived. */
-export function loadVideo(src: string): Promise<HTMLVideoElement> {
+/**
+ * A hidden <video> holding this source, once its metadata has arrived.
+ *
+ * By default it also insists on a real duration, which is right when a file is
+ * being measured — a clip of unknown length cannot be budgeted. The render
+ * passes `needDuration: false`: it already knows every clip's length from when
+ * the clip was added, and failing a whole post because the browser was slow to
+ * re-read a recording's length mid-render (measured: past 4s, right after the
+ * previous clip, on a busy machine) lost somebody their video for nothing.
+ */
+export function loadVideo(
+  src: string,
+  { settleMs = 4000, needDuration = true }: { settleMs?: number; needDuration?: boolean } = {},
+): Promise<HTMLVideoElement> {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video');
     video.preload = 'metadata';
@@ -62,12 +78,20 @@ export function loadVideo(src: string): Promise<HTMLVideoElement> {
     video.crossOrigin = 'anonymous';
     video.src = src;
 
-    const fail = () => reject(new Error('That video could not be opened. Try a different file.'));
+    const fail = () => {
+      // Let the element go: a page can only hold so many media players, fewer
+      // on a phone, and one that failed to open was still holding a slot.
+      video.removeAttribute('src');
+      video.load();
+      reject(new Error('That video could not be opened. Try a different file.'));
+    };
     video.addEventListener('error', fail, { once: true });
     video.addEventListener(
       'loadedmetadata',
       () => {
-        void settleDuration(video).then((ok) => (ok ? resolve(video) : fail()));
+        void settleDuration(video, settleMs).then((ok) =>
+          ok || !needDuration ? resolve(video) : fail(),
+        );
       },
       { once: true },
     );
@@ -89,8 +113,13 @@ export async function probeLocalVideo(src: string): Promise<LocalVideoFacts> {
 /** Puts a video element on an exact frame, and waits until it is really there. */
 export function seekTo(video: HTMLVideoElement, time: number): Promise<void> {
   return new Promise((resolve) => {
-    const target = Math.max(0, Math.min(time, Math.max(0, video.duration - 0.05)));
-    if (Math.abs(video.currentTime - target) < 0.01 && video.readyState >= 2) {
+    // An element still unsure of its length reports Infinity or NaN; neither is
+    // a limit, and NaN would make the seek itself throw.
+    const limit = Number.isFinite(video.duration) ? Math.max(0, video.duration - 0.05) : time;
+    const target = Math.max(0, Math.min(time, limit));
+    // Not while a seek is still under way: `currentTime` already reports where
+    // it is going, not where the element is.
+    if (!video.seeking && Math.abs(video.currentTime - target) < 0.01 && video.readyState >= 2) {
       resolve();
       return;
     }

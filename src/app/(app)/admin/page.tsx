@@ -295,7 +295,7 @@ export default async function AdminPage({
                 No reports in this view. Quiet is good.
               </p>
             ) : (
-              <ul className="space-y-3">
+              <ul className="space-y-3" data-admin-reports>
                 {reports.map((entry) => (
                   <li key={entry.report.id} className="card p-5">
                     <div className="flex flex-wrap items-center gap-2 text-xs">

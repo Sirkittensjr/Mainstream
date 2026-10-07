@@ -86,11 +86,6 @@ function sameSignature(a: string, b: string): boolean {
  */
 const attempts = new Map<ID, number>();
 
-/** Test seam. */
-export function resetAdminAttempts(): void {
-  attempts.clear();
-}
-
 export type StepUpResult = { ok: true; cooldownSeconds: number } | { ok: false; error: string };
 
 /**

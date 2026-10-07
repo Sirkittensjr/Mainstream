@@ -58,10 +58,13 @@ import {
 } from '@/lib/video/limits';
 import { recordedFile } from '@/lib/video/recording';
 import { canRender, renderClips } from '@/lib/video/render';
-import { UploadError, contentTypeFor, discardMedia, uploadMedia } from '@/lib/video/upload-client';
+import { userFacingError } from '@/lib/user-facing-error';
+import { contentTypeFor, discardMedia, uploadMedia } from '@/lib/video/upload-client';
 import { ClipEditor } from './ClipEditor';
 import { ClipPlayer, type ClipPlayerHandle } from './ClipPlayer';
+import { useLeaveGuard } from './useLeaveGuard';
 import { HashtagField } from './HashtagField';
+import { addTag } from '@/lib/video/hashtags';
 import { CoverPicker } from './CoverPicker';
 import { VideoEditor, type EditorTool } from './VideoEditor';
 import { VideoText } from './VideoText';
@@ -318,10 +321,17 @@ export function VideoStudio({
   const [category, setCategory] = useState<Category>('Life');
   /** Hashtags, as tags. Collected and sent as a list, never appended to the caption. */
   const [tags, setTags] = useState<string[]>([]);
+  /** A hashtag still being typed. Posting includes it. */
+  const [tagDraft, setTagDraft] = useState('');
   const [contentWarning, setContentWarning] = useState(false);
   /** Whether the folded-away fields are showing. Phones only; always open at sm+. */
   const [showMore, setShowMore] = useState(false);
   const [posting, setPosting] = useState(false);
+  // The clips exist only in this tab until they are posted.
+  useLeaveGuard(
+    clips.length > 0 && !posting,
+    'Leave without posting? Your video and its edits will be lost.',
+  );
 
   const cancelled = useRef<AbortController | null>(null);
 
@@ -559,10 +569,9 @@ export function VideoStudio({
     } catch (problem) {
       // Cancelled: back in the editor exactly as it was, which is the answer.
       if (!controller.signal.aborted) {
+        console.error('[faytarra] the render failed', problem);
         setEditProblem(
-          problem instanceof Error && problem.message
-            ? `The video could not be put together: ${problem.message}`
-            : 'The video could not be put together. Try again.',
+          userFacingError(problem, 'The video could not be put together. Try Next again.'),
         );
       }
     } finally {
@@ -695,7 +704,8 @@ export function VideoStudio({
         // search and the post page all already show.
         caption: postCaption(title, caption),
         category,
-        tags,
+        // Including a tag still being typed in the box — it was meant.
+        tags: tagDraft.trim() ? addTag(tags, tagDraft) : tags,
         contentWarning,
       });
       if (result?.error) {
@@ -717,10 +727,12 @@ export function VideoStudio({
       if ((failure as DOMException)?.name === 'AbortError') {
         setError(null);
       } else {
+        console.error('[faytarra] posting the video failed', failure);
         setError(
-          failure instanceof UploadError || failure instanceof Error
-            ? failure.message
-            : 'The post did not go through.',
+          userFacingError(
+            failure,
+            'The post did not go through. Your video is still here — try Post again.',
+          ),
         );
       }
     } finally {
@@ -1249,7 +1261,13 @@ export function VideoStudio({
           They are one of the five things this screen is for — video, title,
           hashtags, cover, content warning — and they are the one that decides
           whether anybody who is not already following finds the video. */}
-      <HashtagField tags={tags} onTags={setTags} disabled={posting} />
+      <HashtagField
+        tags={tags}
+        onTags={setTags}
+        draft={tagDraft}
+        onDraft={setTagDraft}
+        disabled={posting}
+      />
 
       {/* Everything else is folded away on a phone and open on a desktop.
           Nothing is removed — a mobile creator can still write a description,

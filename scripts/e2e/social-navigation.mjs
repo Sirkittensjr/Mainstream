@@ -253,6 +253,8 @@ const run = async () => {
   await A.page.goto(`/u/${dH}`, { waitUntil: 'domcontentloaded' });
   await A.page.locator('button[aria-label="More options"]').first().click();
   await A.page.locator('button', { hasText: new RegExp(`^Block @${dH}$`) }).first().click();
+  // Blocking asks first; confirm it.
+  await A.page.locator('[data-confirm-block-yes]').click();
   await A.page.waitForTimeout(2000);
 
   await A.page.goto('/notifications', { waitUntil: 'domcontentloaded' });

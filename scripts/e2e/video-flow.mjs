@@ -179,9 +179,10 @@ const run = async () => {
   await addClip(A.page, 'square.webm');
   check('4. several clips can be added', (await clipCount(A.page)) === 3, `${await clipCount(A.page)} clips`);
 
-  // 2 + 3. Record with a microphone, twice. Stopping now shows the take back
-  // rather than committing it, so each one is kept with "Film another" — which
-  // is the multi-clip path this suite is exercising.
+  // 2 + 3. Record with a microphone, twice. Since ef10b48 the camera stays
+  // open between takes — stopping keeps the take and hands straight back to
+  // "Start recording" — so there is no watch-back screen to wait for any more.
+  // Each take is checked by the camera coming back ready for the next.
   await A.page.locator('button', { hasText: 'Record video' }).click();
   await A.page.waitForSelector('button[aria-label="Start recording"]', { timeout: 20000 });
   check('2. the camera opens and asks for permission', true);
@@ -190,11 +191,8 @@ const run = async () => {
     await A.page.waitForSelector('button[aria-label="Stop recording"]', { timeout: 10000 });
     await A.page.waitForTimeout(2200);
     await A.page.locator('button[aria-label="Stop recording"]').click();
-    await A.page.waitForSelector('video[data-recorder-playback]', { timeout: 10000 });
-    check(`3. take ${take} can be watched back before it is kept`, true);
-    await A.page.locator('button', { hasText: 'Another' }).click();
     await A.page.waitForSelector('button[aria-label="Start recording"]', { timeout: 20000 });
-    check(`3. take ${take} kept, and the camera came back for the next one`, true);
+    check(`3. take ${take} kept, and the camera stayed open for the next one`, true);
   }
   await A.page.locator('button[aria-label="Close the camera"]').click();
   await A.page.waitForTimeout(600);

@@ -27,7 +27,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <div className="mx-auto flex w-full max-w-[1400px]">
       <Sidebar user={navUser} />
-      <div className="min-w-0 flex-1 pb-24 lg:pb-8">
+      {/* Clears the bottom navigation, which grows by the home-indicator inset
+          on an iPhone — a fixed pb-24 left the last item 2px from under it. */}
+      <div className="min-w-0 flex-1 pb-[calc(5.5rem+env(safe-area-inset-bottom))] lg:pb-8">
         {viewer?.status === 'suspended' && (
           <div className="border-b border-fay/30 bg-fay/10 px-4 py-3 text-sm text-fay-soft">
             Your account is suspended

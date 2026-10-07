@@ -239,16 +239,38 @@ export async function renderClips(clips: Clip[], options: RenderOptions = {}): P
   };
 
   try {
+    // EVERY CLIP IS OPENED BEFORE RECORDING STARTS. A recording with no
+    // duration in its header — every MediaRecorder file, so every camera clip
+    // on Chrome and Android — has to be read to its end before it will seek and
+    // play reliably. Done here, on an idle page, that is quick; done between
+    // clips, with the encoder running, it was measured taking past the time
+    // allowed, and the post failed. A clip that cannot be opened at all is said
+    // plainly, by number, rather than dropped from the video.
+    const prepared: HTMLVideoElement[] = [];
+    for (const [index, clip] of clips.entries()) {
+      options.signal?.throwIfAborted();
+      try {
+        const video = await loadVideo(clip.src, { settleMs: 15000 });
+        prepared.push(video);
+        opened.push(video);
+      } catch {
+        throw new Error(
+          clips.length > 1
+            ? `Clip ${index + 1} could not be read. Remove it and add it again, then try once more.`
+            : 'The video could not be read. Try choosing or recording it again.',
+        );
+      }
+    }
+
     recorder.start(1000);
-    // Nothing is playing yet: the first clip still has to be fetched and seeked.
+    // Nothing is playing yet: the first clip still has to be seeked.
     recording.hold();
     let produced = 0;
 
     for (const [index, clip] of clips.entries()) {
       options.signal?.throwIfAborted();
 
-      const video = await loadVideo(clip.src);
-      opened.push(video);
+      const video = prepared[index];
       video.muted = false;
       video.volume = 1;
 
@@ -272,11 +294,14 @@ export async function renderClips(clips: Clip[], options: RenderOptions = {}): P
       await seekTo(video, clip.trimStart);
       const length = clipDuration(clip);
       const startedAt = produced;
+      /** Frames this clip actually put into the output. */
+      let delivered = 0;
 
       await playInto(
         video,
         clip,
         (frames) => {
+          delivered += frames;
           // Drawn once however many frames it is worth: the picture has not
           // changed between them, and `drawImage` into a 1080x1920 canvas is the
           // expensive part of this loop.
@@ -294,6 +319,18 @@ export async function renderClips(clips: Clip[], options: RenderOptions = {}): P
         options.signal,
       );
       recording.hold();
+
+      // A clip that played back next to nothing has not made it into the
+      // video. Posting it anyway is a video with a clip missing and nobody told
+      // — so it stops here instead. Half is far outside the pacing's own
+      // spread (measured 85-113% of length across runs).
+      if (delivered < Math.round(length * OUTPUT_FPS) * 0.5) {
+        throw new Error(
+          clips.length > 1
+            ? `Clip ${index + 1} did not play back, so the video was not finished. Try again — if it keeps happening, remove that clip and add it again.`
+            : 'The video did not play back, so it was not finished. Try again.',
+        );
+      }
 
       produced = startedAt + length;
       video.pause();

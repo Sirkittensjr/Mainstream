@@ -200,10 +200,10 @@ export default async function LandingPage() {
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 text-sm text-white/35">
           <Logo small />
           <div className="flex flex-wrap gap-4">
-            <Link href="/discover" className="hover:text-white">
+            <Link href="/discover" className="-my-3 py-3 hover:text-white">
               Discover
             </Link>
-            <Link href="/rules" className="hover:text-white">
+            <Link href="/rules" className="-my-3 py-3 hover:text-white">
               Community rules
             </Link>
           </div>

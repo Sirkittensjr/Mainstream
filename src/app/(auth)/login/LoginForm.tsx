@@ -30,7 +30,7 @@ export function LoginForm({ next, error }: { next: string; error?: string }) {
           <label className="label" htmlFor="password">
             Password
           </label>
-          <Link href="/forgot-password" className="text-xs text-fay hover:underline">
+          <Link href="/forgot-password" className="-my-3 -mr-2 px-2 py-3 text-xs text-fay hover:underline">
             Forgot it?
           </Link>
         </div>
