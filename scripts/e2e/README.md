@@ -720,6 +720,30 @@ sits a little higher in the editor than in the finished video, where it is drawn
 over the whole frame. The posting screen and the post itself both use the full-frame
 variant, so the faithful preview is the last thing seen before posting.
 
+### 4f. The finished video, frame by frame — `render-output-flow.mjs`
+
+Renders real projects through the real `renderClips` (bundled with esbuild straight
+from `src/lib/video/render.ts`, so no server is needed) and reads the result back.
+The sources are filmed in the page at 1080x1920, full of grain like camera
+footage, each frame carrying its clip and frame number as a barcode and each clip
+its own tone; every source is checked to keep up with its own clock, and filmed
+again if a busy machine dropped frames. Two projects: two untrimmed clips, and
+three trimmed clips at levels 1, 0.5 and muted. It asserts the recorder is asked
+for 10 Mb/s video and 128 kb/s audio at 1080x1920; no black frame; every clip
+starts on its in-point and plays to its out-point, in order, for its kept length;
+no freeze and no gap in the sound at a join, and the sound changes with the
+picture; each clip at its own level; the picture runs to the end with the sound;
+and the video is as long as the project.
+
+Against the render before this suite it fails on the cut-off clip ends, the
+frozen last 0.35s and the bitrate. A flat test picture does NOT reproduce the
+stall at the start of each clip — it decodes too fast — which is why the sources
+are grainy.
+
+```bash
+CHROMIUM_PATH=/opt/pw-browsers/chromium node scripts/e2e/render-output-flow.mjs
+```
+
 ### 4e. The selected clip is the clip on screen — `editor-clip-sync-flow.mjs`
 
 Found on an iPhone: Clip 3 highlighted, the Trim panel saying "Clip 3 of 3", and
