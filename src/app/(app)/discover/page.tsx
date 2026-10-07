@@ -346,7 +346,7 @@ async function PeopleTab({
           section is what lets the ranking stay strict without Discover looking
           abandoned on a young platform. */}
       {newcomers.length > 0 && (
-        <section className="pb-10">
+        <section id="new" className="scroll-mt-6 pb-10">
           <h2 className="font-display text-2xl font-extrabold tracking-tight">
             {rows.length === 0 ? 'People on FayTarra' : 'New here'}
           </h2>

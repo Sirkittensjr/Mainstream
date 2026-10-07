@@ -83,6 +83,27 @@ export async function getUserStats(userId: ID): Promise<UserStats> {
   };
 }
 
+/**
+ * The three numbers a profile card shows: posts, followers, following.
+ *
+ * `getUserStats` also reads every like on every one of the person's posts,
+ * which the profile page wants and a card shown beside every page does not.
+ * Two of these come out of counts the platform already keeps for everybody;
+ * only the following count reads this person's own rows.
+ */
+export async function profileCounts(
+  userId: ID,
+): Promise<{ posts: number; followers: number; following: number }> {
+  const [followers, following, posts] = await Promise.all([
+    allFollowerCounts().then((entries) => new Map(entries).get(userId) ?? 0),
+    db()
+      .query('follows', { where: { follower_id: userId } })
+      .then((rows) => rows.length),
+    postCountsByAuthor().then((entries) => new Map(entries).get(userId) ?? 0),
+  ]);
+  return { posts, followers, following };
+}
+
 export async function followerCounts(userIds: ID[]): Promise<Map<ID, number>> {
   if (userIds.length === 0) return new Map();
   const all = new Map(await allFollowerCounts());

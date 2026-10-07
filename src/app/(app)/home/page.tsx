@@ -83,17 +83,18 @@ export default async function HomePage({
   return (
     <>
       <PageTopBar />
-      <div className="mx-auto max-w-2xl px-4 pt-4 lg:pt-8">
-        <div className="mb-5 hidden lg:block">
-          <h1 className="font-display text-3xl font-extrabold tracking-tight">{TITLES[active]}</h1>
-          <p className="mt-1 text-white/45">{BLURBS[active]}</p>
-        </div>
+      {/* Wider on a desktop than the 672px it was: the centre column is the
+          point of the page, and photos and videos are most of what is in it. */}
+      <div className="mx-auto max-w-2xl px-4 pt-4 lg:max-w-[768px] lg:px-6 lg:pt-6 2xl:max-w-[808px]">
+        <h1 className="sr-only">{TITLES[active]}</h1>
 
         {/* Three tabs, and the one you are on is filled in. Scrollable rather
             than wrapped, so nothing reflows on a narrow phone. */}
+        {/* On a phone, three chips. On a desktop, one bar across the column
+            that stays at the top while the feed scrolls under it. */}
         <nav
           aria-label="Feed"
-          className="hide-scrollbar mb-4 flex gap-2 overflow-x-auto"
+          className="hide-scrollbar mb-4 flex gap-2 overflow-x-auto lg:sticky lg:top-3 lg:z-20 lg:mb-2 lg:gap-1 lg:rounded-2xl lg:border lg:border-white/[0.07] lg:bg-ink-950/85 lg:p-1.5 lg:shadow-card lg:backdrop-blur-xl"
         >
           {(viewer ? TABS : TABS.filter((entry) => entry !== 'following')).map((entry) => (
             // Plain anchors for the same reason the profile's shelf tabs are:
@@ -109,19 +110,42 @@ export default async function HomePage({
               href={entry === 'following' ? '/home' : `/home?tab=${entry}`}
               aria-current={entry === active ? 'page' : undefined}
               data-feed-tab={entry}
-              className={`chip shrink-0 capitalize ${
-                entry === active ? 'chip-active' : 'hover:bg-white/10'
+              className={`chip relative shrink-0 capitalize lg:flex-1 lg:justify-center lg:rounded-xl lg:border-transparent lg:py-2.5 lg:text-[15px] lg:font-semibold ${
+                entry === active
+                  ? 'chip-active lg:bg-white/[0.09] lg:text-white'
+                  : 'hover:bg-white/10 lg:bg-transparent lg:text-white/50 lg:hover:bg-white/[0.05] lg:hover:text-white'
               }`}
             >
               {entry}
+              {entry === active && (
+                <span
+                  aria-hidden
+                  className="absolute inset-x-6 -bottom-px hidden h-[3px] rounded-full lg:block"
+                  style={{ backgroundImage: 'linear-gradient(90deg,#7C5CFF,#FF3D9A 55%,#FFB443)' }}
+                />
+              )}
             </a>
           ))}
           {active === 'discover' && (
-            <Link href="/discover" className="chip shrink-0 text-white/50 hover:bg-white/10">
+            <Link
+              href="/discover"
+              className="chip shrink-0 text-white/50 hover:bg-white/10 lg:hidden"
+            >
               Boards and people
             </Link>
           )}
         </nav>
+        <p className="mb-4 hidden px-1 text-[13px] text-white/40 lg:block">
+          {BLURBS[active]}
+          {active === 'discover' && (
+            <>
+              {' '}
+              <Link href="/discover" className="text-white/60 underline hover:text-white">
+                Boards and people
+              </Link>
+            </>
+          )}
+        </p>
 
         {/* The general way in to posting, above the feed. The `+` in the bottom
             navigation is still the fast, dedicated path to the camera; this is

@@ -25,7 +25,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     : null;
 
   return (
-    <div className="mx-auto flex w-full max-w-[1400px]">
+    // Three columns on a desktop: navigation, the page, and the rail. The frame
+    // stops growing at 1480px so a wide monitor gets margins rather than a
+    // feed stretched past reading width.
+    <div className="mx-auto flex w-full max-w-[1480px]">
       <Sidebar user={navUser} />
       {/* Clears the bottom navigation, which grows by the home-indicator inset
           on an iPhone — a fixed pb-24 left the last item 2px from under it. */}

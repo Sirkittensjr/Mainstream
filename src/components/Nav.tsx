@@ -5,13 +5,13 @@ import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { formatUnread } from '@/lib/format';
 import { AccountMenu } from './AccountMenu';
+import { CreatePostMenu } from './CreatePostMenu';
 import {
   BellIcon,
   MailIcon,
   CompassIcon,
   HomeIcon,
   PlusIcon,
-  RecordIcon,
   ReelIcon,
   SearchIcon,
   ShieldIcon,
@@ -126,67 +126,92 @@ function NavTab({
   );
 }
 
-/** Desktop sidebar. */
+/**
+ * Desktop sidebar.
+ *
+ * Where you can go, then the one thing you can make — a single Create rather
+ * than separate "New post" and "Record" items, opening every kind there is —
+ * then where things come to you. You are at the bottom.
+ */
 export function Sidebar({ user }: { user: NavUser | null }) {
   const pathname = usePathname();
-  const items = [
+  const browse = [
     { href: '/home', label: 'Home', icon: HomeIcon as typeof HomeIcon },
     { href: '/videos', label: 'Videos', icon: ReelIcon },
     { href: '/discover', label: 'Discover', icon: CompassIcon },
-    { href: '/create', label: 'New post', icon: PlusIcon },
-    { href: '/create/video', label: 'Record', icon: RecordIcon },
-    { href: '/search', label: 'Search', icon: SearchIcon },
+  ];
+  const inbox = [
+    { href: '/search', label: 'Search', icon: SearchIcon as typeof HomeIcon },
     { href: '/messages', label: 'Messages', icon: MailIcon },
     { href: '/notifications', label: 'Notifications', icon: BellIcon },
   ];
-  if (user?.isAdmin) items.push({ href: '/admin', label: 'Admin', icon: ShieldIcon });
+  if (user?.isAdmin) inbox.push({ href: '/admin', label: 'Admin', icon: ShieldIcon });
+
+  const item = (entry: (typeof browse)[number]) => {
+    const active = isActive(pathname, entry.href);
+    return (
+      <li key={entry.href}>
+        <Link
+          href={entry.href}
+          aria-current={active ? 'page' : undefined}
+          className={`relative flex items-center gap-3.5 rounded-2xl px-3.5 py-2.5 text-[15px] font-medium transition ${
+            active
+              ? 'bg-white/[0.08] font-semibold text-white'
+              : 'text-white/60 hover:bg-white/[0.04] hover:text-white'
+          }`}
+        >
+          {active && (
+            <span
+              aria-hidden
+              className="absolute inset-y-2 left-0 w-[3px] rounded-full"
+              style={{ backgroundImage: 'linear-gradient(180deg,#7C5CFF,#FF3D9A 55%,#FFB443)' }}
+            />
+          )}
+          <span className={active ? 'text-fay' : ''}>
+            <entry.icon />
+          </span>
+          {entry.label}
+          {entry.href === '/notifications' && user && user.unread > 0 && (
+            <span className="ml-auto rounded-full bg-fay px-2 py-0.5 text-[11px] font-bold text-ink-950">
+              {formatUnread(user.unread)}
+            </span>
+          )}
+          {entry.href === '/messages' && user && user.unreadMessages > 0 && (
+            <span
+              aria-label={`${user.unreadMessages} unread`}
+              className="ml-auto rounded-full bg-fay px-2 py-0.5 text-[11px] font-bold text-ink-950"
+            >
+              {formatUnread(user.unreadMessages)}
+            </span>
+          )}
+        </Link>
+      </li>
+    );
+  };
 
   return (
-    <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-white/[0.06] px-4 py-6 lg:flex xl:w-72">
-      <Link href="/home" className="mb-8 flex items-center gap-2 px-3">
+    <aside
+      data-sidebar
+      className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col overflow-y-auto border-r border-white/[0.06] px-3 py-6 lg:flex xl:w-[248px] 2xl:w-[272px] 2xl:px-4"
+    >
+      <Link href="/home" className="mb-7 flex items-center gap-2 px-3.5">
         <Logo />
       </Link>
-      <ul className="space-y-1">
-        {items.map((item) => {
-          const active = isActive(pathname, item.href);
-          return (
-            <li key={item.href}>
-              <Link
-                href={item.href}
-                className={`flex items-center gap-3 rounded-2xl px-3 py-2.5 text-[15px] font-medium transition ${
-                  active ? 'bg-white/[0.08] text-white' : 'text-white/55 hover:bg-white/[0.04] hover:text-white'
-                }`}
-              >
-                <span className={active ? 'text-fay' : ''}>
-                  <item.icon />
-                </span>
-                {item.label}
-                {item.href === '/notifications' && user && user.unread > 0 && (
-                  <span className="ml-auto rounded-full bg-fay px-2 py-0.5 text-[11px] font-bold text-ink-950">
-                    {formatUnread(user.unread)}
-                  </span>
-                )}
-                {item.href === '/messages' && user && user.unreadMessages > 0 && (
-                  <span
-                    aria-label={`${user.unreadMessages} unread`}
-                    className="ml-auto rounded-full bg-fay px-2 py-0.5 text-[11px] font-bold text-ink-950"
-                  >
-                    {formatUnread(user.unreadMessages)}
-                  </span>
-                )}
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
+      <ul className="space-y-1">{browse.map(item)}</ul>
 
-      <div className="mt-6">
-        <Link href={user ? '/create' : '/login?next=/create'} className="btn-primary w-full">
-          <PlusIcon width={18} height={18} strokeWidth={2.4} /> Create
-        </Link>
+      <div className="my-4 px-0.5">
+        {user ? (
+          <CreatePostMenu variant="sidebar" />
+        ) : (
+          <Link href="/login?next=/create" className="btn-primary w-full py-3 text-[15px]">
+            <PlusIcon width={19} height={19} strokeWidth={2.4} /> Create
+          </Link>
+        )}
       </div>
 
-      <div className="mt-auto">
+      <ul className="space-y-1">{inbox.map(item)}</ul>
+
+      <div className="mt-auto pt-6">
         {user ? (
           <AccountMenu user={user} placement="sidebar" />
         ) : (

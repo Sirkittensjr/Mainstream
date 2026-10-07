@@ -13,7 +13,7 @@ export function PostList({
 }) {
   if (posts.length === 0) return <>{empty ?? null}</>;
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 lg:space-y-5">
       {posts.map((post) => (
         <PostCard key={post.post.id} data={toCardData(post)} viewerId={viewerId} />
       ))}
