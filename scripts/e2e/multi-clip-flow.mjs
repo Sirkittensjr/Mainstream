@@ -984,6 +984,93 @@ async function run() {
     (await page.locator('[data-editor-fullscreen]').count()) === 1,
   );
 
+  // BACK ASKS TOO. Back is a retake — it reopens the camera and drops the LAST
+  // take so it can be filmed again — and it used to do that on the tap, with no
+  // question, which is the same loss Delete now asks about.
+  await page.locator('[data-editor-add-clip]').click();
+  await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 20000 });
+  await record(page, 2);
+  await page.locator('[data-camera-next]').click();
+  await page.waitForSelector('[data-editor-fullscreen]', { timeout: 20000 });
+  const withRetakeable = await page.locator('[data-editor-clip]').count();
+  const lengthBeforeBack = Number(await page.locator('[data-editor-timeline]').getAttribute('max'));
+
+  await page.locator('[data-editor-retake]').click();
+  await wait(300);
+  check(
+    'Back asks before it discards anything',
+    (await page.locator('[data-editor-confirm-retake]').count()) === 1 &&
+      (await page.locator('[data-editor-fullscreen]').count()) === 1,
+  );
+  const backQuestion = (await page.locator('[data-editor-confirm-retake]').innerText()).replace(
+    /\n/g,
+    ' ',
+  );
+  check(
+    'and says plainly that it retakes the last clip and keeps the rest',
+    new RegExp(`Retake clip ${withRetakeable}\\?`).test(backQuestion) &&
+      /discards clip/.test(backQuestion) &&
+      /other clips and their edits are kept/.test(backQuestion),
+    backQuestion,
+  );
+  check(
+    'with the clip it would discard lit in the row, and no other',
+    await page.evaluate((last) => {
+      const red = (position) =>
+        getComputedStyle(document.querySelector(`[data-editor-clip="${position}"]`))
+          .borderTopColor.includes('248, 113, 113');
+      return red(last) && [...Array(last).keys()].every((position) => !red(position));
+    }, withRetakeable - 1),
+  );
+
+  await page.locator('[data-editor-confirm-retake] [data-editor-confirm-no]').click();
+  await wait(400);
+  check(
+    'No closes it and changes nothing',
+    (await page.locator('[data-editor-confirm-retake]').count()) === 0 &&
+      (await page.locator('[data-editor-fullscreen]').count()) === 1 &&
+      (await page.locator('[data-editor-clip]').count()) === withRetakeable &&
+      Number(await page.locator('[data-editor-timeline]').getAttribute('max')) === lengthBeforeBack,
+    `${await page.locator('[data-editor-clip]').count()} clips still here`,
+  );
+
+  // A tap outside the question is the same answer as No.
+  await page.locator('[data-editor-retake]').click();
+  await page.waitForSelector('[data-editor-confirm-retake]', { timeout: 5000 });
+  await page.mouse.click(20, 200);
+  await wait(400);
+  check(
+    'and so does a tap outside it',
+    (await page.locator('[data-editor-confirm-retake]').count()) === 0 &&
+      (await page.locator('[data-editor-clip]').count()) === withRetakeable,
+  );
+
+  // Yes retakes: the camera opens with the last take dropped and every other
+  // clip, with its edits, still in the project.
+  await page.locator('[data-editor-retake]').click();
+  await page.waitForSelector('[data-editor-confirm-retake] [data-editor-confirm-yes]', {
+    timeout: 5000,
+  });
+  await page.locator('[data-editor-confirm-retake] [data-editor-confirm-yes]').click();
+  await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 20000 });
+  check('Yes goes back to the camera to retake', true);
+  await page.locator('[data-camera-next]').click();
+  await page.waitForSelector('[data-editor-fullscreen]', { timeout: 20000 });
+  check(
+    'having dropped only the last clip',
+    (await page.locator('[data-editor-clip]').count()) === withRetakeable - 1,
+    `${withRetakeable} -> ${await page.locator('[data-editor-clip]').count()} clips`,
+  );
+  check(
+    'and kept the others exactly as they were edited',
+    Math.abs(
+      Number(await page.locator('[data-editor-timeline]').getAttribute('max')) - lengthWithThree,
+    ) < 0.01,
+    `${lengthWithThree}s before, ${await page
+      .locator('[data-editor-timeline]')
+      .getAttribute('max')}s after`,
+  );
+
   /* ===================== each clip's own level ===================== */
   section('SOUND IS PER CLIP, NOT ONE SWITCH OVER THE LOT');
 
@@ -1721,6 +1808,15 @@ async function run() {
   // the camera, and dropping the only take goes back to it rather than to an
   // editor with nothing in it.
   await android.page.locator('[data-editor-retake]').click();
+  await android.page.waitForSelector('[data-editor-confirm-retake]', { timeout: 5000 });
+  check(
+    'Back on the only clip says it discards this recording',
+    /Discard this recording\?[\s\S]*discards this recording/.test(
+      await android.page.locator('[data-editor-confirm-retake]').innerText(),
+    ),
+    (await android.page.locator('[data-editor-confirm-retake]').innerText()).replace(/\n/g, ' '),
+  );
+  await android.page.locator('[data-editor-confirm-retake] [data-editor-confirm-yes]').click();
   await android.page.waitForSelector('button[aria-label="Start recording"]', { timeout: 20000 });
   check('Retake on the only clip goes back to the camera', true);
   check(

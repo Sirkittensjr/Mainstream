@@ -187,6 +187,12 @@ export function VideoEditor({
   /** The clip Delete is asking about. Null when it is not asking. */
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   /**
+   * Whether Back is asking. Back goes to the camera to retake, and dropping the
+   * last take is what that means — so it asks first, exactly as Delete does,
+   * rather than losing a clip to a tap meant as "go back".
+   */
+  const [confirmBack, setConfirmBack] = useState(false);
+  /**
    * The level each clip had before it was muted, by id, so unmuting brings it
    * back. Held here rather than on the clip: it is a convenience of this
    * screen, not part of the video, and the render has no use for it.
@@ -439,7 +445,7 @@ export function VideoEditor({
       >
         <button
           type="button"
-          onClick={onRetake}
+          onClick={() => setConfirmBack(true)}
           data-editor-retake
           aria-label="Back to the camera"
           className="flex h-10 w-10 items-center justify-center rounded-full text-white transition active:scale-95 active:bg-white/10"
@@ -1056,7 +1062,8 @@ export function VideoEditor({
               data-editor-clip={position}
               data-editor-clip-volume-level={each.clip.volume}
               className={`relative h-[54px] w-[48px] shrink-0 overflow-hidden rounded-xl border-2 bg-ink-800 transition ${
-                confirmDelete === each.clip.id
+                confirmDelete === each.clip.id ||
+                (confirmBack && position === clips.length - 1)
                   ? 'border-red-400 ring-2 ring-red-400/60'
                   : chosen
                     ? 'border-fay shadow-lg shadow-fay/30'
@@ -1115,54 +1122,44 @@ export function VideoEditor({
           which one it means: the clip in question is the selected one, lit in
           the row behind it. Small and low, next to the thumb that asked. */}
       {confirmDelete && (
-        <div
-          data-editor-confirm-delete
-          role="dialog"
-          aria-modal="true"
-          aria-label="Delete clip?"
-          className="absolute inset-0 z-20 flex items-end justify-center"
-        >
-          {/* Dismisses on a tap outside, which is the same answer as No. */}
-          <button
-            type="button"
-            aria-label="Keep the clip"
-            data-editor-confirm-scrim
-            onClick={() => setConfirmDelete(null)}
-            className="absolute inset-0 bg-black/45"
-          />
-          <div className="safe-bottom relative mb-24 w-[min(18rem,calc(100%-1.5rem))] rounded-2xl border border-white/10 bg-ink-900/95 p-3 shadow-2xl backdrop-blur-xl">
-            <p className="text-center text-[15px] font-semibold text-white">Delete clip?</p>
-            <p className="mt-0.5 text-center text-[11px] text-white/50">
-              {many
-                ? `Clip ${index + 1} of ${clips.length}. The others are not touched.`
-                : 'It is the only clip, so this goes back to the camera.'}
-            </p>
-            <div className="mt-3 flex gap-2">
-              <button
-                type="button"
-                onClick={() => setConfirmDelete(null)}
-                data-editor-confirm-no
-                className="btn-quiet min-h-[44px] flex-1 py-2 text-[14px]"
-              >
-                No
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  const going = confirmDelete;
-                  setConfirmDelete(null);
-                  // Only the clip that was asked about, by id — not by position,
-                  // which could have moved under the question.
-                  onDeleteClip?.(going);
-                }}
-                data-editor-confirm-yes
-                className="btn-primary min-h-[44px] flex-1 py-2 text-[14px]"
-              >
-                Yes
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmSheet
+          kind="delete"
+          title="Delete clip?"
+          detail={
+            many
+              ? `Clip ${index + 1} of ${clips.length}. The others are not touched.`
+              : 'It is the only clip, so this goes back to the camera.'
+          }
+          onNo={() => setConfirmDelete(null)}
+          onYes={() => {
+            const going = confirmDelete;
+            setConfirmDelete(null);
+            // Only the clip that was asked about, by id — not by position,
+            // which could have moved under the question.
+            onDeleteClip?.(going);
+          }}
+        />
+      )}
+
+      {/* Back is a retake: the camera reopens and the LAST take is dropped so
+          it can be filmed again. Said plainly, with that clip lit in the row
+          behind, because it is the same loss as Delete and used to happen on
+          the tap. */}
+      {confirmBack && (
+        <ConfirmSheet
+          kind="retake"
+          title={many ? `Retake clip ${clips.length}?` : 'Discard this recording?'}
+          detail={
+            many
+              ? `Going back to the camera discards clip ${clips.length} of ${clips.length}, the last one you filmed. Your other clips and their edits are kept.`
+              : 'Going back to the camera discards this recording and its edits so you can film it again.'
+          }
+          onNo={() => setConfirmBack(false)}
+          onYes={() => {
+            setConfirmBack(false);
+            onRetake();
+          }}
+        />
       )}
 
       {/* ============ putting it together, after Next ============ */}
@@ -1210,6 +1207,65 @@ export function VideoEditor({
           {problem}
         </p>
       )}
+    </div>
+  );
+}
+
+/**
+ * Asking before something is lost: Delete, and Back. Small and low, so the video
+ * stays visible behind it and the answer is next to the thumb that asked. A tap
+ * outside is the same answer as No.
+ */
+function ConfirmSheet({
+  kind,
+  title,
+  detail,
+  onNo,
+  onYes,
+}: {
+  kind: 'delete' | 'retake';
+  title: string;
+  detail: string;
+  onNo: () => void;
+  onYes: () => void;
+}) {
+  return (
+    <div
+      {...{ [`data-editor-confirm-${kind}`]: true }}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      className="absolute inset-0 z-20 flex items-end justify-center"
+    >
+      <button
+        type="button"
+        aria-label="No"
+        data-editor-confirm-scrim
+        onClick={onNo}
+        className="absolute inset-0 bg-black/45"
+      />
+      <div className="safe-bottom relative mb-24 w-[min(18rem,calc(100%-1.5rem))] rounded-2xl border border-white/10 bg-ink-900/95 p-3 shadow-2xl backdrop-blur-xl">
+        <p className="text-center text-[15px] font-semibold text-white">{title}</p>
+        <p className="mt-0.5 text-center text-[11px] text-white/50">{detail}</p>
+        <div className="mt-3 flex gap-2">
+          <button
+            type="button"
+            onClick={onNo}
+            data-editor-confirm-no
+            className="btn-quiet min-h-[44px] flex-1 py-2 text-[14px]"
+          >
+            No
+          </button>
+          <button
+            type="button"
+            onClick={onYes}
+            data-editor-confirm-yes
+            className="btn-primary min-h-[44px] flex-1 py-2 text-[14px]"
+          >
+            Yes
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -469,10 +469,34 @@ async function run() {
     'the frame scrubber is there, so there is a video to cover',
   );
 
-  // Retake drops the clip it goes back past, so the camera is empty again.
+  // Back is a retake: it drops the clip it goes back past. It asks first —
+  // the same question Delete asks — rather than losing the take on the tap.
   await page.locator('[data-editor-retake]').click();
+  await page.waitForSelector('[data-editor-confirm-retake]', { timeout: 5000 });
+  const retakeQuestion = (await page.locator('[data-editor-confirm-retake]').innerText()).replace(
+    /\n/g,
+    ' ',
+  );
+  check(
+    'Back asks before discarding the recording',
+    /Discard this recording\?/.test(retakeQuestion) && /discards this recording/.test(retakeQuestion),
+    retakeQuestion,
+  );
+  await page.locator('[data-editor-confirm-retake] [data-editor-confirm-no]').click();
+  await wait(400);
+  check(
+    'No keeps the recording and stays in the editor',
+    (await page.locator('[data-editor-confirm-retake]').count()) === 0 &&
+      (await page.locator('[data-editor-fullscreen]').count()) === 1 &&
+      (await page.locator('[data-editor-clip]').count()) === 1,
+  );
+  await page.locator('[data-editor-retake]').click();
+  await page.waitForSelector('[data-editor-confirm-retake] [data-editor-confirm-yes]', {
+    timeout: 5000,
+  });
+  await page.locator('[data-editor-confirm-retake] [data-editor-confirm-yes]').click();
   await page.waitForSelector('button[aria-label="Start recording"]', { timeout: 20000 });
-  check('Retake returns to the camera', true);
+  check('Yes returns to the camera to retake', true);
 
   await record(page, 3);
   await page.locator('[data-camera-next]').click();
