@@ -67,6 +67,8 @@ async function setBlock(actor, handle, shouldBlock) {
     hasText: shouldBlock ? new RegExp(`^Block @${handle}$`) : new RegExp(`^Unblock @${handle}$`),
   });
   await item.first().click();
+  // Blocking asks first; unblocking does not.
+  if (shouldBlock) await actor.page.locator('[data-confirm-block-yes]').click();
   await actor.page.waitForTimeout(1800);
 }
 
@@ -380,6 +382,7 @@ const run = async () => {
   await blockTab.goto(`/u/${bH}`, { waitUntil: 'domcontentloaded' });
   await blockTab.locator('button[aria-label="More options"]').first().click();
   await blockTab.locator('button', { hasText: new RegExp(`^Block @${bH}$`) }).first().click();
+  await blockTab.locator('[data-confirm-block-yes]').click();
   await blockTab.waitForTimeout(2000);
   await blockTab.close();
 

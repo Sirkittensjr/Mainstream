@@ -720,6 +720,31 @@ sits a little higher in the editor than in the finished video, where it is drawn
 over the whole frame. The posting screen and the post itself both use the full-frame
 variant, so the faithful preview is the last thing seen before posting.
 
+### 4e. The selected clip is the clip on screen — `editor-clip-sync-flow.mjs`
+
+Found on an iPhone: Clip 3 highlighted, the Trim panel saying "Clip 3 of 3", and
+the preview showing Clip 1 — then **Next** failing with "The browser would not
+play this clip back." After every step the suite compares what the tools act on
+(`data-editor-selected-clip`) with the clip in the visible player slot
+(`data-clip-id`), and that each id is always the same FILE, so a slot labelled
+one clip while playing another is caught too. It picks Clip 1/2/3 forwards,
+backwards and in rapid taps; trims each clip; changes levels, mutes and turns;
+undoes and redoes; plays the project through (1 -> 2 -> 3 for its trimmed length,
+then back to Clip 1 with Clip 1 selected); deletes a clip and adds one; and taps
+**Next**.
+
+It runs under the iPhone's playback rule: an element may start with sound only
+inside a tap, or once it has been started inside one. Chromium's own
+`--autoplay-policy=user-gesture-required` is looser and did not reproduce the
+error, so an init script applies the rule per element, as iOS does
+(`IOS_PLAY_RULE=0` turns it off). Every other video suite runs with
+`no-user-gesture-required`, which is why none of them caught it.
+
+```bash
+OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
+  node scripts/e2e/editor-clip-sync-flow.mjs
+```
+
 ### 4a. Video covers — `video-cover-flow.mjs`
 
 The picture that stands in for a video before anybody plays it: a frame picked
@@ -1196,7 +1221,8 @@ it:
 ### Which store each suite wants
 
 `auth-flow`, `features-flow`, `video-flow`, `videos-flow`, `video-upload-flow`,
-`video-cover-flow`, `mobile-record-flow`, `multi-clip-flow`, `messaging-flow`,
+`video-cover-flow`, `mobile-record-flow`, `multi-clip-flow`, `editor-clip-sync-flow`,
+`messaging-flow`,
 `profile-colours-flow`, `top-creators-flow`, `auto-review-flow`, `admin-badge`
 and `social-navigation` create their own accounts and want an EMPTY store
 (`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and

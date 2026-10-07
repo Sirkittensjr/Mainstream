@@ -379,6 +379,8 @@ const run = async () => {
     const menu = page.locator('button[aria-label*="More"], button:has-text("•••")').first();
     await menu.click();
     await page.locator('button:has-text("Block")').first().click();
+    // Blocking asks first now; this is the confirmation.
+    await page.locator('[data-confirm-block-yes]').click();
     await page.waitForTimeout(2500);
 
     await page.goto('/settings', { waitUntil: 'domcontentloaded' });

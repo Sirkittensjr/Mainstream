@@ -163,9 +163,10 @@ export async function resolveReport(
   resolution: string,
   adminId?: ID,
 ): Promise<void> {
+  if (status !== 'resolved' && status !== 'dismissed') return;
   const report = await db().get('reports', reportId);
-  await db().update('reports', reportId, { status, resolution });
   if (!report) return;
+  await db().update('reports', reportId, { status, resolution: resolution.slice(0, 500) });
   await recordModeration({
     targetType: report.target_type,
     targetId: report.target_id,
@@ -251,11 +252,39 @@ export async function removeComment(commentId: ID): Promise<void> {
   await db().update('comments', commentId, { removed: true });
 }
 
+/** The three states an account can be put in, and what each is logged as. */
+const STATUS_ACTIONS = {
+  active: 'admin_reinstated',
+  suspended: 'admin_suspended',
+  banned: 'admin_banned',
+} as const satisfies Record<UserStatus, string>;
+
+export const isUserStatus = (value: unknown): value is UserStatus =>
+  typeof value === 'string' && Object.hasOwn(STATUS_ACTIONS, value);
+
+/**
+ * Suspends, bans or reinstates an account — and writes it to the moderation
+ * log, like every other moderator decision. It used to be the one that was not
+ * recorded, so the log could say a post was removed but not that its author was
+ * banned, or by whom.
+ */
 export async function setUserStatus(
   userId: ID,
   status: UserStatus,
   reason: string,
+  adminId?: ID,
 ): Promise<void> {
-  await db().update('users', userId, { status, status_reason: reason || null });
+  if (!isUserStatus(status)) return;
+  const user = await db().get('users', userId);
+  if (!user) return;
+  const note = reason.trim().slice(0, 300);
+  await db().update('users', userId, { status, status_reason: note || null });
   refreshCommunity();
+  await recordModeration({
+    targetType: 'user',
+    targetId: userId,
+    action: STATUS_ACTIONS[status],
+    actorId: adminId ?? null,
+    detail: `@${user.username}: ${note || 'no note'}`,
+  });
 }

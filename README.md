@@ -46,7 +46,9 @@ creates these as real Supabase Auth users):
 npm run reset     # wipe local data and re-seed
 npm run build     # production build (emits .next/standalone)
 npm start         # run the production server
-npm test          # unit tests for the rating rules
+npm test          # unit tests — the pure rules (ratings, video, text posts) and the
+                  # server-side rules a request can reach without the UI (blocks,
+                  # moderation, notifications), run against a throwaway local store
 npm run lint      # eslint
 npm run typecheck # tsc --noEmit
 ```

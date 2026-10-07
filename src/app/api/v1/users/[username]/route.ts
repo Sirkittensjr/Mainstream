@@ -2,7 +2,7 @@ import { apiError, json, serialisePost, serialiseUser } from '@/lib/api';
 import { hydratePosts, postsByAuthor } from '@/lib/services/posts';
 import { userRating } from '@/lib/services/ratings';
 import { userRanks } from '@/lib/services/rankings';
-import { getUserByUsername, getUserStats } from '@/lib/services/users';
+import { getUserByUsername, getUserStats, isBlockedEitherWay } from '@/lib/services/users';
 import { getViewer } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
@@ -16,11 +16,15 @@ export async function GET(
   if (!user || user.status === 'banned') return apiError('Not found', 404);
 
   const viewer = await getViewer();
+  // The same rule as the profile page: a block in either direction shows the
+  // account but none of its posts.
+  const blocked =
+    viewer && viewer.id !== user.id ? await isBlockedEitherWay(viewer.id, user.id) : false;
   const [rating, ranks, stats, posts] = await Promise.all([
     userRating(user.id),
     userRanks(user.id),
     getUserStats(user.id),
-    postsByAuthor(user.id, viewer),
+    blocked ? Promise.resolve([]) : postsByAuthor(user.id, viewer),
   ]);
   const views = await hydratePosts(posts.slice(0, 30), viewer?.id ?? null);
 

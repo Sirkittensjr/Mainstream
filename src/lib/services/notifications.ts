@@ -12,6 +12,29 @@ interface NotifyInput {
   postId?: ID | null;
 }
 
+/**
+ * Notifies, unless the person already has this exact notification.
+ *
+ * For the two that can be toggled: a like can be taken back and given again,
+ * a follow undone and redone, as fast as a thumb can tap — and each time used
+ * to land another "liked your post" on somebody. One is enough to say it
+ * happened.
+ */
+export async function notifyOnce(input: NotifyInput): Promise<void> {
+  if (input.actorId && input.actorId === input.userId) return;
+  const already = await db().query('notifications', {
+    where: {
+      user_id: input.userId,
+      type: input.type,
+      actor_id: input.actorId ?? null,
+      post_id: input.postId ?? null,
+    },
+    limit: 1,
+  });
+  if (already.length > 0) return;
+  await notify(input);
+}
+
 export async function notify(input: NotifyInput): Promise<void> {
   // Never notify someone about their own action.
   if (input.actorId && input.actorId === input.userId) return;
@@ -80,12 +103,29 @@ export async function listNotifications(userId: ID, limit = 60): Promise<Notific
  */
 export const UNREAD_CAP = 50;
 
+/**
+ * How many unread notifications the badge shows.
+ *
+ * The same filter as the list: one from somebody blocked, or now banned, is
+ * not shown there, so it is not counted here either. Counting them put a "3"
+ * on the bell over a list with nothing new in it.
+ */
 export async function unreadCount(userId: ID): Promise<number> {
-  const rows = await db().query('notifications', {
+  const store = db();
+  const rows = await store.query('notifications', {
     where: { user_id: userId, read: false },
     limit: UNREAD_CAP,
   });
-  return rows.length;
+  const actorIds = [...new Set(rows.map((row) => row.actor_id).filter(Boolean))] as ID[];
+  if (actorIds.length === 0) return rows.length;
+  const [hidden, actors] = await Promise.all([
+    hiddenUserIds(userId),
+    store.query('users', { in: { id: actorIds } }),
+  ]);
+  const banned = new Set(actors.filter((actor) => actor.status === 'banned').map((a) => a.id));
+  return rows.filter(
+    (row) => !row.actor_id || (!hidden.has(row.actor_id) && !banned.has(row.actor_id)),
+  ).length;
 }
 
 export async function markAllRead(userId: ID): Promise<void> {

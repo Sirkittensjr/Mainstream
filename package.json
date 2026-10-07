@@ -10,7 +10,7 @@
     "start": "node .next/standalone/server.js",
     "lint": "eslint src scripts",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "test": "node --conditions=react-server --experimental-test-module-mocks --import tsx --test \"src/**/*.test.ts\"",
     "seed": "tsx scripts/seed.ts",
     "reset": "rm -rf .data && npm run seed",
     "email:build": "node --import tsx scripts/build-email-templates.mjs"

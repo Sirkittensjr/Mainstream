@@ -4,6 +4,7 @@ import { useActionState, useState } from 'react';
 import { updateProfileAction } from '@/app/actions';
 import { contentTypeFor, uploadMedia } from '@/lib/video/upload-client';
 import { CATEGORIES, type Category } from '@/lib/types';
+import { userFacingError } from '@/lib/user-facing-error';
 
 export function SettingsForm({
   defaults,
@@ -36,7 +37,7 @@ export function SettingsForm({
       setAvatar(uploaded.url);
     } catch (failure) {
       setAvatarError(
-        failure instanceof Error ? failure.message : 'Could not upload that picture.',
+        userFacingError(failure, 'Could not upload that picture. Try another one.'),
       );
     } finally {
       setUploading(false);

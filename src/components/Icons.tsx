@@ -43,16 +43,6 @@ export function PlusIcon(props: IconProps) {
   );
 }
 
-export function TrophyIcon(props: IconProps) {
-  return (
-    <svg {...base(props)}>
-      <path d="M7 4h10v5a5 5 0 0 1-10 0z" />
-      <path d="M7 5H4.5v1.5A3.5 3.5 0 0 0 8 10M17 5h2.5v1.5A3.5 3.5 0 0 1 16 10" />
-      <path d="M12 14v3M9 20h6M10 17h4" />
-    </svg>
-  );
-}
-
 export function UserIcon(props: IconProps) {
   return (
     <svg {...base(props)}>
@@ -115,14 +105,6 @@ export function SearchIcon(props: IconProps) {
   );
 }
 
-export function SparkIcon(props: IconProps) {
-  return (
-    <svg {...base(props)}>
-      <path d="M12 3.5 13.9 9l5.6 1.9-5.6 1.9L12 18.5l-1.9-5.7L4.5 11 10.1 9z" />
-    </svg>
-  );
-}
-
 export function FlagIcon(props: IconProps) {
   return (
     <svg {...base(props)}>
@@ -136,15 +118,6 @@ export function ShieldIcon(props: IconProps) {
     <svg {...base(props)}>
       <path d="M12 3.5 19 6v5.5c0 4-2.9 7.3-7 8.9-4.1-1.6-7-4.9-7-8.9V6z" />
       <path d="m9.2 12 2 2 3.6-3.8" />
-    </svg>
-  );
-}
-
-export function ChartIcon(props: IconProps) {
-  return (
-    <svg {...base(props)}>
-      <path d="M4 20h16" />
-      <path d="M7 20v-6M12 20V7M17 20v-9" />
     </svg>
   );
 }
@@ -167,14 +140,6 @@ export function ArrowIcon(props: IconProps) {
   );
 }
 
-export function CheckIcon(props: IconProps) {
-  return (
-    <svg {...base(props)}>
-      <path d="m5 12.5 4.5 4.5L19 7" />
-    </svg>
-  );
-}
-
 export function CloseIcon(props: IconProps) {
   return (
     <svg {...base(props)}>
@@ -189,15 +154,6 @@ export function ImageIcon(props: IconProps) {
       <rect x="3.5" y="5" width="17" height="14" rx="3" />
       <circle cx="9" cy="10" r="1.6" />
       <path d="m4.5 17 4.2-4 3.3 3 2.8-2.4 4.7 4.2" />
-    </svg>
-  );
-}
-
-export function FireIcon(props: IconProps) {
-  return (
-    <svg {...base(props)}>
-      <path d="M12 3.5s4.5 3.6 4.5 7.6c0 1.4-.6 2.5-1.5 3.2.2-1.7-.6-3.3-2-4.3.2 2.2-1 3.3-2 4.2-1 .9-1.5 1.9-1.5 3 0 1.7 1.6 3.3 4 3.3s4.5-1.8 4.5-4.4" />
-      <path d="M12 3.5C9 6 7.5 8.4 7.5 11.1c0 1.2.3 2.2.9 3" />
     </svg>
   );
 }
@@ -226,14 +182,6 @@ export function RecordIcon(props: IconProps) {
     <svg {...base(props)}>
       <circle cx="12" cy="12" r="8.5" />
       <circle cx="12" cy="12" r="4.5" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-
-export function StopIcon(props: IconProps) {
-  return (
-    <svg {...base(props)}>
-      <rect x="6.5" y="6.5" width="11" height="11" rx="2.5" fill="currentColor" stroke="none" />
     </svg>
   );
 }

@@ -447,10 +447,26 @@ async function run() {
 
   await admin.page.goto('/admin?tab=reports', { waitUntil: 'domcontentloaded' });
   await admin.page.waitForLoadState('networkidle');
-  const queueHtml = await admin.page.content();
+  // The queue itself, not the whole page: the right-hand "People to follow"
+  // panel is on every page and suggests new accounts — reporters among them —
+  // which says nothing about who reported what. What must not happen is a
+  // reporter's id appearing in a report card, in its text or its attributes.
+  const queueHtml = await admin.page.locator('[data-admin-reports]').evaluate((node) => node.outerHTML);
+  const snapshot = await settle((s) =>
+    reporters.every((r) => reporter_id(s, r.handle) !== 'unknown'),
+  );
+  const reporterIds = reporters.map((r) => reporter_id(snapshot, r.handle));
+  const leaked = reporterIds.filter((id) => id !== 'unknown' && queueHtml.includes(id));
   check(
     'and no reporter id is hidden in the markup either',
-    !reporters.some((r) => queueHtml.includes(reporter_id(store(), r.handle))),
+    // Every reporter must be found in the store first: an id that could not be
+    // looked up is 'unknown', and the page containing that WORD is not a leak.
+    !reporterIds.includes('unknown') && leaked.length === 0,
+    leaked.length
+      ? `leaked ${leaked.length}, e.g. …${queueHtml
+          .slice(Math.max(0, queueHtml.indexOf(leaked[0]) - 160), queueHtml.indexOf(leaked[0]) + 60)
+          .replace(/\s+/g, ' ')}…`
+      : `${reporterIds.length} reporters checked`,
   );
 
   // ==================== RESTORING ====================

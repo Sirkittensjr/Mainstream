@@ -43,7 +43,10 @@ export type ModerationAction =
   | 'admin_held'
   | 'admin_cleared_reports'
   | 'admin_dismissed_report'
-  | 'admin_resolved_report';
+  | 'admin_resolved_report'
+  | 'admin_suspended'
+  | 'admin_banned'
+  | 'admin_reinstated';
 
 /** The shape of a post this module needs. Anything else about it is irrelevant. */
 export interface ReviewablePost {

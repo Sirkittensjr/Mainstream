@@ -109,7 +109,7 @@ export async function FollowListPage({
         {blocked ? (
           <div className="card p-6 text-sm text-white/55">
             <p className="font-semibold text-white">This list is not available.</p>
-            <p className="mt-1">You and this person have blocked each other.</p>
+            <p className="mt-1">One of you has blocked the other.</p>
           </div>
         ) : (
           <>

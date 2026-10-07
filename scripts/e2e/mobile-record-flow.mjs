@@ -435,7 +435,45 @@ async function run() {
     grew,
     two.replace(/\n/g, ' '),
   );
+  // Throwing a take away asks first, like Back and Delete in the editor. It
+  // used to happen on the tap, and one stray thumb lost a clip for good.
   await page.locator('[data-camera-drop-last]').click();
+  const askedDrop = await page
+    .waitForSelector('[data-editor-confirm-drop-last]', { timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
+  const dropQuestion = askedDrop
+    ? (await page.locator('[data-editor-confirm-drop-last]').innerText()).replace(/\s+/g, ' ')
+    : '';
+  check('tapping Last clip asks before deleting anything', askedDrop, dropQuestion);
+  check(
+    'and says which clip goes, and that the other is kept',
+    /clip 2/i.test(dropQuestion) && /kept/i.test(dropQuestion),
+    dropQuestion,
+  );
+  await page.locator('[data-editor-confirm-drop-last] [data-editor-confirm-no]').click();
+  await page.waitForTimeout(300);
+  check(
+    'No keeps both clips',
+    (await page.locator('[data-editor-confirm-drop-last]').count()) === 0 &&
+      /2 clips/i.test(await page.locator('[data-camera-clips]').innerText()),
+  );
+  await page.locator('[data-camera-drop-last]').click();
+  await page.waitForSelector('[data-editor-confirm-drop-last]', { timeout: 5000 });
+  await page.locator('[data-editor-confirm-drop-last] [data-editor-confirm-scrim]').click({
+    position: { x: 10, y: 10 },
+  });
+  await page.waitForTimeout(300);
+  check(
+    'and so does tapping outside the question',
+    (await page.locator('[data-editor-confirm-drop-last]').count()) === 0 &&
+      /2 clips/i.test(await page.locator('[data-camera-clips]').innerText()),
+  );
+  await page.locator('[data-camera-drop-last]').click();
+  await page.waitForSelector('[data-editor-confirm-drop-last] [data-editor-confirm-yes]', {
+    timeout: 5000,
+  });
+  await page.locator('[data-editor-confirm-drop-last] [data-editor-confirm-yes]').click();
   await page
     .waitForFunction(
       () => !/2 clips/i.test(document.querySelector('[data-camera-clips]')?.textContent ?? ''),

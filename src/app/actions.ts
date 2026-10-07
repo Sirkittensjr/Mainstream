@@ -3,7 +3,6 @@
 import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { db } from '@/lib/db';
 import { CATEGORIES, type Category } from '@/lib/types';
 import { bigStyleOf, normaliseTextPost, TEXT_KIND_COPY, textKindOf } from '@/lib/text-posts';
 import { isTextPostNotStorable } from '@/lib/services/insert-post';
@@ -22,8 +21,10 @@ import {
   toggleLike,
 } from '@/lib/services/posts';
 import { markAllRead } from '@/lib/services/notifications';
+import { REPORT_REASONS } from '@/lib/moderation-reasons';
 import {
   clearReportThreshold,
+  isUserStatus,
   holdReviewed,
   removeComment,
   removePost,
@@ -46,7 +47,6 @@ import { changeUsername, deleteAccount, signOut } from '@/lib/services/account';
 import {
   send as sendMessage,
   markAllMessagesRead,
-  markThreadRead,
 } from '@/lib/services/messages';
 import { getUserByUsername } from '@/lib/services/users';
 import { submitRating } from '@/lib/services/ratings';
@@ -176,7 +176,8 @@ export async function commentAction(
   if (!body.trim()) return { ok: false as const, error: 'Write something first.' };
   const limit = await checkLimit('comments', viewer.id);
   if (!limit.ok) return { ok: false as const, error: limit.error };
-  await addComment(postId, viewer.id, body, parentId);
+  const added = await addComment(postId, viewer.id, body, parentId);
+  if (!added.ok) return { ok: false as const, error: added.error };
   revalidatePath(`/post/${postId}`);
   return { ok: true as const };
 }
@@ -200,11 +201,19 @@ export async function reportAction(formData: FormData) {
   if (!viewer) return { ok: false as const, error: 'Sign in to report.' };
   const limit = await checkLimit('reports', viewer.id);
   if (!limit.ok) return { ok: false as const, error: limit.error };
+  // The form offers a fixed list; a request that did not come from it is held
+  // to the same list rather than storing whatever it sent.
+  const targetType = String(formData.get('targetType'));
+  const targetId = String(formData.get('targetId') || '').slice(0, 64);
+  if (!['post', 'user', 'comment'].includes(targetType) || !targetId) {
+    return { ok: false as const, error: 'That cannot be reported.' };
+  }
+  const asked = String(formData.get('reason') || '');
   await submitReport({
     reporterId: viewer.id,
-    targetType: formData.get('targetType') as 'post' | 'user' | 'comment',
-    targetId: String(formData.get('targetId')),
-    reason: String(formData.get('reason') || 'Something else'),
+    targetType: targetType as 'post' | 'user' | 'comment',
+    targetId,
+    reason: (REPORT_REASONS as readonly string[]).includes(asked) ? asked : 'Something else',
     details: String(formData.get('details') || ''),
   });
   return { ok: true as const };
@@ -384,23 +393,6 @@ export async function sendMessageAction(username: string, body: string) {
   // The layout, because the recipient's unread badge lives in the navigation.
   revalidatePath('/', 'layout');
   return { ok: true as const };
-}
-
-/**
- * Marks a conversation read.
- *
- * Only ever marks messages the signed-in person received — see
- * markThreadRead. The username is resolved server-side, so passing somebody
- * else's handle marks nothing of theirs.
- */
-export async function markThreadReadAction(username: string) {
-  const viewer = await getViewer();
-  if (!viewer) return { ok: false as const, marked: 0 };
-  const other = await getUserByUsername(username);
-  if (!other) return { ok: false as const, marked: 0 };
-  const marked = await markThreadRead(viewer.id, other.id);
-  if (marked > 0) revalidatePath('/', 'layout');
-  return { ok: true as const, marked };
 }
 
 /**
@@ -637,8 +629,8 @@ export async function adminSetStatusAction(
   reason: string,
 ) {
   const admin = await requireAdmin();
-  if (admin.id === userId) return;
-  await setUserStatus(userId, status, reason);
+  if (admin.id === userId || !isUserStatus(status)) return;
+  await setUserStatus(userId, status, String(reason ?? ''), admin.id);
   revalidatePath('/admin');
 }
 
@@ -656,15 +648,4 @@ export async function adminSetTrustAction(userId: string, trusted: boolean) {
   await requireAdmin();
   await setRaterTrust(userId, trusted);
   revalidatePath('/admin');
-}
-
-/** Used by the admin "view user" panel. */
-export async function adminLookupAction(query: string) {
-  await requireAdmin();
-  const users = await db().query('users');
-  const needle = query.trim().toLowerCase();
-  return users
-    .filter((user) => user.username.includes(needle) || user.email.includes(needle))
-    .slice(0, 10)
-    .map((user) => ({ id: user.id, username: user.username, status: user.status }));
 }

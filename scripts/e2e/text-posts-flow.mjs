@@ -222,6 +222,16 @@ async function run() {
       (await page.locator('[data-speech-tail]').count()) === 1,
   );
 
+  // A story is found by its title too — the words somebody remembers it by.
+  // Search used to read only the body.
+  await page.goto(`/search?q=${encodeURIComponent(storyTitle)}`, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle');
+  check(
+    'search finds a story by its title',
+    (await page.locator(`[data-post-id="${storyId}"]`).count()) === 1,
+    storyTitle,
+  );
+
   /* ===================== big ===================== */
   section('A BIG MESSAGE');
 

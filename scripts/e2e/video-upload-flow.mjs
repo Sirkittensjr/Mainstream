@@ -223,10 +223,15 @@ const run = async () => {
       /content warning/i.test(composing),
     composing.split('\n').filter((l) => /caption|cover|content warning/i.test(l)).join(' / '),
   );
+  // Hashtags moved OUT of More options on purpose (ef10b48): they are how a
+  // video is found, so they sit with the caption. What is folded away is the
+  // description and the category — checked directly, rather than by the word
+  // "tags" being absent from the page, which stopped being true then.
   check(
     'and the rest is folded away, not gone',
     (await A.page.locator('[data-more-options]').count()) === 1 &&
-      !/tags/i.test(composing),
+      !(await A.page.locator('#video-caption').isVisible()) &&
+      !(await A.page.locator('#video-category').isVisible()),
   );
   await A.page.locator('[data-more-options]').click();
   await A.page.waitForTimeout(300);
