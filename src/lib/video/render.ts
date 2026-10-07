@@ -81,6 +81,32 @@ export function canRender(): boolean {
  */
 export const OUTPUT_FPS = 30;
 
+/**
+ * What the finished video is encoded at.
+ *
+ * It was 6 Mb/s, and measured against its sources that is the one setting
+ * starving the picture: the encoder sat right on it (5.7 Mb/s out), and fine
+ * detail rose steadily with more — a 4px pattern came back at 41.8 dB at 6 Mb/s,
+ * 44.8 dB at 10 and 47.3 dB at 16, with sharpness kept 88% / 89% / 94% of the
+ * source. The phone's own camera records 1080p at well over 10 Mb/s; a 9:16
+ * 1080x1920 frame re-encoded in real time by a hardware encoder needs at least
+ * that much.
+ *
+ * Not more, because of the ceiling: two minutes at 10 Mb/s plus audio is about
+ * 152MB against the 250MB upload limit (MAX_VIDEO_BYTES), which leaves room
+ * for an encoder that overshoots its target. 16 Mb/s would not.
+ */
+export const VIDEO_BITS_PER_SECOND = 10_000_000;
+
+/** How long the encoder is given to finish the last frames before the file is closed. */
+const ENCODER_DRAIN_MS = 500;
+
+/**
+ * Stated rather than left to the browser, so every phone gets the same: Safari's
+ * AAC and Chrome's Opus each pick their own default otherwise.
+ */
+export const AUDIO_BITS_PER_SECOND = 128_000;
+
 export class RenderUnsupportedError extends Error {
   constructor() {
     super('This browser cannot combine video clips. Post a single clip, or try another browser.');
@@ -95,6 +121,11 @@ function drawFrame(
   clip: Clip,
   output: { width: number; height: number; fit: 'cover' | 'contain' },
 ): void {
+  // No picture yet — a clip whose first frame has not been decoded. Drawing now
+  // painted the canvas black and sent THAT, which is the black flash measured
+  // at the start of the video and between clips. Leaving the canvas alone
+  // holds the frame before instead.
+  if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
   context.fillStyle = '#000';
   context.fillRect(0, 0, output.width, output.height);
 
@@ -151,6 +182,10 @@ export async function renderClips(clips: Clip[], options: RenderOptions = {}): P
   canvas.height = output.height;
   const context = canvas.getContext('2d', { alpha: false });
   if (!context) throw new RenderUnsupportedError();
+  // A clip that is not already 1080x1920 is scaled into it; the default
+  // smoothing is the cheapest the browser has.
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
   context.fillStyle = '#000';
   context.fillRect(0, 0, output.width, output.height);
 
@@ -197,7 +232,11 @@ export async function renderClips(clips: Clip[], options: RenderOptions = {}): P
     ...(audioDestination ? audioDestination.stream.getAudioTracks() : []),
   ]);
 
-  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
+  const recorder = new MediaRecorder(stream, {
+    mimeType,
+    videoBitsPerSecond: VIDEO_BITS_PER_SECOND,
+    audioBitsPerSecond: AUDIO_BITS_PER_SECOND,
+  });
   const chunks: Blob[] = [];
   recorder.addEventListener('dataavailable', (event) => {
     if (event.data.size > 0) chunks.push(event.data);
@@ -344,6 +383,14 @@ export async function renderClips(clips: Clip[], options: RenderOptions = {}): P
     // Stopped from wherever the last clip left it. Resuming only to stop again
     // costs another pause/resume cycle, and each of those is time the recorder
     // spends not recording.
+    //
+    // But not straight away. The encoder runs behind the frames it is given,
+    // and `stop()` throws away whatever it has not finished: measured, the last
+    // ~0.35s of the last clip (11 frames) never reached the file, so every
+    // video ended on a frozen picture while its sound played on. Waiting here
+    // lets it drain; the recorder is paused, so the wait adds nothing to the
+    // video's length.
+    await new Promise((resolve) => window.setTimeout(resolve, ENCODER_DRAIN_MS));
     recorder.stop();
     await finished;
     return {
@@ -474,8 +521,10 @@ function playInto(
     const finish = () => {
       window.clearInterval(timer);
       window.clearTimeout(window_);
-      video.pause();
+      // The recorder first, then the element: the other way round recorded the
+      // moment of silence between them.
       recording.hold();
+      video.pause();
       stop();
     };
 
@@ -494,18 +543,54 @@ function playInto(
       // the last frame.
     };
 
+    /**
+     * The clip's window opens HERE — when its playhead is really MOVING — and
+     * shuts when what is left of its kept length has played. That window is the
+     * clip's contribution to the finished file.
+     *
+     * It used to open when `play()` resolved, and that is not when a clip
+     * starts: measured on a two-clip project, the playhead sat still for
+     * 255-380ms after it, with no decoded picture. The window ran anyway, so
+     * every clip began with that long a black (or frozen) frame and silence —
+     * and, being a fixed length, shut that long before the clip's out-point, so
+     * its last frames were never shown. Clip 1 lost 12 of its 90 frames, then
+     * black, then Clip 2: the "little cut" at every join.
+     *
+     * Waiting for the playhead to move fixes both ends at once: the first frame
+     * sent is a real picture, the audio is already flowing, and the window ends
+     * as the source reaches the out-point. Whatever had already played by the
+     * time this noticed (one poll, a few milliseconds) comes off the window, so
+     * nothing past the out-point is recorded.
+     */
+    const open = () => {
+      if (stopped) return;
+      const already = Math.min(Math.max(video.currentTime - clip.trimStart, 0), length);
+      recording.run();
+      // A picture straight away, so the encoder has one from the start and a
+      // clip shorter than a sample interval is still represented.
+      deliverTo(Math.max(1, Math.round(already * OUTPUT_FPS)));
+      timer = window.setInterval(tick, period);
+      window_ = window.setTimeout(finish, Math.max(0, length - already) * 1000);
+    };
+
+    /** How long to wait for a clip to start moving before recording it anyway. */
+    const STALL_MS = 3000;
     video.play().then(
       () => {
-        // The clip's window opens HERE — when it is really playing, not when it
-        // was asked for — and shuts exactly its kept length later. That window
-        // is the clip's contribution to the finished file, so a 2.55s clip is
-        // 2.55s of video whatever the machine was doing in the meantime.
-        recording.run();
-        // One frame straight away, so the encoder has a picture from the start
-        // and a clip shorter than a sample interval is still represented.
-        deliverTo(1);
-        timer = window.setInterval(tick, period);
-        window_ = window.setTimeout(finish, length * 1000);
+        const from = video.currentTime;
+        const asked = performance.now();
+        const waitForMovement = () => {
+          if (stopped) return;
+          if (signal?.aborted) return;
+          const moving =
+            video.currentTime > from + 0.001 &&
+            video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+          // A clip that never moves is still recorded after a while, and then
+          // caught by the "did not play back" check rather than hanging here.
+          if (moving || performance.now() - asked > STALL_MS) open();
+          else window.setTimeout(waitForMovement, 4);
+        };
+        waitForMovement();
       },
       () => reject(new Error('The browser would not play this clip back.')),
     );
