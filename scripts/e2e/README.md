@@ -725,8 +725,8 @@ variant, so the faithful preview is the last thing seen before posting.
 Three columns from 1024px: navigation, the feed, and (from 1280px) the rail. It
 checks the sidebar order — Home, Videos, Discover, one **Create**, Search,
 Messages, Notifications, Admin only for admins — and that Create offers Short,
-Story and Big Message, Photo, Upload video and Record video, each a route that
-answers. The rail's profile card is checked against the profile API (a
+Story and Big Message, Photo and Video, each in its own colour and each a route
+that answers, as does the composer on Home. The rail's profile card is checked against the profile API (a
 different code path over the same rows), a follow from another account must move
 its follower count, and its Top 3 must match the profile's, in order, in gold,
 silver and bronze, with the profile's editor the only one on the page. On your
@@ -738,6 +738,26 @@ options. A guest gets a Join card and a Create that asks them to sign in.
 ```bash
 OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
   node scripts/e2e/desktop-layout-flow.mjs
+```
+
+### 4h. A profile's appearance — `profile-appearance-flow.mjs`
+
+The big profile header and what it is painted on. A colour, then a FayTarra
+gradient, then a photo uploaded through the app's own storage must each fill the
+background of the WHOLE page (the backdrop's box covers the viewport, sidebar and
+rail included), the photo must be seen by another account and by a guest, and it
+must arrive resized (`/_next/image`, at most 2048px wide on a desktop and 1300 on a
+phone), never the original. Removing it goes back to the chosen gradient, and a
+new colour can then be picked. Around that: the picture is 144px on a desktop and
+96 on a phone; Posts, Followers and Following match the profile API and sit on one
+row of tiles; Overall and Last 30 days show a real rating; the Top 3 is there once,
+with its one editor; Edit profile is large and only the owner's; the four tabs
+open; a post of each text kind and a photo land on the right shelves; and a new
+avatar still shows. Checked at 1440, 1280, 1024 and on a phone.
+
+```bash
+OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
+  node scripts/e2e/profile-appearance-flow.mjs
 ```
 
 ### 4f. The finished video, frame by frame — `render-output-flow.mjs`
@@ -1266,7 +1286,7 @@ it:
 
 `auth-flow`, `features-flow`, `video-flow`, `videos-flow`, `video-upload-flow`,
 `video-cover-flow`, `mobile-record-flow`, `multi-clip-flow`, `editor-clip-sync-flow`,
-`desktop-layout-flow`, `messaging-flow`,
+`desktop-layout-flow`, `profile-appearance-flow`, `messaging-flow`,
 `profile-colours-flow`, `top-creators-flow`, `auto-review-flow`, `admin-badge`
 and `social-navigation` create their own accounts and want an EMPTY store
 (`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and

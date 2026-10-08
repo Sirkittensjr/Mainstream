@@ -287,6 +287,8 @@ export interface UpdateProfileInput {
   /** Profile colours. Only present once migration 0005 has run. */
   profile_bg?: string | null;
   profile_box?: string | null;
+  /** The background photo's address. Only present once migration 0013 has run. */
+  profile_cover_url?: string | null;
 }
 
 export async function updateProfile(userId: ID, input: UpdateProfileInput): Promise<void> {
@@ -379,6 +381,65 @@ export async function updateProfileColours(
 
   refreshCommunity();
   return { ok: true };
+}
+
+export const COVER_UNAVAILABLE =
+  'Background photos are not switched on for this deployment yet — migration ' +
+  '0013 has not been run against this database.';
+
+/** Whether this database can store a background photo. See profileColoursSupported. */
+export function profileCoverSupported(user: User): boolean {
+  if (!supabaseConfigured()) return true;
+  return 'profile_cover_url' in (user as unknown as Record<string, unknown>);
+}
+
+/**
+ * Sets, or clears with null, the photo behind somebody's profile.
+ *
+ * The same shape as the colours, for the same reasons: its own UPDATE, so a
+ * database without migration 0013 still saves everything else on a profile;
+ * and READ BACK before it reports success, because an update that matched
+ * nothing looks exactly like one that worked. The address has already been
+ * checked by the caller to be an image FayTarra stored; only the owner's own
+ * id ever reaches here.
+ */
+export async function updateProfileCover(userId: ID, url: string | null): Promise<ColourSaveResult> {
+  try {
+    await db().update('users', userId, { profile_cover_url: url } as UpdateProfileInput);
+  } catch (error) {
+    if (isMissingRelation(error) && error.table === 'users' && error.column !== null) {
+      warnAboutCover(error);
+      return { ok: false, error: COVER_UNAVAILABLE };
+    }
+    throw error;
+  }
+
+  const stored = await db().get('users', userId);
+  if (!stored) return { ok: false, error: 'Could not find your profile to save that to.' };
+  if (!profileCoverSupported(stored)) {
+    warnAboutCover(new Error('the row came back without the column'));
+    return { ok: false, error: COVER_UNAVAILABLE };
+  }
+  if ((stored.profile_cover_url ?? null) !== url) {
+    console.error(
+      '[faytarra] A profile background photo update was accepted and did not stick. ' +
+        'Check the update grants and RLS policy on public.users.',
+    );
+    return { ok: false, error: 'The database did not keep that. Nothing has been changed.' };
+  }
+  return { ok: true };
+}
+
+let warnedAboutCover = false;
+
+function warnAboutCover(error: unknown): void {
+  if (warnedAboutCover) return;
+  warnedAboutCover = true;
+  console.error(
+    '[faytarra] Profile background photos are switched off: this database has no ' +
+      '`profile_cover_url` column on `users`. Run supabase/migrations/0013_profile_cover.sql ' +
+      `against it to turn them on. (${error instanceof Error ? error.message : String(error)})`,
+  );
 }
 
 let warnedAboutColours = false;

@@ -13,6 +13,7 @@ import {
   RecordIcon,
   StoryIcon,
   TextIcon,
+  VideoIcon,
 } from './Icons';
 
 /**
@@ -68,40 +69,105 @@ const OPTIONS = [
 ] as const;
 
 /**
- * Every way in, one step each — what the desktop sidebar's Create opens.
+ * Every kind there is, each with its own colour — what the desktop offers.
  *
- * The same destinations as above with Text spelled out as its three kinds, so
- * the one Create button is enough on its own: nothing that used to be a
- * separate "New post" or "Record" item is more than a click away. Each is a
- * route that already exists — the text chooser's own links, the composer, and
- * the video studio's two doors.
+ * Five, because that is what FayTarra makes: the three text messages, a photo,
+ * and a video. Video is one door, the studio's chooser, which offers both
+ * recording and choosing a file — the same studio, by the same route, that the
+ * `+` and the phone's Record video open. Every href is an existing route; this
+ * list only decides how they are offered.
+ *
+ * The colours are FayTarra's own — the blue, purple and pink the text kinds
+ * already carry on the create page, then mint and the sunset orange.
  */
-const FULL_OPTIONS = [
+export const CREATE_KINDS = [
   {
     key: 'short-message',
     href: '/create?kind=text&text=short',
     label: TEXT_KIND_COPY.short.label,
-    blurb: TEXT_KIND_COPY.short.hint,
+    blurb: 'Quick thoughts and updates',
     Icon: BubbleLinesIcon,
+    accent: '#38BDF8',
   },
   {
     key: 'story-message',
     href: '/create?kind=text&text=story',
     label: TEXT_KIND_COPY.story.label,
-    blurb: TEXT_KIND_COPY.story.hint,
+    blurb: 'Tell the full story',
     Icon: StoryIcon,
+    accent: '#9B7BFF',
   },
   {
     key: 'big-message',
     href: '/create?kind=text&text=big',
     label: TEXT_KIND_COPY.big.label,
-    blurb: TEXT_KIND_COPY.big.hint,
+    blurb: 'Make a statement',
     Icon: TextIcon,
+    accent: '#FF3D9A',
   },
-  OPTIONS[0],
-  OPTIONS[2],
-  OPTIONS[3],
+  {
+    key: 'photo',
+    href: '/create?kind=photo',
+    label: 'Photo',
+    blurb: 'Share your photos',
+    Icon: ImageIcon,
+    accent: '#3DDC97',
+  },
+  {
+    key: 'video',
+    href: '/create/video?upload=1',
+    label: 'Video',
+    blurb: 'Create or upload a video',
+    Icon: VideoIcon,
+    accent: '#FFB443',
+  },
 ] as const;
+
+type CreateKind = (typeof CREATE_KINDS)[number];
+
+/** One kind, as a coloured tile: its icon on its colour, its name, what it is for. */
+function KindTile({
+  kind,
+  layout,
+  onPick,
+  attribute,
+}: {
+  kind: CreateKind;
+  /** `row` in a list, `column` across a composer. */
+  layout: 'row' | 'column';
+  onPick?: () => void;
+  attribute: 'data-create-option' | 'data-create-quick';
+}) {
+  const { Icon } = kind;
+  return (
+    <Link
+      href={kind.href}
+      onClick={onPick}
+      {...{ [attribute]: kind.key }}
+      data-create-accent={kind.accent}
+      className={`group flex rounded-2xl border transition hover:-translate-y-0.5 ${
+        layout === 'row'
+          ? 'min-h-[76px] items-center gap-4 px-4 py-3'
+          : 'min-h-[118px] flex-col items-start justify-between gap-3 p-4'
+      }`}
+      style={{
+        borderColor: `${kind.accent}33`,
+        backgroundImage: `linear-gradient(150deg, ${kind.accent}1F 0%, ${kind.accent}08 70%)`,
+      }}
+    >
+      <span
+        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition group-hover:scale-105"
+        style={{ backgroundColor: `${kind.accent}2E`, color: kind.accent }}
+      >
+        <Icon width={21} height={21} />
+      </span>
+      <span className="min-w-0">
+        <span className="block font-semibold leading-tight">{kind.label}</span>
+        <span className="mt-0.5 block text-xs leading-snug text-white/50">{kind.blurb}</span>
+      </span>
+    </Link>
+  );
+}
 
 export function CreatePostMenu({
   /**
@@ -110,14 +176,17 @@ export function CreatePostMenu({
    */
   variant = 'button',
   className = '',
+  quiet = false,
 }: {
   /** `sidebar` is the desktop navigation's one big Create, with every option. */
   variant?: 'prompt' | 'button' | 'sidebar';
   className?: string;
+  /** The `button` as a secondary action, beside a primary one. */
+  quiet?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const sidebar = variant === 'sidebar';
-  const options = sidebar ? FULL_OPTIONS : OPTIONS;
+  const prompt = variant === 'prompt';
 
   // Escape closes it, like every other sheet in the app.
   useEffect(() => {
@@ -131,6 +200,20 @@ export function CreatePostMenu({
 
   return (
     <>
+      {/* On a desktop, the composer offers every kind at once, in colour —
+          one click each. On a phone it stays the card below, which opens the
+          sheet. */}
+      {prompt && (
+        <div className={`card hidden p-5 lg:block ${className}`} data-create-composer>
+          <p className="font-display text-lg font-bold">Create post</p>
+          <p className="text-sm text-white/45">What are you making today?</p>
+          <div className="mt-4 grid grid-cols-5 gap-2.5">
+            {CREATE_KINDS.map((kind) => (
+              <KindTile key={kind.key} kind={kind} layout="column" attribute="data-create-quick" />
+            ))}
+          </div>
+        </div>
+      )}
       <button
         type="button"
         onClick={() => setOpen(true)}
@@ -141,11 +224,11 @@ export function CreatePostMenu({
         // there is still the one on Home or the profile.
         {...(sidebar ? { 'data-sidebar-create': true } : { 'data-create-post': true })}
         className={
-          variant === 'prompt'
-            ? `card flex w-full items-center gap-3 p-4 text-left transition hover:bg-white/[0.06] ${className}`
+          prompt
+            ? `card flex w-full items-center gap-3 p-4 text-left transition hover:bg-white/[0.06] lg:hidden ${className}`
             : sidebar
               ? `btn-primary w-full py-3 text-[15px] ${className}`
-              : `btn-primary px-6 py-2.5 text-sm ${className}`
+              : `${quiet ? 'btn-ghost' : 'btn-primary'} px-6 py-2.5 text-sm ${className}`
         }
       >
         {sidebar ? (
@@ -200,27 +283,42 @@ export function CreatePostMenu({
                 </button>
               </div>
 
-              <div className={sidebar ? 'grid gap-2 sm:grid-cols-2' : 'space-y-2'}>
-                {options.map(({ key, href, label, blurb, Icon }) => (
-                  <Link
-                    key={key}
-                    href={href}
-                    onClick={() => setOpen(false)}
-                    data-create-option={key}
-                    // 60px, because these four are the whole point of the sheet
-                    // and a thumb should not have to aim.
-                    className="flex min-h-[60px] items-center gap-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left transition hover:bg-white/[0.07]"
-                  >
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-white/70">
-                      <Icon width={18} height={18} />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block font-semibold">{label}</span>
-                      <span className="block text-xs text-white/45">{blurb}</span>
-                    </span>
-                  </Link>
-                ))}
-              </div>
+              {sidebar ? (
+                <div className="grid gap-2.5 sm:grid-cols-2">
+                  {CREATE_KINDS.map((kind, i) => (
+                    <div key={kind.key} className={i === CREATE_KINDS.length - 1 ? 'sm:col-span-2' : ''}>
+                      <KindTile
+                        kind={kind}
+                        layout="row"
+                        attribute="data-create-option"
+                        onPick={() => setOpen(false)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {OPTIONS.map(({ key, href, label, blurb, Icon }) => (
+                    <Link
+                      key={key}
+                      href={href}
+                      onClick={() => setOpen(false)}
+                      data-create-option={key}
+                      // 60px, because these four are the whole point of the sheet
+                      // and a thumb should not have to aim.
+                      className="flex min-h-[60px] items-center gap-4 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left transition hover:bg-white/[0.07]"
+                    >
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/[0.06] text-white/70">
+                        <Icon width={18} height={18} />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block font-semibold">{label}</span>
+                        <span className="block text-xs text-white/45">{blurb}</span>
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </Portal>

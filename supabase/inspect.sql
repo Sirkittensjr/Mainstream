@@ -189,5 +189,18 @@ checks as (
          'Supabase Auth users',
          (select count(*) || ' total, ' || count(email_confirmed_at) || ' confirmed' from auth.users),
          'Informational.'
+
+  union all
+  select 15,
+         'Profile background photos (0013)',
+         case when exists (select 1 from information_schema.columns
+                           where table_schema='public' and table_name='users'
+                             and column_name='profile_cover_url')
+              then 'installed' else 'not installed' end,
+         case when exists (select 1 from information_schema.columns
+                           where table_schema='public' and table_name='users'
+                             and column_name='profile_cover_url')
+              then 'Good.'
+              else 'Migration 0013 adds it (additive). Until then profiles keep their colours and a background photo cannot be saved.' end
 )
 select check_name, result, verdict from checks order by ord;

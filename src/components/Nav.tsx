@@ -192,7 +192,7 @@ export function Sidebar({ user }: { user: NavUser | null }) {
   return (
     <aside
       data-sidebar
-      className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col overflow-y-auto border-r border-white/[0.06] px-3 py-6 lg:flex xl:w-[248px] 2xl:w-[272px] 2xl:px-4"
+      className="sticky top-0 hidden h-dvh w-60 shrink-0 flex-col overflow-y-auto border-r border-white/[0.06] bg-ink-950/60 px-3 py-6 lg:flex xl:w-[248px] 2xl:w-[272px] 2xl:px-4"
     >
       <Link href="/home" className="mb-7 flex items-center gap-2 px-3.5">
         <Logo />

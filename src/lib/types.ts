@@ -79,6 +79,12 @@ export interface User {
   profile_bg?: string | null;
   profile_box?: string | null;
   /**
+   * A picture filling the profile's background: the address of an image in
+   * FayTarra's own storage, never the image. Null or absent means the colour
+   * above is used. Optional because migration 0013 may not have been run.
+   */
+  profile_cover_url?: string | null;
+  /**
    * The three accounts this person picked as their favourites, in their order.
    * Empty or absent means the default: the first three accounts they followed.
    * Optional for the same reason as the colours — migration 0006 may not have

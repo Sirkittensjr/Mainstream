@@ -15,8 +15,8 @@ has never been installed.
 
 | Row 1 says | Run |
 | --- | --- |
-| `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including every migration — `0012` included. |
-| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`, `0006`, `0007`, `0008`, `0009`, `0010`, `0011` and `0012`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
+| `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including every migration — `0013` included. |
+| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`, `0006`, `0007`, `0008`, `0009`, `0010`, `0011`, `0012` and `0013`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
 | anything between | Stop and ask. A half-installed schema needs looking at, not a migration. |
 
 If the storage bucket row shows `none`, create it in the dashboard
@@ -458,3 +458,22 @@ and `0012` in `schema.note` — though, like every column check there, only once
 Before this, a missing column made the app quietly drop the kind and post the
 words anyway, so a Big Message arrived in the feed as a small white Short
 Message and a Story lost its title for good. That is why it refuses now.
+
+## 0013_profile_cover.sql
+
+Profile background photos. Additive, safe to run twice.
+
+| Step | Statement | What it touches | Risk |
+| --- | --- | --- | --- |
+| 1 | `add column if not exists profile_cover_url text` on `users` | One nullable column | None. Null reads as "no photo" |
+| 2 | `grant select` to anon and authenticated, `grant update` to authenticated, on that column | Two grants | None. Same shape as `0005`; RLS still limits updates to your own row |
+
+It stores the ADDRESS of a picture in the `faytarra-media` bucket, never the
+picture. The app only saves an address that points at an image it uploaded and
+checked itself, and only for the signed-in person's own row.
+
+**Not running it** changes nothing that exists: every profile keeps its colour
+or gradient, and Edit profile says background photos are not switched on yet
+instead of offering the upload. `/api/health` lists `users.profile_cover_url`
+under `schema.missingColumns` until it has been run.
+

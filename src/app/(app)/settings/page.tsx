@@ -7,8 +7,13 @@ import { UsernameForm } from './UsernameForm';
 import { UnblockButton } from './UnblockButton';
 import { SettingsForm } from './SettingsForm';
 import { ProfileColours } from './ProfileColours';
+import { ProfileCover } from './ProfileCover';
 import { DangerZone } from './DangerZone';
-import { blockedList, profileColoursSupported } from '@/lib/services/users';
+import {
+  blockedList,
+  profileColoursSupported,
+  profileCoverSupported,
+} from '@/lib/services/users';
 import { requireViewer } from '@/lib/session';
 import { supabaseConfigured } from '@/lib/db';
 
@@ -43,11 +48,27 @@ export default async function SettingsPage() {
           />
         </section>
 
-        <section className="card p-6">
-          <h2 className="font-display text-xl font-bold">Profile colours</h2>
+        <section className="card p-6" data-profile-appearance>
+          <h2 className="font-display text-xl font-bold">Profile appearance</h2>
           <p className="mt-1 text-sm text-white/50">
-            The background behind your profile and the boxes on it. Everyone who visits your
-            profile sees them.
+            What your profile is painted on. Everyone who visits it sees this.
+          </p>
+
+          <h3 className="label mt-6">Background photo</h3>
+          <p className="mt-1 text-sm text-white/45">
+            A picture behind your whole profile. Remove it any time to go back to your colour.
+          </p>
+          <div className="mt-3">
+            <ProfileCover
+              current={viewer.profile_cover_url ?? null}
+              available={profileCoverSupported(viewer)}
+            />
+          </div>
+
+          <h3 className="mt-8 font-display text-lg font-bold">Profile colours</h3>
+          <p className="mt-1 text-sm text-white/50">
+            A colour or gradient for the background — shown when there is no photo, and while one
+            loads — and the colour of the boxes on it.
           </p>
           <div className="mt-5">
             <ProfileColours

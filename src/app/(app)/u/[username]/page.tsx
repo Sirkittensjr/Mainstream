@@ -16,9 +16,10 @@ import { RateButton } from '@/components/RateSheet';
 import { formatCount } from '@/lib/format';
 import { profileSkin } from '@/lib/profile-theme';
 import { formatVotes, topReactions } from '@/lib/ratings';
-import { PlusIcon } from '@/components/Icons';
+import { PencilIcon, PlusIcon } from '@/components/Icons';
+import { ProfileBackdrop } from '@/components/ProfileBackdrop';
 import { CreatePostMenu } from '@/components/CreatePostMenu';
-import { shelfFor, type PostShelf } from '@/lib/media';
+import { mediaKindForUrl, sanitiseAvatarUrl, shelfFor, type PostShelf } from '@/lib/media';
 import { TextPostForm } from './TextPostForm';
 import { hydratePosts, postsByAuthor } from '@/lib/services/posts';
 import { myRating, userRating } from '@/lib/services/ratings';
@@ -134,19 +135,42 @@ export default async function ProfilePage({
   })}`;
   const rated = rating.overallVotes > 0;
 
+  // The owner's background photo, if it is still a picture FayTarra stored.
+  // Checked here as well as when it was saved: the row can be written through
+  // the API too, and a profile is never pointed at anybody else's server.
+  const storedCover = sanitiseAvatarUrl(user.profile_cover_url);
+  const cover = storedCover && mediaKindForUrl(storedCover) === 'image' ? storedCover : null;
+
   // The owner's colours, or null when they have not picked any. Only custom
   // properties come out of this — the layout below is the same either way.
-  const skin = profileSkin(user.profile_bg, user.profile_box);
+  const skin = profileSkin(user.profile_bg, user.profile_box, { photo: Boolean(cover) });
+  // A gradient or a photo is painted by the backdrop behind the whole page;
+  // the column must not cover it with the gradient's flat stand-in colour.
+  const seeThrough = Boolean(cover || skin?.background?.gradient);
 
   return (
     <>
       <PageTopBar title={`@${user.username}`} />
+      {/* Behind everything — sidebar, profile and rail — not just this column. */}
+      <ProfileBackdrop background={skin?.background ?? null} photo={cover} />
       <div
         className={skin ? 'profile-skin min-h-[100dvh]' : undefined}
-        style={skin?.style as React.CSSProperties | undefined}
+        style={
+          skin
+            ? ({
+                ...skin.style,
+                ...(seeThrough ? { backgroundColor: 'transparent' } : {}),
+              } as React.CSSProperties)
+            : undefined
+        }
         data-profile-skin={skin ? 'on' : undefined}
+        data-profile-cover={cover ? 'photo' : undefined}
       >
-        <div className="mx-auto max-w-2xl px-4 pt-4 lg:pt-8">
+        {/* Wider on a desktop: the profile is the page, not a card in it. */}
+        <div className="mx-auto max-w-2xl px-4 pt-4 lg:max-w-[880px] lg:px-6 lg:pt-0">
+          {/* On a desktop, a window onto the background before the card starts —
+              the owner's colour or photo, with the picture overlapping it. */}
+          <div aria-hidden className="hidden h-28 lg:block" />
           {/* `relative z-10`, and it is load-bearing. `.card` carries
               `backdrop-blur-xl`, and a backdrop-filter creates a stacking
               context — so the ••• menu's `z-40` dropdown is trapped inside this
@@ -155,21 +179,30 @@ export default async function ProfilePage({
               count badge landing on "Block" made that button unclickable. Raising
               the header itself is what lets the menu inside it win; it changes no
               layout, only paint order. */}
-          <header className="card relative z-10 p-6">
-            <div className="flex items-start gap-4">
-              <Avatar
-                username={user.username}
-                displayName={user.display_name}
-                src={user.avatar_url}
-                size="xl"
-                href={false}
-              />
-              <div className="min-w-0 flex-1">
-                <h1 className="flex min-w-0 items-center gap-2 font-display text-2xl font-extrabold tracking-tight">
+          {/* On a desktop the order changes, and only the order: who this is,
+              then what you can do here, then everything else. One copy of each
+              control either way — the buttons move up with `order`, they are not
+              drawn twice. */}
+          <header
+            className="card relative z-10 flex flex-col p-6 lg:px-8 lg:pb-8 lg:pt-0"
+            data-profile-header
+          >
+            <div className="flex items-start gap-4 lg:order-1 lg:items-end lg:gap-6">
+              <span className="shrink-0 rounded-full lg:-mt-16 lg:ring-[6px] lg:ring-ink-900/90">
+                <Avatar
+                  username={user.username}
+                  displayName={user.display_name}
+                  src={user.avatar_url}
+                  size="profile"
+                  href={false}
+                />
+              </span>
+              <div className="min-w-0 flex-1 lg:pb-1">
+                <h1 className="flex min-w-0 items-center gap-2 font-display text-2xl font-extrabold tracking-tight lg:text-4xl">
                   <span className="truncate">{user.display_name}</span>
                   {isAdminRole(user.role) && <AdminBadge size="md" />}
                 </h1>
-                <p className="text-white/45">@{user.username}</p>
+                <p className="text-white/45 lg:mt-1 lg:text-lg">@{user.username}</p>
                 {user.status === 'suspended' && (
                   <span className="chip mt-2 border-fay/40 bg-fay/10 text-fay">Suspended</span>
                 )}
@@ -177,13 +210,13 @@ export default async function ProfilePage({
             </div>
 
             {user.bio && (
-              <p className="mt-4 whitespace-pre-wrap text-[15px] leading-relaxed text-white/80">
+              <p className="mt-4 whitespace-pre-wrap text-[15px] leading-relaxed text-white/80 lg:order-3 lg:mt-6 lg:max-w-[62ch] lg:text-base">
                 {user.bio}
               </p>
             )}
 
             {user.interests.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
+              <div className="mt-3 flex flex-wrap gap-2 lg:order-3 lg:mt-4">
                 {user.interests.map((interest) => (
                   <Link
                     key={interest}
@@ -195,54 +228,63 @@ export default async function ProfilePage({
                 ))}
               </div>
             )}
-            {user.location && <p className="mt-3 text-sm text-white/35">📍 {user.location}</p>}
+            {user.location && (
+              <p className="mt-3 text-sm text-white/35 lg:order-3">📍 {user.location}</p>
+            )}
 
-            <div className="mt-5 flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm">
-              <Stat
-                label="Followers"
-                value={formatCount(stats.followers)}
-                href={`/u/${user.username}/followers`}
-              />
-              <Stat
-                label="Following"
-                value={formatCount(stats.following)}
-                href={`/u/${user.username}/following`}
-              />
-              <Stat label="Posts" value={formatCount(stats.posts)} />
-            </div>
-
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <div className="rounded-2xl border border-white/[0.07] bg-black/20 p-4">
-                <p className="label">Overall</p>
-                <div className="mt-2">
-                  <RatingPill
-                    value={rated ? rating.overall : null}
-                    size="lg"
-                    votes={rating.overallVotes}
-                  />
-                </div>
-                <p className="mt-2 text-xs text-white/35">
-                  {rated ? formatVotes(rating.overallVotes) : 'Not rated yet'}
-                </p>
+            {/* The numbers. A phone keeps its line of three and its two rating
+                boxes; a desktop lays all five out as one row of tiles. */}
+            <div className="lg:order-3 lg:mt-7 lg:grid lg:grid-cols-[3fr_2fr] lg:gap-3">
+              <div
+                className="mt-5 flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm lg:mt-0 lg:grid lg:grid-cols-3 lg:items-stretch lg:gap-3"
+                data-profile-stats
+              >
+                <Stat label="Posts" value={formatCount(stats.posts)} />
+                <Stat
+                  label="Followers"
+                  value={formatCount(stats.followers)}
+                  href={`/u/${user.username}/followers`}
+                />
+                <Stat
+                  label="Following"
+                  value={formatCount(stats.following)}
+                  href={`/u/${user.username}/following`}
+                />
               </div>
-              <div className="rounded-2xl border border-white/[0.07] bg-black/20 p-4">
-                <p className="label">Last 30 days</p>
-                <div className="mt-2">
-                  <RatingPill
-                    value={rating.recentVotes > 0 ? rating.recent : null}
-                    trend={rating.trend}
-                    size="lg"
-                    votes={rating.recentVotes}
-                  />
+
+              <div className="mt-5 grid grid-cols-2 gap-3 lg:mt-0">
+                <div className="rounded-2xl border border-white/[0.07] bg-black/20 p-4">
+                  <p className="label">Overall</p>
+                  <div className="mt-2">
+                    <RatingPill
+                      value={rated ? rating.overall : null}
+                      size="lg"
+                      votes={rating.overallVotes}
+                    />
+                  </div>
+                  <p className="mt-2 text-xs text-white/35">
+                    {rated ? formatVotes(rating.overallVotes) : 'Not rated yet'}
+                  </p>
                 </div>
-                <p className="mt-2 text-xs text-white/35">
-                  {rating.recentVotes > 0 ? formatVotes(rating.recentVotes) : 'No ratings this month'}
-                </p>
+                <div className="rounded-2xl border border-white/[0.07] bg-black/20 p-4">
+                  <p className="label">Last 30 days</p>
+                  <div className="mt-2">
+                    <RatingPill
+                      value={rating.recentVotes > 0 ? rating.recent : null}
+                      trend={rating.trend}
+                      size="lg"
+                      votes={rating.recentVotes}
+                    />
+                  </div>
+                  <p className="mt-2 text-xs text-white/35">
+                    {rating.recentVotes > 0 ? formatVotes(rating.recentVotes) : 'No ratings this month'}
+                  </p>
+                </div>
               </div>
             </div>
 
             {ranks.overall ? (
-              <p className="mt-3 text-sm text-white/50">
+              <p className="mt-3 text-sm text-white/50 lg:order-3">
                 <Link href="/discover" className="font-semibold text-white hover:underline">
                   #{ranks.overall}
                 </Link>{' '}
@@ -252,7 +294,7 @@ export default async function ProfilePage({
                   : ''}
               </p>
             ) : (
-              <p className="mt-3 text-sm text-white/35">
+              <p className="mt-3 text-sm text-white/35 lg:order-3">
                 {isSelf
                   ? 'Not ranked yet — rankings build as more people rate you.'
                   : 'Not ranked yet.'}
@@ -260,7 +302,7 @@ export default async function ProfilePage({
             )}
 
             {topReactions(rating.reactions, 4).length > 0 && (
-              <div className="mt-4">
+              <div className="mt-4 lg:order-3">
                 <ReactionBar reactions={topReactions(rating.reactions, 4)} />
               </div>
             )}
@@ -268,29 +310,42 @@ export default async function ProfilePage({
             {/* Directly under the rating, and deliberately small: three names
                 the owner picked, not a leaderboard. */}
             {!blocked && (
-              <TopCreators
-                slots={top.slots}
-                owner={`@${user.username}`}
-                canEdit={isSelf}
-                options={pickable.map((person) => ({
-                  id: person.id,
-                  username: person.username,
-                  displayName: person.display_name,
-                  avatarUrl: person.avatar_url,
-                }))}
-              />
+              <div className="lg:order-3 lg:mt-2">
+                <TopCreators
+                  slots={top.slots}
+                  owner={`@${user.username}`}
+                  canEdit={isSelf}
+                  options={pickable.map((person) => ({
+                    id: person.id,
+                    username: person.username,
+                    displayName: person.display_name,
+                    avatarUrl: person.avatar_url,
+                  }))}
+                />
+              </div>
             )}
 
-            <div className="mt-5 flex flex-wrap items-center gap-2">
+            <div
+              className="mt-5 flex flex-wrap items-center gap-2 lg:order-2 lg:mt-6 lg:gap-3"
+              data-profile-actions
+            >
               {isSelf ? (
                 <>
-                  <Link href="/settings" className="btn-ghost px-6 py-2.5 text-sm">
-                    Edit profile
+                  <Link
+                    href="/settings"
+                    data-edit-profile
+                    className="btn-primary min-h-[48px] px-7 text-[15px] lg:min-h-[52px] lg:px-8 lg:text-base"
+                  >
+                    <PencilIcon width={18} height={18} /> Edit profile
                   </Link>
                   {/* The general way in, beside Edit profile: Photo, Text,
                       Upload video, Record video. Record video opens the same
                       VideoStudio the `+` button does, by the same route. */}
-                  <CreatePostMenu variant="button" />
+                  <CreatePostMenu
+                    variant="button"
+                    quiet
+                    className="min-h-[48px] px-6 text-[15px] lg:min-h-[52px] lg:text-base"
+                  />
                 </>
               ) : (
                 <>
@@ -330,7 +385,7 @@ export default async function ProfilePage({
 
           {/* Scrollable, because four chips and a count each do not fit across a
               small phone — and cutting one off the end would hide a whole shelf. */}
-          <nav className="profile-tabs -mx-4 mt-6 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <nav className="profile-tabs -mx-4 mt-6 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] lg:mx-0 lg:gap-1.5 lg:rounded-2xl lg:border lg:border-white/[0.08] lg:bg-ink-950/60 lg:p-1.5 lg:backdrop-blur-xl [&::-webkit-scrollbar]:hidden">
             {TABS.map((entry) => (
               // A plain anchor, not a `<Link>`, and deliberately. The shelf lives
               // in a search param on a `force-dynamic` page, and a client-side
@@ -350,7 +405,7 @@ export default async function ProfilePage({
                 // for a filter and too small for the navigation these four are:
                 // the shelves are how somebody gets at their own videos, photos
                 // and writing, so they are given a thumb-sized target.
-                className={`chip min-h-[44px] shrink-0 px-4 text-sm capitalize ${tab === entry ? 'chip-active' : 'hover:bg-white/10'}`}
+                className={`chip min-h-[44px] shrink-0 px-4 text-sm capitalize lg:min-h-[48px] lg:flex-1 lg:justify-center lg:rounded-xl lg:text-[15px] lg:font-semibold ${tab === entry ? 'chip-active' : 'hover:bg-white/10'}`}
               >
                 {entry}
                 {entry !== 'about' && counts[entry] > 0 && (
@@ -451,19 +506,30 @@ export default async function ProfilePage({
 function Stat({ label, value, href }: { label: string; value: string; href?: string }) {
   const inner = (
     <>
-      <span className="font-display text-base font-bold">{value}</span>
-      <span className="text-white/40">{label}</span>
+      <span className="font-display text-base font-bold lg:text-3xl lg:leading-none">{value}</span>
+      <span className="text-white/40 lg:text-sm">{label}</span>
     </>
   );
+  // On a desktop each number is a tile of its own, like the two ratings beside it.
+  const tile =
+    'lg:mx-0 lg:min-h-[108px] lg:flex-col lg:items-start lg:justify-between lg:gap-3 lg:rounded-2xl lg:border lg:border-white/[0.07] lg:bg-black/20 lg:p-4';
 
   if (!href) {
-    return <span className="flex items-baseline gap-1.5">{inner}</span>;
+    return (
+      <span
+        className={`-mx-2 flex min-h-[44px] items-baseline gap-1.5 rounded-xl px-2 py-2.5 ${tile}`}
+        data-profile-stat={label.toLowerCase()}
+      >
+        {inner}
+      </span>
+    );
   }
 
   return (
     <Link
       href={href}
-      className="-mx-2 flex min-h-[44px] items-baseline gap-1.5 rounded-xl px-2 py-2.5 transition hover:bg-white/[0.06]"
+      data-profile-stat={label.toLowerCase()}
+      className={`-mx-2 flex min-h-[44px] items-baseline gap-1.5 rounded-xl px-2 py-2.5 transition hover:bg-white/[0.06] ${tile}`}
     >
       {inner}
     </Link>

@@ -6,6 +6,7 @@ import { updateProfileColoursAction } from '@/app/actions';
 import {
   PROFILE_COLORS,
   PROFILE_DEFAULT,
+  PROFILE_GRADIENTS,
   profileSkin,
   type ProfileColor,
 } from '@/lib/profile-theme';
@@ -86,7 +87,12 @@ export function ProfileColours({
       )}
       <div
         className="profile-skin rounded-3xl p-4"
-        style={(skin?.style ?? {}) as React.CSSProperties}
+        style={
+          {
+            ...(skin?.style ?? {}),
+            backgroundImage: skin?.background?.gradient,
+          } as React.CSSProperties
+        }
       >
         <div className="card p-4">
           <p className="font-display text-lg font-bold">Your profile</p>
@@ -105,6 +111,7 @@ export function ProfileColours({
         name="profile-bg"
         value={bg}
         disabled={!available}
+        gradients
         onChange={(next) => pick(next, surface)}
       />
       <Swatches
@@ -150,12 +157,15 @@ function Swatches({
   name,
   value,
   disabled,
+  gradients = false,
   onChange,
 }: {
   legend: string;
   name: string;
   value: string;
   disabled: boolean;
+  /** Backgrounds also offer the FayTarra gradients; boxes are one colour. */
+  gradients?: boolean;
   onChange: (next: string) => void;
 }) {
   return (
@@ -181,6 +191,18 @@ function Swatches({
             onSelect={() => onChange(colour.key)}
           />
         ))}
+        {gradients &&
+          PROFILE_GRADIENTS.map((gradient) => (
+            <Swatch
+              key={gradient.key}
+              label={gradient.label}
+              colour={gradient}
+              selected={value === gradient.key}
+              name={name}
+              disabled={disabled}
+              onSelect={() => onChange(gradient.key)}
+            />
+          ))}
       </div>
     </fieldset>
   );
@@ -215,7 +237,7 @@ function Swatch({
       }`}
       style={
         colour
-          ? { backgroundColor: colour.hex }
+          ? { backgroundColor: colour.hex, backgroundImage: colour.gradient }
           : { backgroundImage: 'linear-gradient(135deg,#7C5CFF,#FF3D9A 55%,#FFB443)' }
       }
     />
