@@ -19,7 +19,18 @@ import { formatVotes, topReactions } from '@/lib/ratings';
 import { PencilIcon, PlusIcon } from '@/components/Icons';
 import { ProfileBackdrop } from '@/components/ProfileBackdrop';
 import { CreatePostMenu } from '@/components/CreatePostMenu';
-import { mediaKindForUrl, sanitiseAvatarUrl, shelfFor, type PostShelf } from '@/lib/media';
+import { mediaKindForUrl, sanitiseAvatarUrl } from '@/lib/media';
+import { ProfileShelves } from '@/components/ProfileShelves';
+import {
+  PROFILE_TABS,
+  profileTabFrom,
+  shelfHref,
+  shelfLimit,
+  shelfPages,
+  SHELF_MAX,
+  type ProfileShelf,
+  type ProfileTab,
+} from '@/lib/profile-shelves';
 import { TextPostForm } from './TextPostForm';
 import { hydratePosts, postsByAuthor } from '@/lib/services/posts';
 import { myRating, userRating } from '@/lib/services/ratings';
@@ -48,31 +59,28 @@ export async function generateMetadata({
 }
 
 /**
- * The profile's shelves.
+ * The profile's shelves — see `PROFILE_TABS`.
  *
- * Posts first, because Posts is where a profile opens — a bar whose first chip is
- * not the one filled in reads as a bug. Each shelf is the same list filtered by
- * what its posts carry — see `shelfFor` — so nothing was migrated and an old post
- * lands on the right one the first time somebody looks.
+ * Posts is everything somebody has posted, newest first: photos, videos and
+ * written posts alike. Videos and Text are that same list filtered by what each
+ * post carries — see `shelfFor` — so nothing was migrated and an old post lands
+ * on the right one the first time somebody looks.
  *
- * Their owner also gets a way to ADD to two of them here: a pre-recorded video
- * under Videos, and a written post under Text. Both are also in the Create post
- * sheet at the top of the page; these are the same destinations, offered next to
- * the thing they make.
+ * Their owner also gets a way to ADD to them here: a photo post under Posts, a
+ * pre-recorded video under Videos, and a written post under Text. All are also in
+ * the Create post sheet at the top of the page; these are the same destinations,
+ * offered next to the thing they make.
  */
-const TABS = ['posts', 'videos', 'text', 'about'] as const;
-
-/** What an empty shelf says. Three lists deserve three answers. */
-const SHELF_EMPTY: Record<PostShelf, { title: string; mine: string; theirs: string }> = {
+const SHELF_EMPTY: Record<ProfileShelf, { title: string; mine: string; theirs: string }> = {
   videos: {
     title: 'No videos yet',
     mine: 'Record one with the + button, or upload one you already have.',
     theirs: 'has not posted a video yet. Follow to be there when they do.',
   },
   posts: {
-    title: 'No photo posts yet',
-    mine: 'A photo and something to say. It shows up here.',
-    theirs: 'has not posted a photo yet. Follow to be there when they do.',
+    title: 'No posts yet',
+    mine: 'Photos, videos and anything you write all show up here.',
+    theirs: 'has not posted anything yet. Follow to be there when they do.',
   },
   text: {
     title: 'Nothing written yet',
@@ -90,10 +98,7 @@ export default async function ProfilePage({
 }) {
   const { username } = await params;
   const { tab: tabParam, show } = await searchParams;
-  const tab = TABS.includes((tabParam ?? '') as (typeof TABS)[number])
-    ? (tabParam as (typeof TABS)[number])
-    : 'posts';
-  const shelf = tab === 'about' ? null : (tab as PostShelf);
+  const tab = profileTabFrom(tabParam);
 
   const user = await getUserByUsername(username);
   if (!user) notFound();
@@ -117,22 +122,19 @@ export default async function ProfilePage({
       isSelf ? eligibleCreators(user.id) : Promise.resolve([]),
     ]);
 
-  const requested = Number.parseInt(show ?? '', 10);
-  const limit = Number.isFinite(requested) ? Math.min(Math.max(requested, 20), 200) : 20;
   // One query, three shelves. The filter is on what a post carries rather than on
   // a column, so `postsByAuthor` — and the rule it already applies about what a
   // given viewer may see — is untouched.
-  const shelved = shelf ? allPosts.filter((post) => shelfFor(post.media) === shelf) : [];
-  const posts = blocked ? [] : await hydratePosts(shelved.slice(0, limit), viewer?.id ?? null);
-  const counts = {
-    videos: allPosts.filter((post) => shelfFor(post.media) === 'videos').length,
-    posts: allPosts.filter((post) => shelfFor(post.media) === 'posts').length,
-    text: allPosts.filter((post) => shelfFor(post.media) === 'text').length,
-  };
-  const moreHref = `/u/${user.username}?${new URLSearchParams({
-    ...(tab === 'posts' ? {} : { tab }),
-    show: String(Math.min(limit + 20, 200)),
-  })}`;
+  //
+  // Every shelf's first page is rendered now, so switching tab in the browser
+  // is instant and needs nothing from the server. The open shelf goes as far as
+  // `?show=` asked; the others stop at their first page; and the posts on those
+  // pages are hydrated together, once — never the whole profile.
+  const { shelves, wanted } = shelfPages(allPosts, tab, shelfLimit(show));
+  const hydrated = blocked ? [] : await hydratePosts(wanted, viewer?.id ?? null);
+  const views = new Map(hydrated.map((view) => [view.post.id, view]));
+  const pageOf = (shelf: ProfileShelf) =>
+    shelves[shelf].page.flatMap((post) => views.get(post.id) ?? []);
   const rated = rating.overallVotes > 0;
 
   // The owner's background photo, if it is still a picture FayTarra stored.
@@ -383,112 +385,125 @@ export default async function ProfilePage({
             </div>
           </header>
 
-          {/* Scrollable, because four chips and a count each do not fit across a
-              small phone — and cutting one off the end would hide a whole shelf. */}
-          <nav className="profile-tabs -mx-4 mt-6 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] lg:mx-0 lg:gap-1.5 lg:rounded-2xl lg:border lg:border-white/[0.08] lg:bg-ink-950/60 lg:p-1.5 lg:backdrop-blur-xl [&::-webkit-scrollbar]:hidden">
-            {TABS.map((entry) => (
-              // A plain anchor, not a `<Link>`, and deliberately. The shelf lives
-              // in a search param on a `force-dynamic` page, and a client-side
-              // navigation that only changes a search param was intermittently
-              // applied as no change at all: the click fired, the RSC request was
-              // answered 200, and the URL never moved — so tapping a shelf did
-              // nothing perhaps a third of the time. `prefetch={false}` reduced it
-              // without fixing it. A full navigation cannot be swallowed, and this
-              // is a page-level view switch rather than an in-page interaction, so
-              // the cost is a reload the server was doing all of anyway.
-              <a
-                key={entry}
-                href={entry === 'posts' ? `/u/${user.username}` : `/u/${user.username}?tab=${entry}`}
-                data-profile-tab={entry}
-                aria-current={tab === entry ? 'page' : undefined}
-                // A `chip`'s own padding makes a 34px-tall pill, which is fine
-                // for a filter and too small for the navigation these four are:
-                // the shelves are how somebody gets at their own videos, photos
-                // and writing, so they are given a thumb-sized target.
-                className={`chip min-h-[44px] shrink-0 px-4 text-sm capitalize lg:min-h-[48px] lg:flex-1 lg:justify-center lg:rounded-xl lg:text-[15px] lg:font-semibold ${tab === entry ? 'chip-active' : 'hover:bg-white/10'}`}
-              >
-                {entry}
-                {entry !== 'about' && counts[entry] > 0 && (
-                  <span className="tabular-nums opacity-60">{counts[entry]}</span>
-                )}
-              </a>
-            ))}
-          </nav>
-
-          <div className="mt-4 space-y-4 pb-10">
-            {blocked ? (
-              <EmptyState
-                title="This profile is hidden"
-                body="One of you has blocked the other, so posts are not shown."
-              />
-            ) : tab === 'about' ? (
-              <section className="card p-6">
-                <h2 className="font-display text-lg font-bold">About</h2>
-                <dl className="mt-4 space-y-3 text-sm">
-                  <Row label="Joined" value={formatMonthYear(user.created_at)} />
-                  <Row label="Into" value={user.interests.join(', ') || '—'} />
-                  <Row label="Location" value={user.location ?? 'Not shared'} />
-                  <Row label="Posts" value={String(stats.posts)} />
-                  <Row label="Likes received" value={formatCount(stats.likesReceived)} />
-                  <Row
-                    label="Ratings received"
-                    value={rated ? formatVotes(rating.overallVotes) : 'None yet'}
-                  />
-                </dl>
-              </section>
-            ) : (
-              <>
-                {/* The owner's way to ADD to this shelf. Videos and Text are the
-                    two kinds of creation that used to live behind the Create
-                    page's toggle; they are here now, next to what they make.
-                    Photos keep their own page, which is what /create is. */}
-                {isSelf && shelf === 'videos' && (
-                  <Link
-                    href="/create/video?upload=1"
-                    data-upload-video
-                    className="btn-ghost min-h-[52px] w-full py-3.5"
-                  >
-                    <PlusIcon width={17} height={17} /> Upload a video you already have
-                  </Link>
-                )}
-                {isSelf && shelf === 'posts' && (
-                  <Link
-                    href="/create"
-                    data-new-photo-post
-                    className="btn-ghost min-h-[52px] w-full py-3.5"
-                  >
-                    <PlusIcon width={17} height={17} /> New photo post
-                  </Link>
-                )}
-                {isSelf && shelf === 'text' && <TextPostForm />}
-
-                <PostList
-                  posts={posts}
-                  viewerId={viewer?.id ?? null}
-                  empty={
+          <ProfileShelves
+            tabs={PROFILE_TABS.map((entry) => ({
+              tab: entry,
+              href: shelfHref(
+                user.username,
+                entry,
+                entry === 'about' ? undefined : shelves[entry].limit,
+              ),
+              count: entry === 'about' ? null : shelves[entry].all.length,
+            }))}
+            panels={
+              Object.fromEntries(
+                PROFILE_TABS.map((entry) => [
+                  entry,
+                  blocked ? (
                     <EmptyState
-                      title={SHELF_EMPTY[shelf ?? 'posts'].title}
-                      body={
-                        isSelf
-                          ? SHELF_EMPTY[shelf ?? 'posts'].mine
-                          : `${user.display_name} ${SHELF_EMPTY[shelf ?? 'posts'].theirs}`
-                      }
-                      cta={
-                        isSelf && shelf === 'videos'
-                          ? { href: '/create/video', label: 'Record a video' }
-                          : isSelf && shelf === 'posts'
-                            ? { href: '/create', label: 'New photo post' }
-                            : undefined
-                      }
+                      title="This profile is hidden"
+                      body="One of you has blocked the other, so posts are not shown."
                     />
-                  }
-                />
-                <LoadMore href={moreHref} hasMore={shelved.length > posts.length} />
-              </>
-            )}
-          </div>
+                  ) : entry === 'about' ? (
+                    <section className="card p-6">
+                      <h2 className="font-display text-lg font-bold">About</h2>
+                      <dl className="mt-4 space-y-3 text-sm">
+                        <Row label="Joined" value={formatMonthYear(user.created_at)} />
+                        <Row label="Into" value={user.interests.join(', ') || '—'} />
+                        <Row label="Location" value={user.location ?? 'Not shared'} />
+                        <Row label="Posts" value={String(stats.posts)} />
+                        <Row label="Likes received" value={formatCount(stats.likesReceived)} />
+                        <Row
+                          label="Ratings received"
+                          value={rated ? formatVotes(rating.overallVotes) : 'None yet'}
+                        />
+                      </dl>
+                    </section>
+                  ) : (
+                    <Shelf
+                      shelf={entry}
+                      posts={pageOf(entry)}
+                      hasMore={shelves[entry].all.length > shelves[entry].page.length}
+                      moreHref={shelfHref(
+                        user.username,
+                        entry,
+                        Math.min(shelves[entry].limit + 20, SHELF_MAX),
+                      )}
+                      isSelf={isSelf}
+                      viewerId={viewer?.id ?? null}
+                      displayName={user.display_name}
+                    />
+                  ),
+                ]),
+              ) as Record<ProfileTab, React.ReactNode>
+            }
+          />
         </div>
       </div>
+    </>
+  );
+}
+
+/**
+ * One shelf of posts: the owner's way to add to it, its first page, and more.
+ */
+function Shelf({
+  shelf,
+  posts,
+  hasMore,
+  moreHref,
+  isSelf,
+  viewerId,
+  displayName,
+}: {
+  shelf: ProfileShelf;
+  posts: Awaited<ReturnType<typeof hydratePosts>>;
+  hasMore: boolean;
+  moreHref: string;
+  isSelf: boolean;
+  viewerId: string | null;
+  displayName: string;
+}) {
+  return (
+    <>
+      {/* The owner's way to ADD to this shelf. Videos and Text are the
+          two kinds of creation that used to live behind the Create
+          page's toggle; they are here now, next to what they make.
+          Photos keep their own page, which is what /create is. */}
+      {isSelf && shelf === 'videos' && (
+        <Link
+          href="/create/video?upload=1"
+          data-upload-video
+          className="btn-ghost min-h-[52px] w-full py-3.5"
+        >
+          <PlusIcon width={17} height={17} /> Upload a video you already have
+        </Link>
+      )}
+      {isSelf && shelf === 'posts' && (
+        <Link href="/create" data-new-photo-post className="btn-ghost min-h-[52px] w-full py-3.5">
+          <PlusIcon width={17} height={17} /> New photo post
+        </Link>
+      )}
+      {isSelf && shelf === 'text' && <TextPostForm />}
+
+      <PostList
+        posts={posts}
+        viewerId={viewerId}
+        empty={
+          <EmptyState
+            title={SHELF_EMPTY[shelf].title}
+            body={isSelf ? SHELF_EMPTY[shelf].mine : `${displayName} ${SHELF_EMPTY[shelf].theirs}`}
+            cta={
+              isSelf && shelf === 'videos'
+                ? { href: '/create/video', label: 'Record a video' }
+                : isSelf && shelf === 'posts'
+                  ? { href: '/create', label: 'New photo post' }
+                  : undefined
+            }
+          />
+        }
+      />
+      <LoadMore href={moreHref} hasMore={hasMore} />
     </>
   );
 }

@@ -312,8 +312,8 @@ async function run() {
 
   // Your own posts, on the surfaces that show them to you.
   await shows(A, 'Home / Following', '/home?tab=following', customMedia.poster);
-  // A profile keeps videos on their own shelf now, so a video post is on
-  // `?tab=videos` rather than on the profile's default (photo) shelf.
+  // A profile keeps videos on a shelf of their own, `?tab=videos`, as well as on
+  // Posts with everything else; the Videos shelf is the one that must show it.
   await shows(A, 'the profile', `/u/${A.handle}?tab=videos`, customMedia.poster);
   await shows(A, 'Search', `/search?q=custom+cover+${stamp}`, customMedia.poster);
 
