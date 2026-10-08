@@ -1288,9 +1288,14 @@ async function run() {
   await page.waitForLoadState('networkidle');
   const textShelf = await page.locator('body').innerText();
   check('a text post can be written there', textShelf.includes(thought));
+  // What the Videos shelf shows, not the raw response: the page now carries
+  // every shelf's first page in its data so that switching tab is instant, so
+  // the text is in the document's payload even though it is not on this shelf.
+  await page.goto(`/u/${me.handle}?tab=videos`, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('[data-profile-shelf="videos"]', { timeout: 15000 });
   check(
     'and it does NOT appear on the videos shelf',
-    !(await (await page.goto(`/u/${me.handle}?tab=videos`))?.text())?.includes(thought),
+    !(await page.locator('[data-profile-shelf]').innerText()).includes(thought),
   );
 
   // Photos keep their own page, reachable from the Posts shelf.
