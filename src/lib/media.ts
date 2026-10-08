@@ -222,15 +222,16 @@ export function firstVideo(media: Media[]): Media | null {
 }
 
 /**
- * Which shelf of a profile a post belongs on.
+ * What kind of post this is, for a profile's shelves: a video, a photo post, or
+ * something written.
  *
- * The profile is three lists — Videos, Posts, Text — and this is the only rule
- * that decides which. It is derived from the media a post carries rather than
- * stored on it, so nothing had to be migrated and an old post lands in the right
- * place the first time somebody looks.
+ * The profile's Posts tab holds everything; Videos and Text are filtered by
+ * this, and it is the only rule that decides which. It is derived from the media
+ * a post carries rather than stored on it, so nothing had to be migrated and an
+ * old post lands in the right place the first time somebody looks.
  *
  * A post with both a video and photos counts as a video: the video is the thing
- * people came to watch, and putting it under Posts would hide it from the shelf
+ * people came to watch, and leaving it off Videos would hide it from the shelf
  * it belongs on.
  */
 export type PostShelf = 'videos' | 'posts' | 'text';

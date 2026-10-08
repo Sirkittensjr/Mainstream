@@ -89,13 +89,11 @@ async function phoneAccount(browser, handle) {
 /**
  * Taps a profile shelf and waits for it to actually open.
  *
- * The tab bar is a set of `<Link>`s, so switching shelf is an App Router soft
- * navigation: the RSC payload is fetched, and only when it arrives does the URL
- * change and the shelf re-render. `waitForLoadState('networkidle')` does not
- * cover that — there is no document load to wait on, so it returns straight
- * away and everything read after it is the shelf you were already on. Measured
- * at about a second on the seeded store. Waiting for the tab to claim
- * `aria-current` is waiting for the render, which is the thing being asserted.
+ * Switching shelf happens in the page — the address changes with
+ * `history.pushState` and the shelf, already rendered, is swapped in — so there
+ * is no document load for `waitForLoadState` to wait on. Waiting for the tab to
+ * claim `aria-current` is waiting for the render, which is the thing being
+ * asserted.
  */
 async function openShelf(page, shelf) {
   await page.locator(`[data-profile-tab="${shelf}"]`).click();
@@ -1302,10 +1300,12 @@ async function run() {
     'the posts shelf points at the photo post page',
     (await page.locator('[data-new-photo-post]').count()) === 1,
   );
+  // Posts is the whole profile: the video and the written post are on it too,
+  // as well as on their own shelves.
+  const postsShelf = await page.locator('body').innerText();
   check(
-    'and the video is not on it',
-    !(await page.locator('body').innerText()).includes(title),
-    'videos live on their own shelf',
+    'and everything is on it — the video and the written post as well',
+    postsShelf.includes(title) && postsShelf.includes(thought),
   );
 
   // And the way back across. Somebody who went to the photo page wanting to film

@@ -156,9 +156,9 @@ const run = async () => {
   me = await page.evaluate(async () => (await fetch('/api/v1/me')).json());
   check('the same profile came back', me?.user?.username === ACCOUNT.username);
   check('the bio persisted', me?.user?.bio === ACCOUNT.bio);
-  // A profile keeps written posts on their own shelf now — see the Videos /
-  // Posts / Text tabs — and this one carries no picture, so `?tab=text` is
-  // where it lives. The default shelf is photo posts.
+  // A profile keeps written posts on a shelf of their own — see the Posts /
+  // Videos / Text tabs — and this one carries no picture, so `?tab=text` is
+  // the shelf it must be on (Posts, which holds everything, has it as well).
   await page.goto(`/u/${ACCOUNT.username}?tab=text`, { waitUntil: 'domcontentloaded' });
   const profileHtml = await page.content();
   check('the post written before signing out is still on the profile', profileHtml.includes(caption));
