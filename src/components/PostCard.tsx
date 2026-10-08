@@ -15,6 +15,7 @@ import type { Media, Reaction } from '@/lib/types';
 import { Avatar } from './Avatar';
 import { FollowButton } from './FollowButton';
 import { RateButton } from './RateSheet';
+import { DeletePost } from './DeletePost';
 import { ReportDialog } from './ReportDialog';
 import { CommentIcon, EyeIcon, HeartIcon, ShareIcon } from './Icons';
 import { SpeechBubble } from './SpeechBubble';
@@ -41,6 +42,8 @@ export interface PostCardData {
   textStyle?: string | null;
   /** The author asked for this to stay covered until somebody taps it. */
   contentWarning?: boolean;
+  /** A moderator removed it. Only its author and moderators ever see such a post. */
+  removed?: boolean;
   likes: number;
   comments: number;
   liked: boolean;
@@ -86,6 +89,8 @@ export function PostCard({
   const [burst, setBurst] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  /** Deleted by its author from this card: off the screen at once. */
+  const [deleted, setDeleted] = useState(false);
   /** Which bubble this post is, or null when it is a post with media. */
   const bubble = drawnAs({
     text_kind: data.textKind,
@@ -143,6 +148,8 @@ export function PostCard({
       /* clipboard unavailable */
     }
   }
+
+  if (deleted) return null;
 
   return (
     <article className="card animate-fade-up overflow-hidden">
@@ -333,6 +340,22 @@ export function PostCard({
                     Copy link
                   </button>
                   {!isOwn && viewerId && <ReportDialog targetType="post" targetId={data.id} />}
+                  {/* The author's own post, unless a moderator removed it —
+                      that one stays as the record. The server holds both
+                      rules whatever this shows. */}
+                  {isOwn && !data.removed && (
+                    <DeletePost
+                      postId={data.id}
+                      // `full` is the post's own page, which has nothing left
+                      // to show once the post is gone.
+                      then={full ? 'profile' : undefined}
+                      onDeleted={() => {
+                        setMenuOpen(false);
+                        setDeleted(true);
+                      }}
+                      onCancel={() => setMenuOpen(false)}
+                    />
+                  )}
                 </div>
               </>
             )}

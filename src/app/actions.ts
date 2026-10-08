@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { cookies } from 'next/headers';
-import { redirect } from 'next/navigation';
+import { redirect, RedirectType } from 'next/navigation';
 import { CATEGORIES, type Category } from '@/lib/types';
 import { bigStyleOf, normaliseTextPost, TEXT_KIND_COPY, textKindOf } from '@/lib/text-posts';
 import { isTextPostNotStorable } from '@/lib/services/insert-post';
@@ -19,6 +19,7 @@ import {
   deleteComment,
   deletePost,
   toggleLike,
+  type DeleteRefusal,
 } from '@/lib/services/posts';
 import { markAllRead } from '@/lib/services/notifications';
 import { REPORT_REASONS } from '@/lib/moderation-reasons';
@@ -189,12 +190,32 @@ export async function deleteCommentAction(commentId: string, postId: string) {
   revalidatePath(`/post/${postId}`);
 }
 
-export async function deletePostAction(postId: string) {
-  const viewer = await requireViewer();
-  await deletePost(postId, viewer.id);
-  revalidatePath('/home');
-  revalidatePath(`/u/${viewer.username}`);
-  redirect(`/u/${viewer.username}`);
+const DELETE_REFUSED: Record<DeleteRefusal, string> = {
+  not_found: 'That post is no longer here.',
+  not_yours: 'You can only delete your own posts.',
+  moderated: 'A moderator removed this post, so it stays on record and cannot be deleted.',
+};
+
+/**
+ * Deletes one of the signed-in person's own posts.
+ *
+ * Who is asking comes from the session, never from the request: the only thing
+ * the browser supplies is which post, and `deletePost` refuses any post that is
+ * not theirs. Every page is then revalidated, so no feed, profile, search or
+ * Discover page can be served from before the delete.
+ *
+ * `then: 'profile'` is for the post's own page, which has nothing left to show:
+ * it moves to the author's profile as a client navigation, replacing the post
+ * in the history so Back does not lead to a page that no longer exists.
+ */
+export async function deletePostAction(postId: string, options: { then?: 'profile' } = {}) {
+  const viewer = await getViewer();
+  if (!viewer) return { ok: false as const, error: 'Sign in to delete your posts.' };
+  const result = await deletePost(String(postId ?? ''), viewer.id);
+  if (!result.ok) return { ok: false as const, error: DELETE_REFUSED[result.reason] };
+  revalidatePath('/', 'layout');
+  if (options?.then === 'profile') redirect(`/u/${viewer.username}`, RedirectType.replace);
+  return { ok: true as const };
 }
 
 export async function reportAction(formData: FormData) {

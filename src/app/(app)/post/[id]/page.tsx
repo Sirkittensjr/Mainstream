@@ -3,7 +3,6 @@ import { isAdminRole } from '@/lib/admin-badge';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { CommentThread, type CommentItem } from '@/components/CommentThread';
-import { DeletePostButton } from '@/components/DeletePostButton';
 import { PageTopBar } from '@/components/PageTopBar';
 import { PostCard } from '@/components/PostCard';
 import { RatingPill, ReactionBar } from '@/components/RatingPill';
@@ -157,12 +156,6 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
               : null
           }
         />
-
-        {viewer?.id === post.author_id && (
-          <div className="flex justify-end pb-6">
-            <DeletePostButton postId={post.id} />
-          </div>
-        )}
       </div>
     </>
   );

@@ -61,6 +61,75 @@ export function isOwnMediaUrl(url: string): boolean {
   return false;
 }
 
+/** Where a stored file actually is, worked out from the URL FayTarra gave it. */
+export type StoredMedia =
+  | { store: 'local'; name: string }
+  | {
+      store: 'bucket';
+      /** The object's path inside the bucket. */
+      path: string;
+      /**
+       * Whose folder it is in: `media/<user id>/…` for a checked upload, null
+       * for an object from before uploads had folders.
+       */
+      owner: string | null;
+    };
+
+/**
+ * The file behind a media URL — or null for anything that is not a file this
+ * deployment stored and checked (another site, an unchecked upload, a
+ * generated `/api/cover/…` picture). The same rules as `isOwnMediaUrl`, so
+ * nothing can be pointed at a path that a post could not have held.
+ */
+export function storedMediaFor(url: string): StoredMedia | null {
+  if (!isOwnMediaUrl(url)) return null;
+  if (url.startsWith(LOCAL_PREFIX)) return { store: 'local', name: url.slice(LOCAL_PREFIX.length) };
+  const prefix = storagePrefix();
+  if (!prefix) return null;
+  const path = url.slice(prefix.length);
+  if (!path.startsWith(PUBLISHED_PREFIX)) return { store: 'bucket', path, owner: null };
+  const rest = path.slice(PUBLISHED_PREFIX.length);
+  const slash = rest.indexOf('/');
+  return { store: 'bucket', path, owner: slash > 0 ? rest.slice(0, slash) : null };
+}
+
+/**
+ * The files a deleted post owned outright, which are therefore safe to delete.
+ *
+ * A file goes only when ALL of these hold:
+ *   - FayTarra stored it and it passed the upload checks (`storedMediaFor`);
+ *   - nothing else uses it — no other post, as media or as a poster, and no
+ *     profile picture or background (`stillUsed`, every URL still referenced);
+ *   - it is not in somebody ELSE's folder. A post can only ever have been made
+ *     from its author's uploads, but if a URL from another person's folder were
+ *     on it anyway, deleting this post must never be what removes their file.
+ *
+ * The video and its poster are both candidates: a video post's cover picture
+ * is a file of its own.
+ */
+export function exclusiveMedia(
+  media: Media[],
+  authorId: string,
+  stillUsed: ReadonlySet<string>,
+): { url: string; location: StoredMedia }[] {
+  const urls = new Set<string>();
+  for (const item of media) {
+    if (typeof item?.url === 'string') urls.add(item.url);
+    if (typeof item?.poster === 'string') urls.add(item.poster);
+  }
+  const out: { url: string; location: StoredMedia }[] = [];
+  for (const url of urls) {
+    if (stillUsed.has(url)) continue;
+    const location = storedMediaFor(url);
+    if (!location) continue;
+    if (location.store === 'bucket' && location.owner !== null && location.owner !== authorId) {
+      continue;
+    }
+    out.push({ url, location });
+  }
+  return out;
+}
+
 const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.webm', '.m4v'];
 
 /**
