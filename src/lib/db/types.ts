@@ -59,6 +59,16 @@ export interface Driver {
     patch: Partial<Row<T>>,
   ): Promise<Row<T> | null>;
   remove<T extends TableName>(table: T, id: string): Promise<void>;
+  /**
+   * Deletes the rows matching every one of `where`'s columns, as ONE statement,
+   * and returns how many went.
+   *
+   * For a delete whose condition is the point — "this post, and only if it is
+   * this person's" — so the check and the delete cannot be pulled apart: there
+   * is no window between reading a row and removing it in which the row could
+   * be anybody else's. An empty `where` deletes nothing.
+   */
+  removeWhere<T extends TableName>(table: T, where: Partial<Row<T>>): Promise<number>;
   /** Wipe every table. Used by the seed script. */
   clear(): Promise<void>;
   /** Persist an uploaded file, returning a URL the app can render. */

@@ -22,6 +22,7 @@ export function toCardData(view: PostView): PostCardData {
     textTitle: view.post.text_title ?? null,
     textStyle: view.post.text_style ?? null,
     contentWarning: view.post.content_warning === true,
+    removed: view.post.removed === true,
     createdAt: view.post.created_at,
     likes: view.likes,
     comments: view.comments,

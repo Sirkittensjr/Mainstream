@@ -162,6 +162,17 @@ class SupabaseDriver implements Driver {
     if (error) throwQueryError(table, error);
   }
 
+  async removeWhere<T extends TableName>(table: T, where: Partial<Row<T>>) {
+    const entries = Object.entries(where).filter(([, value]) => value !== undefined);
+    if (entries.length === 0) return 0;
+    const { error, count } = await this.client
+      .from(table)
+      .delete({ count: 'exact' })
+      .match(Object.fromEntries(entries) as Record<string, unknown>);
+    if (error) throwQueryError(table, error);
+    return count ?? 0;
+  }
+
   async clear() {
     const tables: TableName[] = [
       'messages',

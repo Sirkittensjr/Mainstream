@@ -179,14 +179,20 @@ export function ownsPublishedUrl(url: string, userId: string): boolean {
  * next to deleting somebody's video by mistake.
  */
 export async function discardPublished(url: string): Promise<{ inUse: boolean; removed: boolean }> {
-  const { db } = await import('@/lib/db');
-  const posts = await db().query('posts');
-  const used = posts.some((post) => post.media.some((item) => item.url === url));
-  if (used) return { inUse: true, removed: false };
+  // The same "is anything using it" rule deleting a post uses, so the two can
+  // never disagree about whether a file is rubbish.
+  const { mediaStillInUse } = await import('./cleanup');
+  if ((await mediaStillInUse()).has(url)) return { inUse: true, removed: false };
 
   const path = url.slice(publicUrlFor('').length);
-  const { error } = await storage().remove([path]);
-  return { inUse: false, removed: !error };
+  return { inUse: false, removed: await removeStoredObjects([path]) };
+}
+
+/** Deletes objects from the bucket. True when storage said they are gone. */
+export async function removeStoredObjects(paths: string[]): Promise<boolean> {
+  if (paths.length === 0) return true;
+  const { error } = await storage().remove(paths);
+  return !error;
 }
 
 export async function discardPending(path: string): Promise<void> {

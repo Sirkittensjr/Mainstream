@@ -46,7 +46,10 @@ export type ModerationAction =
   | 'admin_resolved_report'
   | 'admin_suspended'
   | 'admin_banned'
-  | 'admin_reinstated';
+  | 'admin_reinstated'
+  // Not a moderator's action: the author deleted a post that had been reported
+  // or was under review. Logged so the record says what became of it.
+  | 'author_deleted';
 
 /** The shape of a post this module needs. Anything else about it is irrelevant. */
 export interface ReviewablePost {

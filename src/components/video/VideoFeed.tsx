@@ -3,7 +3,7 @@ import { AdminBadge } from '@/components/AdminBadge';
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { likeAction } from '@/app/actions';
 import { formatCount } from '@/lib/format';
@@ -16,6 +16,7 @@ import { Avatar } from '@/components/Avatar';
 import { FollowButton } from '@/components/FollowButton';
 import type { PostCardData } from '@/components/PostCard';
 import { RateButton } from '@/components/RateSheet';
+import { DeletePost } from '@/components/DeletePost';
 import { ReportDialog } from '@/components/ReportDialog';
 import { useVideoView } from './useVideoView';
 import { VideoComments, type CommenterInfo, type VideoComment } from './VideoComments';
@@ -59,6 +60,9 @@ export function VideoFeed({
   viewer?: CommenterInfo | null;
 }) {
   const [active, setActive] = useState(0);
+  /** Videos their author deleted from this feed: gone from it at once. */
+  const [deleted, setDeleted] = useState<ReadonlySet<string>>(() => new Set());
+  const shown = useMemo(() => items.filter((item) => !deleted.has(item.id)), [items, deleted]);
   /**
    * What the person wants, and what the browser has allowed.
    *
@@ -97,7 +101,7 @@ export function VideoFeed({
     );
     for (const slide of slides.current) if (slide) observer.observe(slide);
     return () => observer.disconnect();
-  }, [items.length]);
+  }, [shown.length]);
 
   const setSlide = useCallback((index: number, node: HTMLElement | null) => {
     slides.current[index] = node;
@@ -175,7 +179,7 @@ export function VideoFeed({
         tabIndex={-1}
         className="hide-scrollbar h-[calc(100dvh-6rem)] snap-y snap-mandatory overflow-y-scroll overscroll-contain lg:h-[calc(100dvh-2rem)]"
       >
-        {items.map((data, index) => {
+        {shown.map((data, index) => {
           const media = firstVideo(data.media);
           if (!media) return null;
           return (
@@ -198,7 +202,8 @@ export function VideoFeed({
               onOpenComments={() => setOpenFor(data.id)}
               onBlocked={handleBlocked}
               onUnmute={handleUnmute}
-              last={index === items.length - 1}
+              onDeleted={() => setDeleted((current) => new Set(current).add(data.id))}
+              last={index === shown.length - 1}
             />
           );
         })}
@@ -242,6 +247,7 @@ function Slide({
   onOpenComments,
   onBlocked,
   onUnmute,
+  onDeleted,
   last,
 }: {
   attach: (node: HTMLElement | null) => void;
@@ -258,6 +264,8 @@ function Slide({
   /** Autoplay with sound was refused, so everything from here plays muted. */
   onBlocked: () => void;
   onUnmute: () => void;
+  /** Its author deleted it. */
+  onDeleted: () => void;
   last: boolean;
 }) {
   const video = useRef<HTMLVideoElement>(null);
@@ -628,6 +636,17 @@ function Slide({
                     Open post
                   </Link>
                   {!isOwn && viewerId && <ReportDialog targetType="post" targetId={data.id} />}
+                  {/* Your own video only reaches this feed from a link to it. */}
+                  {isOwn && !data.removed && (
+                    <DeletePost
+                      postId={data.id}
+                      onDeleted={() => {
+                        setMenuOpen(false);
+                        onDeleted();
+                      }}
+                      onCancel={() => setMenuOpen(false)}
+                    />
+                  )}
                 </div>
               </>
             )}

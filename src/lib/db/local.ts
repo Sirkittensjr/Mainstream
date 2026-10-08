@@ -190,6 +190,23 @@ class LocalDriver implements Driver {
     }
   }
 
+  async removeWhere<T extends TableName>(table: T, where: Partial<Row<T>>) {
+    const entries = Object.entries(where).filter(([, value]) => value !== undefined) as [
+      keyof Row<T>,
+      unknown,
+    ][];
+    if (entries.length === 0) return 0;
+    const store = await this.load();
+    const list = store[table] as Row<T>[];
+    const kept = list.filter((row) => !entries.every(([key, value]) => row[key] === value));
+    const removed = list.length - kept.length;
+    if (removed > 0) {
+      (store[table] as Row<T>[]) = kept;
+      await this.flush();
+    }
+    return removed;
+  }
+
   async clear() {
     this.store = structuredClone(EMPTY);
     await this.flush();

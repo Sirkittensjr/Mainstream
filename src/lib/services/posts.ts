@@ -2,7 +2,11 @@ import 'server-only';
 import { cookies } from 'next/headers';
 import { db } from '@/lib/db';
 import type { TextKind } from '@/lib/text-posts';
-import { underReview } from './auto-review';
+import { record as recordModeration, underReview } from './auto-review';
+import { countUniqueReporters } from '@/lib/auto-review-rules';
+import { releasePostMedia, type MediaRelease } from '@/lib/media/cleanup';
+import { isMissingRelation } from '@/lib/db/errors';
+import type { Row } from '@/lib/db/types';
 import { insertPost, type InsertMemo } from './insert-post';
 import { communityCache, refreshCommunity } from './community-cache';
 import { newId } from '@/lib/ids';
@@ -211,23 +215,113 @@ export async function getPost(id: ID): Promise<Post | null> {
   return db().get('posts', id);
 }
 
-export async function deletePost(postId: ID, userId: ID): Promise<boolean> {
+/** Why a delete was refused. Nothing was changed in any of these cases. */
+export type DeleteRefusal = 'not_found' | 'not_yours' | 'moderated';
+
+export type DeletePostResult =
+  | { ok: true; media: MediaRelease }
+  | { ok: false; reason: DeleteRefusal };
+
+/**
+ * Permanently deletes a post, for its author. The one way a post is deleted —
+ * every kind (photo, video, Short, Story, Big) and every place it is offered
+ * goes through here.
+ *
+ * Ownership is enforced twice, and neither depends on anything the browser
+ * sent beyond the post's id: `userId` is the signed-in account, read from the
+ * session by the caller. The row is then deleted with ONE statement whose
+ * condition is "this id AND this author AND not removed by a moderator", so
+ * there is no gap between checking and deleting in which the row could be
+ * somebody else's. Somebody else's post, an id that does not exist, and a post
+ * a moderator removed all come back refused, with nothing touched.
+ *
+ * A post a moderator removed stays: it is the record of that decision, the
+ * moderator can still restore it, and the author deleting it would be a way to
+ * erase it. Moderators keep their own tools exactly as they were.
+ *
+ * Then what hung off the post:
+ *   likes, comments (replies too), notifications and video views — deleted.
+ *     Supabase also cascades these from the foreign keys; deleting them here
+ *     as well is what makes the local store, which has no foreign keys, agree.
+ *   ratings of the post — deleted. They point at the post by id with no
+ *     foreign key, so nothing else would.
+ *   reports of the post — kept, because they are the moderation record, and
+ *     any still open are resolved with a note that the author deleted it, so
+ *     the queue is not left asking a moderator to act on nothing.
+ *   the moderation log — kept. A line is added when the post had been
+ *     reported or was under review, saying the author deleted it.
+ *   its files — deleted when nothing else uses them; see `releasePostMedia`.
+ */
+export async function deletePost(postId: ID, userId: ID): Promise<DeletePostResult> {
+  if (typeof postId !== 'string' || !postId || typeof userId !== 'string' || !userId) {
+    return { ok: false, reason: 'not_found' };
+  }
   const store = db();
-  const post = await store.get('posts', postId);
-  if (!post || post.author_id !== userId) return false;
-  await store.remove('posts', postId);
-  const [likes, comments, ratings] = await Promise.all([
-    store.query('likes', { where: { post_id: postId } }),
-    store.query('comments', { where: { post_id: postId } }),
-    store.query('ratings', { where: { target_type: 'post', target_id: postId } }),
-  ]);
+  const post = await store.get('posts', postId).catch(() => null);
+  if (!post) return { ok: false, reason: 'not_found' };
+  if (post.author_id !== userId) return { ok: false, reason: 'not_yours' };
+  if (post.removed) return { ok: false, reason: 'moderated' };
+
+  const reports = await store.query('reports', {
+    where: { target_type: 'post', target_id: postId },
+  });
+  const reviewed = underReview(post);
+
+  const deleted = await store.removeWhere('posts', {
+    id: postId,
+    author_id: userId,
+    removed: false,
+  });
+  if (deleted === 0) {
+    // Changed between the read and the delete: gone already, or a moderator
+    // removed it in the meantime. Either way nothing was deleted.
+    const now = await store.get('posts', postId).catch(() => null);
+    return { ok: false, reason: !now ? 'not_found' : now.author_id !== userId ? 'not_yours' : 'moderated' };
+  }
+
   await Promise.all([
-    ...likes.map((row) => store.remove('likes', row.id)),
-    ...comments.map((row) => store.remove('comments', row.id)),
-    ...ratings.map((row) => store.remove('ratings', row.id)),
+    dropWhere('likes', { post_id: postId }),
+    dropWhere('comments', { post_id: postId }),
+    dropWhere('notifications', { post_id: postId }),
+    dropWhere('video_views', { post_id: postId }),
+    dropWhere('ratings', { target_type: 'post', target_id: postId }),
   ]);
+
+  const open = reports.filter((report) => report.status === 'open');
+  await Promise.all(
+    open.map((report) =>
+      store.update('reports', report.id, {
+        status: 'resolved',
+        resolution: 'The author deleted this post.',
+      }),
+    ),
+  );
+  if (reports.length > 0 || reviewed) {
+    await recordModeration({
+      targetType: 'post',
+      targetId: postId,
+      action: 'author_deleted',
+      actorId: userId,
+      uniqueReports: countUniqueReporters(reports),
+      detail: reviewed ? 'Deleted by its author while under review.' : 'Deleted by its author.',
+    }).catch(() => undefined);
+  }
+
   refreshCommunity();
-  return true;
+  const media = await releasePostMedia(post.media, userId);
+  return { ok: true, media };
+}
+
+/** Deletes rows hanging off a deleted post, tolerating a table this database does not have. */
+async function dropWhere<T extends 'likes' | 'comments' | 'notifications' | 'video_views' | 'ratings'>(
+  table: T,
+  where: Partial<Row<T>>,
+): Promise<void> {
+  try {
+    await db().removeWhere(table, where);
+  } catch (error) {
+    if (!isMissingRelation(error)) throw error;
+  }
 }
 
 export async function toggleLike(postId: ID, userId: ID): Promise<{ liked: boolean }> {
