@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BRAND, SENDER, SITE } from './layout';
+import { BRAND, RULES, SENDER, SITE, SUPPORT, TAGLINE } from './layout';
 import { EMAILS, renderEmail } from './templates';
 
 const rendered = EMAILS.map((email) => ({ email, html: renderEmail(email) }));
@@ -211,4 +211,117 @@ test('the two emails a person can be sent without asking say so', () => {
     assert.match(entry.html, /safely ignore this email/i, slug);
     assert.match(entry.email.text, /safely ignore this email/i, slug);
   }
+});
+
+/* ------------------------------------------------------------ the redesign */
+
+test('every footer says who it is from, where to go, why it came and where to get help', () => {
+  for (const { email, html } of rendered) {
+    assert.match(html, /Everyone gets <span[^>]*>a say\.<\/span>/, `${email.slug}: tagline`);
+    assert.ok(html.includes(`href="${SITE}"`), `${email.slug}: site link`);
+    assert.ok(html.includes(`href="${RULES}"`), `${email.slug}: community rules link`);
+    assert.ok(html.includes(`href="mailto:${SUPPORT}"`), `${email.slug}: support address`);
+    assert.match(email.reason, /^You received this because /, email.slug);
+    assert.ok(html.includes(email.reason), `${email.slug}: why you got this`);
+    assert.match(html, /automated message/i, email.slug);
+    // And the plain-text copy carries the same.
+    for (const line of [TAGLINE, RULES, SUPPORT, email.reason, SENDER]) {
+      assert.ok(email.text.includes(line), `${email.slug}: text footer missing ${line}`);
+    }
+  }
+});
+
+test('the button is the FayTarra gradient over a solid pink that Outlook and old clients show', () => {
+  for (const { email, html } of rendered) {
+    if (!email.action) continue;
+    const cell = /<td align="center" bgcolor="([^"]+)" style="([^"]*)">\s*<!--\[if mso\]>/.exec(html);
+    assert.ok(cell, `${email.slug}: no button cell`);
+    assert.equal(cell![1], BRAND.fay, `${email.slug}: solid fallback`);
+    assert.ok(cell![2].includes(`background-color:${BRAND.fay}`), email.slug);
+    assert.match(cell![2], /background-image:linear-gradient\(120deg, #7C5CFF 0%, #FF3D9A 52%, #FFB443 100%\)/, email.slug);
+    // Dark text, as on the site — on the gradient and on the pink fallback alike.
+    assert.match(html, new RegExp(`<a href="\\{\\{ \\.SiteURL[^>]*color:${BRAND.ink}`), `${email.slug}: button text`);
+    assert.match(html, new RegExp(`fillcolor="${BRAND.fay}"`), `${email.slug}: Outlook fill`);
+    assert.match(html, new RegExp(`<center style="color:${BRAND.ink}`), `${email.slug}: Outlook text`);
+  }
+});
+
+test('the email opens with the violet → pink → amber line, solid stops underneath', () => {
+  for (const { email, html } of rendered) {
+    const stops = [...html.matchAll(/<td width="33%" height="4" bgcolor="(#[0-9A-F]{6})"/g)].map((m) => m[1]);
+    assert.deepEqual(stops, [BRAND.aura, BRAND.fay, BRAND.solar], email.slug);
+  }
+});
+
+test('the logo is the drawn mark with its spark, and the wordmark reads FayTarra', () => {
+  for (const { email, html } of rendered) {
+    assert.ok(html.includes(`color:${BRAND.solar};mso-line-height-rule:exactly;">&#10022;</td>`), `${email.slug}: spark`);
+    assert.match(html, /class="fay-wordmark"[^>]*>FayTarra<\/td>/, email.slug);
+    assert.doesNotMatch(html, /text-transform:\s*uppercase/i, `${email.slug}: wordmark is not shouted`);
+  }
+});
+
+test('the inbox preview is the preheader and nothing after it', () => {
+  for (const { email, html } of rendered) {
+    const hidden = /<div style="display:none;[^"]*">([\s\S]*?)<\/div>/.exec(html);
+    assert.ok(hidden, email.slug);
+    assert.ok(hidden![1].startsWith(email.preheader), email.slug);
+    // Padded with invisible characters, so the heading cannot run on into it.
+    assert.ok((hidden![1].match(/&zwnj;/g) ?? []).length >= 80, `${email.slug}: preheader not padded`);
+  }
+});
+
+/**
+ * The code has to fit the narrowest phone with NO help from the stylesheet —
+ * Gmail can drop a <style> block — so the inline size is checked against the
+ * worst case: a 320px screen, the inline paddings, eight digits.
+ */
+test('an eight-digit code fits a 320px phone on inline styles alone', () => {
+  for (const { email, html } of rendered) {
+    if (!email.code) continue;
+    const style = /class="fay-code" style="([^"]+)"/.exec(html)?.[1] ?? '';
+    const size = Number(/font-size:(\d+)px/.exec(style)?.[1]);
+    const spacing = Number(/letter-spacing:(\d+)px/.exec(style)?.[1]);
+    // A monospace digit is 0.6em wide; letter-spacing follows every character.
+    const codeWidth = 8 * (size * 0.6 + spacing);
+    // 320 − outer padding 2×16 − card border 2×1 − card padding 2×40 − code box border 2×1 − its padding 2×8.
+    const room = 320 - 32 - 2 - 80 - 2 - 16;
+    assert.ok(codeWidth <= room, `${email.slug}: ${codeWidth}px of code in ${room}px`);
+  }
+});
+
+test('phone and dark-mode styling only adds to an email that works without it', () => {
+  for (const { email, html } of rendered) {
+    const style = /<style>([\s\S]*?)<\/style>\s*<\/head>/.exec(html)?.[1] ?? '';
+    assert.match(style, /@media only screen and \(max-width: 520px\)/, email.slug);
+    assert.match(style, /\[data-ogsc\]/, `${email.slug}: Outlook.com dark-mode guard`);
+    // Everything the message needs is still inline.
+    const stripped = html.replace(/<style>[\s\S]*?<\/style>/g, '');
+    assert.ok(stripped.includes(`background-color:${BRAND.panel}`), email.slug);
+    assert.ok(stripped.includes(email.heading.replace(/&/g, '&amp;')), email.slug);
+  }
+});
+
+test('the wording that matters did not move: subjects, links and security notes', () => {
+  const subjects = Object.fromEntries(EMAILS.map((email) => [email.slug, email.subject]));
+  assert.deepEqual(subjects, {
+    'confirm-signup': 'Confirm your email address',
+    'reset-password': 'Reset your FayTarra password',
+    'change-email': 'Confirm your new email address',
+    'magic-link': 'Your FayTarra admin verification code',
+    invite: 'You have been invited to FayTarra',
+    reauthentication: 'Your FayTarra confirmation code',
+  });
+  const links = Object.fromEntries(EMAILS.map((email) => [email.slug, email.action?.href ?? null]));
+  assert.deepEqual(links, {
+    'confirm-signup': '{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=signup&next=/home',
+    'reset-password': '{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=recovery&next=/reset-password',
+    'change-email': '{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=email_change&next=/settings',
+    'magic-link': null,
+    invite: '{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=invite&next=/home',
+    reauthentication: null,
+  });
+  const magic = EMAILS.find((email) => email.slug === 'magic-link')!;
+  assert.match(magic.footnotes.join(' '), /never ask you for it by email, message or phone/);
+  assert.match(magic.footnotes.join(' '), /change the admin password immediately/);
 });

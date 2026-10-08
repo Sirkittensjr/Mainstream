@@ -14,7 +14,7 @@
  *
  * Go template syntax, so `{{ .Thing }}` must survive rendering untouched.
  */
-import { renderHtml, SITE, type EmailContent } from './layout';
+import { renderHtml, SITE, textFooter, type EmailContent } from './layout';
 
 /**
  * The action link, built from Supabase's own token hash rather than from
@@ -55,6 +55,26 @@ export interface AuthEmail extends EmailContent {
   dashboardTemplate: string;
 }
 
+/**
+ * The footer's "why you got this" line, per email. It says what happened, not
+ * who did it: these go out on a request somebody made, and that may not have
+ * been the reader.
+ */
+const REASON: Record<AuthEmail['slug'], string> = {
+  'confirm-signup':
+    'You received this because this email address was used to sign up for FayTarra.',
+  'reset-password':
+    'You received this because a password reset was requested for the FayTarra account that uses this email address.',
+  'change-email':
+    'You received this because a change of email address was requested for a FayTarra account that uses this email address.',
+  'magic-link':
+    'You received this because an administrator sign-in to FayTarra was started with this email address.',
+  'invite':
+    'You received this because this email address was invited to join FayTarra.',
+  'reauthentication':
+    'You received this because a change that needs your confirmation was requested on your FayTarra account.',
+};
+
 const IGNORE_SIGNUP =
   'If you did not create a FayTarra account, you can safely ignore this email — no account will be activated.';
 
@@ -74,6 +94,7 @@ export const EMAILS: AuthEmail[] = [
       'This verification link confirms that this email address belongs to your FayTarra account. It can be used once, and it expires after a short time — if it has already expired, you can ask for a new one from the confirmation screen.',
       IGNORE_SIGNUP,
     ],
+    reason: REASON['confirm-signup'],
     text: [
       'WELCOME TO FAYTARRA',
       '',
@@ -89,9 +110,7 @@ export const EMAILS: AuthEmail[] = [
       'If you did not create a FayTarra account, you can safely ignore this email',
       '— no account will be activated.',
       '',
-      '--',
-      'FayTarra — faytarra.com',
-      'Automated message. Replies are not monitored.',
+      textFooter(REASON['confirm-signup']),
     ].join('\n'),
   },
 
@@ -110,6 +129,7 @@ export const EMAILS: AuthEmail[] = [
       'For your security this link can be used once, and it expires according to the authentication system’s normal expiration rules. Your current password stays in place until you choose a new one.',
       'If you did not request a password reset, you can safely ignore this email — your password will not change.',
     ],
+    reason: REASON['reset-password'],
     text: [
       'RESET YOUR FAYTARRA PASSWORD',
       '',
@@ -126,9 +146,7 @@ export const EMAILS: AuthEmail[] = [
       'If you did not request a password reset, you can safely ignore this email',
       '— your password will not change.',
       '',
-      '--',
-      'FayTarra — faytarra.com',
-      'Automated message. Replies are not monitored.',
+      textFooter(REASON['reset-password']),
     ].join('\n'),
   },
 
@@ -147,6 +165,7 @@ export const EMAILS: AuthEmail[] = [
       'This link can be used once and expires after a short time.',
       'If you did not ask to change your email address, ignore this email and consider changing your password — someone may know it.',
     ],
+    reason: REASON['change-email'],
     text: [
       'CONFIRM YOUR NEW EMAIL ADDRESS',
       '',
@@ -162,9 +181,7 @@ export const EMAILS: AuthEmail[] = [
       'If you did not ask to change your email address, ignore this email and',
       'consider changing your password — someone may know it.',
       '',
-      '--',
-      'FayTarra — faytarra.com',
-      'Automated message. Replies are not monitored.',
+      textFooter(REASON['change-email']),
     ].join('\n'),
   },
 
@@ -193,6 +210,7 @@ export const EMAILS: AuthEmail[] = [
       'The code expires shortly, works once, and asking for a new one cancels this one. FayTarra will never ask you for it by email, message or phone — only on the verification screen you opened yourself.',
       'If you did not just sign in as an administrator, this code is not yours to use: change the admin password immediately, because somebody else knows it.',
     ],
+    reason: REASON['magic-link'],
     text: [
       'YOUR ADMIN VERIFICATION CODE',
       '',
@@ -208,9 +226,7 @@ export const EMAILS: AuthEmail[] = [
       'to use: change the admin password immediately, because somebody else',
       'knows it.',
       '',
-      '--',
-      'FayTarra — faytarra.com',
-      'Automated message. Replies are not monitored.',
+      textFooter(REASON['magic-link']),
     ].join('\n'),
   },
 
@@ -229,6 +245,7 @@ export const EMAILS: AuthEmail[] = [
       'This invitation link can be used once and expires after a short time.',
       'If you were not expecting this, you can safely ignore this email.',
     ],
+    reason: REASON['invite'],
     text: [
       'YOU ARE INVITED TO FAYTARRA',
       '',
@@ -241,9 +258,7 @@ export const EMAILS: AuthEmail[] = [
       'This invitation link can be used once and expires after a short time.',
       'If you were not expecting this, you can safely ignore this email.',
       '',
-      '--',
-      'FayTarra — faytarra.com',
-      'Automated message. Replies are not monitored.',
+      textFooter(REASON['invite']),
     ].join('\n'),
   },
 
@@ -261,6 +276,7 @@ export const EMAILS: AuthEmail[] = [
       'The code expires after a short time. FayTarra will never ask you for it by email, message or phone.',
       'If you did not ask for this, ignore this email and change your password.',
     ],
+    reason: REASON['reauthentication'],
     text: [
       'CONFIRM IT IS YOU',
       '',
@@ -273,9 +289,7 @@ export const EMAILS: AuthEmail[] = [
       '',
       'If you did not ask for this, ignore this email and change your password.',
       '',
-      '--',
-      'FayTarra — faytarra.com',
-      'Automated message. Replies are not monitored.',
+      textFooter(REASON['reauthentication']),
     ].join('\n'),
   },
 ];
