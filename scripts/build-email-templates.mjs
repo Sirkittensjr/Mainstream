@@ -87,8 +87,10 @@ if (process.argv[2] === 'preview') {
   // plausible values, so the design can be looked at in a browser.
   const sample = (html) =>
     html
-      .replace(/\{\{ \.ConfirmationURL \}\}/g, 'https://faytarra.com/auth/callback?code=example-code')
-      .replace(/\{\{ \.Token \}\}/g, '482915')
+      .replace(/\{\{ \.SiteURL \}\}/g, 'https://faytarra.com')
+      .replace(/\{\{ \.TokenHash \}\}/g, 'pkce_3f9a1c27e0b84d6f')
+      // Eight digits: the project's Email OTP Length — see README.
+      .replace(/\{\{ \.Token \}\}/g, '48213907')
       .replace(/\{\{ \.Email \}\}/g, 'old@example.com')
       .replace(/\{\{ \.NewEmail \}\}/g, 'new@example.com');
 

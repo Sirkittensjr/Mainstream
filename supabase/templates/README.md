@@ -130,12 +130,31 @@ This is Supabase's own documented pattern for server-rendered apps.
 `email_change`, `magiclink`, `invite`. `/auth/callback` still accepts the old
 `?code=` links, so anything already sitting in an inbox keeps working.
 
-The design is deliberately image-free. The FayTarra mark is drawn with table
-cells in the brand's own gradient stops (`#7C5CFF`, `#FF3D9A`, `#FFB443`)
-rather than linked as a PNG, because most clients block remote images until the
-reader asks for them — a logo that only appears on the second look is worse
-than one built from colour. Layout is tables, styles are inline, and the button
-carries a VML fallback so Outlook for Windows draws it properly.
+The design is deliberately image-free. The FayTarra mark — three bars and
+the amber spark — is drawn with table cells and a text glyph in the brand's own
+gradient stops (`#7C5CFF`, `#FF3D9A`, `#FFB443`) rather than linked as a PNG,
+because most clients block remote images until the reader asks for them — a
+logo that only appears on the second look is worse than one built from colour.
+
+Layout is tables and styles are inline. The violet → pink → amber line and the
+button use the site's gradient, always layered over a solid colour: Outlook for
+Windows (which also gets a VML button) and older Gmail apps show the solid
+stops and a pink button with the same dark text. One `<style>` block only adds
+phone spacing, a larger code on wide screens and dark-mode guards; the email is
+complete without it, since some Gmail contexts drop it.
+
+Every email ends with the same footer: "Everyone gets a say.", links to
+faytarra.com and the Community rules, `support@faytarra.com`, why the reader got
+it, and the automated-message notice.
+
+To check the layout in a real browser — no horizontal scroll at 320px, the
+eight-digit code on one line, the button and its fallback — and to write
+screenshots:
+
+```bash
+CHROMIUM_PATH=/opt/pw-browsers/chromium PREVIEW_DIR=/tmp/email-previews \
+  node --import tsx scripts/e2e/email-layout-flow.mjs
+```
 
 ---
 
