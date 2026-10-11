@@ -173,6 +173,20 @@ class SupabaseDriver implements Driver {
     return count ?? 0;
   }
 
+  async updateWhere<T extends TableName>(table: T, where: Partial<Row<T>>, patch: Partial<Row<T>>) {
+    const entries = Object.entries(where).filter(([, value]) => value !== undefined);
+    if (entries.length === 0) return 0;
+    // One UPDATE … WHERE: Postgres evaluates the condition and writes the row
+    // under the same row lock, so of two racing requests only one matches.
+    let builder = this.client.from(table).update(patch as never);
+    for (const [column, value] of entries) {
+      builder = value === null ? builder.is(column, null) : builder.eq(column, value as never);
+    }
+    const { data, error } = await builder.select('id');
+    if (error) throwQueryError(table, error);
+    return (data ?? []).length;
+  }
+
   async clear() {
     const tables: TableName[] = [
       'messages',

@@ -202,5 +202,18 @@ checks as (
                              and column_name='profile_cover_url')
               then 'Good.'
               else 'Migration 0013 adds it (additive). Until then profiles keep their colours and a background photo cannot be saved.' end
+
+  union all
+  select 16,
+         'Temporary suspensions (0014)',
+         case when exists (select 1 from information_schema.columns
+                           where table_schema='public' and table_name='users'
+                             and column_name='suspended_until')
+              then 'installed' else 'not installed' end,
+         case when exists (select 1 from information_schema.columns
+                           where table_schema='public' and table_name='users'
+                             and column_name='suspended_until')
+              then 'Good.'
+              else 'Migration 0014 adds it (additive). Until then every suspension lasts until a moderator reinstates the account.' end
 )
 select check_name, result, verdict from checks order by ord;

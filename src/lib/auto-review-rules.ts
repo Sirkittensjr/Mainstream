@@ -11,11 +11,12 @@ import { isMissingRelation } from '@/lib/db/errors';
  * purpose — see services/auto-review.ts for the part that touches rows.
  */
 
-/** How many DIFFERENT accounts it takes to hide a post automatically. */
-export const AUTO_REVIEW_THRESHOLD = 10;
-
 /**
- * How long that hide lasts if no administrator gets to it.
+ * How long an automatic hide used to last if no administrator got to it.
+ *
+ * Hides no longer expire — a post hidden by a report stays hidden until a
+ * moderator decides (see moderation-rules.ts) — but posts hidden under the
+ * first version of this carry an expiry, and it is still honoured for them.
  *
  * Both the default and the CEILING — see `reviewWindowMs` in
  * services/auto-review.ts, which may shorten it for a test but can never
@@ -36,17 +37,33 @@ export type ReviewState = 'temporary_review' | 'admin_hold';
 export const REVIEW_STATES: readonly ReviewState[] = ['temporary_review', 'admin_hold'];
 
 export type ModerationAction =
+  // The first version's ten-report hide, and its expiry. Kept so old history reads.
   | 'auto_review_started'
   | 'auto_review_expired'
+  // A report hid a post. `actor_id` is the reporter: the account whose report did it.
+  | 'report_hidden'
+  // A report that could not hide the post because its reporter is at the limit.
+  | 'report_hold_limit'
+  // A hide undone straight away because the reporter turned out to be over the limit.
+  | 'report_hold_withdrawn'
+  // Somebody reported the same thing again; the earlier wording is in the detail.
+  | 'report_refiled'
+  // Every report keeping a post hidden was dismissed, so the hide lifted.
+  | 'review_lifted'
+  | 'admin_approved'
   | 'admin_restored'
   | 'admin_removed'
+  | 'admin_removed_permanently'
   | 'admin_held'
   | 'admin_cleared_reports'
   | 'admin_dismissed_report'
   | 'admin_resolved_report'
+  | 'admin_warned'
   | 'admin_suspended'
   | 'admin_banned'
   | 'admin_reinstated'
+  // A temporary suspension ran out.
+  | 'suspension_expired'
   // Not a moderator's action: the author deleted a post that had been reported
   // or was under review. Logged so the record says what became of it.
   | 'author_deleted';
@@ -66,11 +83,6 @@ export interface ReviewablePost {
  */
 export function countUniqueReporters(reports: { reporter_id: string }[]): number {
   return new Set(reports.map((report) => report.reporter_id)).size;
-}
-
-/** Has enough of the community reported this to hide it while somebody looks? */
-export function reachedThreshold(uniqueReporters: number): boolean {
-  return uniqueReporters >= AUTO_REVIEW_THRESHOLD;
 }
 
 /** When a review that starts now runs out. */

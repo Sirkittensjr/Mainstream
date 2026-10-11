@@ -47,6 +47,9 @@ create table if not exists public.users (
   -- The three accounts this person picked as their favourites, in order.
   -- Null or empty means the default: the first three accounts they followed.
   top_creators  text[],
+  -- When a temporary suspension ends. Null means no end date: not suspended,
+  -- or suspended until a moderator reinstates them. Not granted to the API roles.
+  suspended_until timestamptz,
   created_at    timestamptz not null default now(),
   last_active_at timestamptz not null default now()
 );
@@ -60,6 +63,8 @@ alter table public.users add column if not exists profile_box text;
 alter table public.users add column if not exists profile_cover_url text;
 -- Present for databases created before the Top 3 existed.
 alter table public.users add column if not exists top_creators text[];
+-- Present for databases created before temporary suspensions existed.
+alter table public.users add column if not exists suspended_until timestamptz;
 
 create index if not exists users_username_idx on public.users (username);
 -- Usernames are unique case-insensitively: "Tommy" must not be a second "tommy".

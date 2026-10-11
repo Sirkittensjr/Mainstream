@@ -2,14 +2,12 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { MissingRelationError } from './db/errors';
 import {
-  AUTO_REVIEW_THRESHOLD,
   REVIEW_WINDOW_HOURS,
   REVIEW_WINDOW_MS,
   clampWindow,
   countUniqueReporters,
   describeWindow,
   isMissingReviewColumn,
-  reachedThreshold,
   reviewExpiry,
   reviewHasExpired,
   underReview,
@@ -20,37 +18,15 @@ const HOUR = 3_600_000;
 
 const reporters = (...ids: string[]) => ids.map((reporter_id) => ({ reporter_id }));
 
-describe('the threshold counts people, not reports', () => {
-  it('is ten distinct accounts', () => {
-    assert.equal(AUTO_REVIEW_THRESHOLD, 10);
-  });
-
+describe('reports count people, not clicks', () => {
   it('counts one account once, however many times it reported', () => {
     const spammer = reporters(...Array.from({ length: 30 }, () => 'u1'));
     assert.equal(countUniqueReporters(spammer), 1);
-    assert.equal(reachedThreshold(countUniqueReporters(spammer)), false);
-  });
-
-  /**
-   * The case the whole feature exists for, and the case a brigade would try to
-   * fake: nine real people is not ten.
-   */
-  it('nine different accounts is not enough', () => {
-    const nine = reporters(...Array.from({ length: 9 }, (_, i) => `u${i}`));
-    assert.equal(countUniqueReporters(nine), 9);
-    assert.equal(reachedThreshold(9), false);
-  });
-
-  it('ten different accounts is', () => {
-    const ten = reporters(...Array.from({ length: 10 }, (_, i) => `u${i}`));
-    assert.equal(countUniqueReporters(ten), 10);
-    assert.equal(reachedThreshold(10), true);
   });
 
   it('twenty reports from two people is two', () => {
     const mixed = reporters(...Array.from({ length: 20 }, (_, i) => `u${i % 2}`));
     assert.equal(countUniqueReporters(mixed), 2);
-    assert.equal(reachedThreshold(countUniqueReporters(mixed)), false);
   });
 });
 

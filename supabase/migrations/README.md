@@ -15,8 +15,8 @@ has never been installed.
 
 | Row 1 says | Run |
 | --- | --- |
-| `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including every migration — `0013` included. |
-| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`, `0006`, `0007`, `0008`, `0009`, `0010`, `0011`, `0012` and `0013`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
+| `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including every migration — `0014` included. |
+| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`, `0006`, `0007`, `0008`, `0009`, `0010`, `0011`, `0012`, `0013` and `0014`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
 | anything between | Stop and ask. A half-installed schema needs looking at, not a migration. |
 
 If the storage bucket row shows `none`, create it in the dashboard
@@ -476,4 +476,22 @@ checked itself, and only for the signed-in person's own row.
 or gradient, and Edit profile says background photos are not switched on yet
 instead of offering the upload. `/api/health` lists `users.profile_cover_url`
 under `schema.missingColumns` until it has been run.
+
+## 0014_temporary_suspensions.sql
+
+Temporary suspensions. Additive, safe to run twice.
+
+| Step | Statement | What it touches | Risk |
+| --- | --- | --- | --- |
+| 1 | `add column if not exists suspended_until timestamptz` on `users` | One nullable column | None. Null reads as "no end date", which is how every existing suspension already works |
+
+No grant is added: the API roles can neither read nor write it, so nobody can
+see another person's suspension date or shorten their own. The app writes it
+with the service role when a moderator suspends somebody for a number of days.
+
+**Not running it** changes nothing that exists: suspensions still work and last
+until a moderator reinstates the account, and when a moderator picks a number
+of days the moderation log notes that it could not be stored. `/api/health`
+lists `users.suspended_until` under `schema.missingColumns` until it has been
+run.
 

@@ -1,3 +1,4 @@
+import { effectiveStatus } from '@/lib/moderation-rules';
 import type { Metadata } from 'next';
 import { AdminBadge } from '@/components/AdminBadge';
 import { isAdminRole } from '@/lib/admin-badge';
@@ -205,7 +206,7 @@ export default async function ProfilePage({
                   {isAdminRole(user.role) && <AdminBadge size="md" />}
                 </h1>
                 <p className="text-white/45 lg:mt-1 lg:text-lg">@{user.username}</p>
-                {user.status === 'suspended' && (
+                {effectiveStatus(user) === 'suspended' && (
                   <span className="chip mt-2 border-fay/40 bg-fay/10 text-fay">Suspended</span>
                 )}
               </div>

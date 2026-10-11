@@ -268,6 +268,7 @@ export async function myRatingsForPosts(
 import { checkRateLimit, raterWeight } from './rating-integrity';
 import { notify } from './notifications';
 import { isBlockedEitherWay } from './users';
+import { underReview } from '@/lib/auto-review-rules';
 
 export interface SubmitRatingInput {
   raterId: ID;
@@ -303,6 +304,8 @@ export async function submitRating(input: SubmitRatingInput): Promise<SubmitResu
   if (input.targetType === 'post') {
     const post = await store.get('posts', input.targetId);
     if (!post || post.removed) return { ok: false, error: 'That post is no longer available.' };
+    // Hidden while moderation looks at it, so it collects no ratings meanwhile.
+    if (underReview(post)) return { ok: false, error: 'This post is being reviewed, so it cannot be rated right now.' };
     ownerId = post.author_id;
   } else {
     const user = await store.get('users', input.targetId);

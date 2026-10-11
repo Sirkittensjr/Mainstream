@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import type { TextKind } from '@/lib/text-posts';
 import { record as recordModeration, underReview } from './auto-review';
 import { countUniqueReporters } from '@/lib/auto-review-rules';
+import { effectiveStatus } from '@/lib/moderation-rules';
 import { releasePostMedia, type MediaRelease } from '@/lib/media/cleanup';
 import { isMissingRelation } from '@/lib/db/errors';
 import type { Row } from '@/lib/db/types';
@@ -122,7 +123,9 @@ const publicPosts = communityCache('public-posts', async () => {
   ]);
   return {
     posts,
-    inactive: users.filter((user) => user.status !== 'active').map((user) => user.id),
+    // A temporary suspension whose time is up counts as active from that
+    // moment, whether or not anything has written that down yet.
+    inactive: users.filter((user) => effectiveStatus(user) !== 'active').map((user) => user.id),
   };
 });
 
@@ -216,7 +219,7 @@ export async function getPost(id: ID): Promise<Post | null> {
 }
 
 /** Why a delete was refused. Nothing was changed in any of these cases. */
-export type DeleteRefusal = 'not_found' | 'not_yours' | 'moderated';
+export type DeleteRefusal = 'not_found' | 'not_yours' | 'moderated' | 'under_review';
 
 export type DeletePostResult =
   | { ok: true; media: MediaRelease }
@@ -261,6 +264,10 @@ export async function deletePost(postId: ID, userId: ID): Promise<DeletePostResu
   if (!post) return { ok: false, reason: 'not_found' };
   if (post.author_id !== userId) return { ok: false, reason: 'not_yours' };
   if (post.removed) return { ok: false, reason: 'moderated' };
+  // Hidden while a moderator reviews it: the post and its files are what the
+  // report is about, so they stay until the review is decided. Once approved
+  // it is the author's to delete again.
+  if (underReview(post)) return { ok: false, reason: 'under_review' };
 
   const reports = await store.query('reports', {
     where: { target_type: 'post', target_id: postId },
@@ -336,9 +343,10 @@ export async function toggleLike(postId: ID, userId: ID): Promise<{ liked: boole
   }
 
   // Taking a like back is always allowed; giving one is not, on a post that has
-  // been removed or between two people where either has blocked the other. The
-  // UI never offers it, but a request does not have to come from the UI.
-  if (post.removed || (await isBlockedEitherWay(userId, post.author_id))) {
+  // been removed or is hidden for review, or between two people where either
+  // has blocked the other. The UI never offers it, but a request does not have
+  // to come from the UI.
+  if (post.removed || underReview(post) || (await isBlockedEitherWay(userId, post.author_id))) {
     return { liked: false };
   }
 
@@ -377,6 +385,8 @@ export async function addComment(
   const store = db();
   const post = await store.get('posts', postId);
   if (!post || post.removed) return { ok: false, error: 'That post is no longer available.' };
+  // Hidden while moderation looks at it: nobody adds to it in the meantime.
+  if (underReview(post)) return { ok: false, error: 'This post is being reviewed, so it cannot take comments right now.' };
   if (await isBlockedEitherWay(userId, post.author_id)) {
     return { ok: false, error: 'You cannot comment on this post.' };
   }

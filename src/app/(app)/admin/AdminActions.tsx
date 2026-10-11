@@ -3,167 +3,362 @@
 import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  adminClearReportsAction,
-  adminHoldReviewedAction,
-  adminRemoveReviewedAction,
-  adminRestoreReviewedAction,
-  adminSetTrustAction,
+  adminApprovePostAction,
+  adminDismissReportAction,
+  adminKeepUnderReviewAction,
   adminRemoveCommentAction,
   adminRemovePostAction,
   adminResolveReportAction,
-  adminRestorePostAction,
   adminSetStatusAction,
+  adminSetTrustAction,
+  adminWarnUserAction,
 } from '@/app/actions';
+import { SUSPENSION_DAYS } from '@/lib/moderation-rules';
 
+type Result = { ok: true } | { ok: false; error: string } | void;
+
+/**
+ * Runs an admin action and refreshes the page, keeping what went wrong.
+ *
+ * Every action re-checks on the server that the caller is an administrator;
+ * nothing here is the lock. What this adds is saying so when a decision was
+ * refused — a reason missing, somebody else got there first — instead of the
+ * button appearing to do nothing.
+ */
 function useAction() {
   const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
   const router = useRouter();
-  const run = (fn: () => Promise<unknown>) =>
+  const run = (fn: () => Promise<Result>, after?: () => void) =>
     startTransition(async () => {
-      await fn();
+      setError(null);
+      const result = await fn();
+      if (result && !result.ok) {
+        setError(result.error);
+        return;
+      }
+      after?.();
       router.refresh();
     });
-  return { pending, run };
+  return { pending, run, error };
 }
 
-const BUTTON = 'rounded-full border border-white/[0.12] px-3 py-1.5 text-xs font-semibold transition';
+const BUTTON =
+  'rounded-full border border-white/[0.12] px-3 py-1.5 text-xs font-semibold transition disabled:opacity-50';
+const APPROVE = `${BUTTON} border-mint/40 text-mint hover:bg-mint/10`;
+const HOLD = `${BUTTON} border-solar/40 text-solar hover:bg-solar/10`;
+const DANGER = `${BUTTON} border-fay/40 text-fay hover:bg-fay/10`;
+const QUIET = `${BUTTON} text-white/60 hover:bg-white/10`;
 
-export function ReportActions({
-  reportId,
-  target,
+function Problem({ error }: { error: string | null }) {
+  if (!error) return null;
+  return (
+    <p role="alert" className="text-xs text-fay-soft">
+      {error}
+    </p>
+  );
+}
+
+/**
+ * The decisions about a post in the queue.
+ *
+ * The note goes into the moderation log with whichever decision is made; for
+ * Remove permanently it is required, and the button asks once more, because
+ * that one deletes the files.
+ */
+export function PostDecisions({
+  postId,
+  state,
 }: {
-  reportId: string;
-  target:
-    | { type: 'post'; id: string; removed: boolean }
-    | { type: 'user'; id: string; status: string }
-    | { type: 'comment'; id: string }
-    | null;
+  postId: string;
+  state: 'report_hold' | 'admin_hold' | 'visible';
 }) {
-  const { pending, run } = useAction();
-  const [reason, setReason] = useState('Breaks the community rules');
+  const { pending, run, error } = useAction();
+  const [note, setNote] = useState('');
+  const [confirming, setConfirming] = useState(false);
 
   return (
-    <div className="mt-3 space-y-2">
-      <input
-        value={reason}
-        onChange={(event) => setReason(event.target.value)}
-        placeholder="Reason / note"
-        className="w-full py-2 text-sm"
-      />
+    <div className="mt-4 space-y-2 border-t border-white/[0.08] pt-4" data-post-decisions={postId}>
+      <label className="block">
+        <span className="sr-only">Reason or note for the moderation log</span>
+        <input
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          placeholder="Reason — required to remove, and then shown to the author"
+          maxLength={300}
+          className="w-full py-2 text-sm"
+          data-decision-note
+        />
+      </label>
       <div className="flex flex-wrap gap-2">
-        {target?.type === 'post' &&
-          (target.removed ? (
-            <button
-              type="button"
-              disabled={pending}
-              className={`${BUTTON} hover:bg-white/10`}
-              onClick={() => run(() => adminRestorePostAction(target.id))}
-            >
-              Restore post
-            </button>
-          ) : (
-            <button
-              type="button"
-              disabled={pending}
-              className={`${BUTTON} border-fay/40 text-fay hover:bg-fay/10`}
-              onClick={() => run(() => adminRemovePostAction(target.id, reason))}
-            >
-              Remove post
-            </button>
-          ))}
-        {target?.type === 'comment' && (
+        <button
+          type="button"
+          disabled={pending}
+          className={APPROVE}
+          data-decision="approve"
+          onClick={() => run(() => adminApprovePostAction(postId, note))}
+        >
+          {state === 'visible' ? 'Approve — close reports' : 'Approve and restore'}
+        </button>
+        {state !== 'admin_hold' && (
           <button
             type="button"
             disabled={pending}
-            className={`${BUTTON} border-fay/40 text-fay hover:bg-fay/10`}
-            onClick={() => run(() => adminRemoveCommentAction(target.id))}
+            className={HOLD}
+            data-decision="hold"
+            onClick={() => run(() => adminKeepUnderReviewAction(postId, note))}
           >
-            Remove comment
+            {state === 'visible' ? 'Hide and keep under review' : 'Keep under review'}
           </button>
         )}
-        {target?.type === 'user' && (
+        {confirming ? (
           <>
             <button
               type="button"
               disabled={pending}
-              className={`${BUTTON} border-solar/40 text-solar hover:bg-solar/10`}
-              onClick={() => run(() => adminSetStatusAction(target.id, 'suspended', reason))}
+              className={`${DANGER} bg-fay/10`}
+              data-decision="remove-confirm"
+              onClick={() => run(() => adminRemovePostAction(postId, note), () => setConfirming(false))}
             >
-              Suspend
+              Yes, remove permanently
             </button>
-            <button
-              type="button"
-              disabled={pending}
-              className={`${BUTTON} border-fay/40 text-fay hover:bg-fay/10`}
-              onClick={() => run(() => adminSetStatusAction(target.id, 'banned', reason))}
-            >
-              Ban
+            <button type="button" disabled={pending} className={QUIET} onClick={() => setConfirming(false)}>
+              Cancel
             </button>
           </>
+        ) : (
+          <button
+            type="button"
+            disabled={pending}
+            className={DANGER}
+            data-decision="remove"
+            onClick={() => setConfirming(true)}
+          >
+            Remove permanently
+          </button>
+        )}
+      </div>
+      {confirming && (
+        <p className="text-[11px] text-fay-soft">
+          Removes it for good and deletes its files unless something else uses them. The record of
+          the post, its reports and this decision are kept. Its author is not suspended.
+        </p>
+      )}
+      <Problem error={error} />
+    </div>
+  );
+}
+
+/** Dismiss one report as unfounded, with an optional note. */
+export function DismissReport({ reportId }: { reportId: string }) {
+  const { pending, run, error } = useAction();
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState('');
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className={QUIET}
+        data-dismiss-report={reportId}
+        onClick={() => setOpen(true)}
+      >
+        Dismiss report
+      </button>
+    );
+  }
+  return (
+    <div className="mt-2 space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          placeholder="Why it is unfounded (optional)"
+          maxLength={300}
+          className="min-w-0 flex-1 py-1.5 text-sm"
+          data-dismiss-note
+        />
+        <button
+          type="button"
+          disabled={pending}
+          className={QUIET}
+          data-dismiss-confirm={reportId}
+          onClick={() => run(() => adminDismissReportAction(reportId, note))}
+        >
+          Dismiss
+        </button>
+        <button type="button" className={QUIET} onClick={() => setOpen(false)}>
+          Cancel
+        </button>
+      </div>
+      <Problem error={error} />
+    </div>
+  );
+}
+
+/** Actions on a report about a profile or a comment. */
+export function OtherReportActions({
+  reportId,
+  target,
+}: {
+  reportId: string;
+  target: { type: 'user'; id: string } | { type: 'comment'; id: string } | { type: 'post'; id: string } | null;
+}) {
+  const { pending, run, error } = useAction();
+  const [note, setNote] = useState('');
+  return (
+    <div className="mt-3 space-y-2">
+      <input
+        value={note}
+        onChange={(event) => setNote(event.target.value)}
+        placeholder="Note for the log"
+        maxLength={300}
+        className="w-full py-2 text-sm"
+      />
+      <div className="flex flex-wrap gap-2">
+        {target?.type === 'comment' && (
+          <button
+            type="button"
+            disabled={pending}
+            className={DANGER}
+            onClick={() => run(() => adminRemoveCommentAction(target.id, note))}
+          >
+            Remove comment
+          </button>
         )}
         <button
           type="button"
           disabled={pending}
-          className={`${BUTTON} hover:bg-white/10`}
-          onClick={() => run(() => adminResolveReportAction(reportId, 'resolved', reason))}
+          className={QUIET}
+          onClick={() => run(() => adminResolveReportAction(reportId, 'resolved', note))}
         >
           Mark resolved
         </button>
         <button
           type="button"
           disabled={pending}
-          className={`${BUTTON} text-white/50 hover:bg-white/10`}
-          onClick={() => run(() => adminResolveReportAction(reportId, 'dismissed', reason))}
+          className={QUIET}
+          onClick={() => run(() => adminResolveReportAction(reportId, 'dismissed', note))}
         >
           Dismiss
         </button>
       </div>
+      <Problem error={error} />
     </div>
   );
 }
 
-export function UserActions({
+/**
+ * What a moderator can do to an account: warn, suspend for a while or until
+ * reinstated, ban, or reverse a suspension or ban.
+ *
+ * Suspending and banning are not offered for an administrator, and the server
+ * refuses them anyway — for that and for the admin's own account.
+ */
+export function AccountActions({
   userId,
   status,
+  isAdmin,
 }: {
   userId: string;
   status: 'active' | 'suspended' | 'banned';
+  isAdmin: boolean;
 }) {
-  const { pending, run } = useAction();
+  const { pending, run, error } = useAction();
+  const [mode, setMode] = useState<'none' | 'warn' | 'suspend' | 'ban'>('none');
+  const [text, setText] = useState('');
+  const [days, setDays] = useState<string>('7');
+  const close = () => {
+    setMode('none');
+    setText('');
+  };
+
   return (
-    <div className="flex flex-wrap gap-2">
-      {status !== 'active' && (
-        <button
-          type="button"
-          disabled={pending}
-          className={`${BUTTON} border-mint/40 text-mint hover:bg-mint/10`}
-          onClick={() => run(() => adminSetStatusAction(userId, 'active', ''))}
-        >
-          Reinstate
-        </button>
-      )}
-      {status === 'active' && (
-        <>
+    <div className="space-y-2" data-account-actions={userId}>
+      <div className="flex flex-wrap gap-2">
+        {status !== 'active' && (
           <button
             type="button"
             disabled={pending}
-            className={`${BUTTON} border-solar/40 text-solar hover:bg-solar/10`}
-            onClick={() =>
-              run(() => adminSetStatusAction(userId, 'suspended', 'Suspended by a moderator'))
-            }
+            className={APPROVE}
+            data-account="reinstate"
+            onClick={() => run(() => adminSetStatusAction(userId, 'active', 'Reinstated by a moderator'))}
           >
-            Suspend
+            {status === 'banned' ? 'Reverse ban' : 'Reverse suspension'}
           </button>
-          <button
-            type="button"
-            disabled={pending}
-            className={`${BUTTON} border-fay/40 text-fay hover:bg-fay/10`}
-            onClick={() => run(() => adminSetStatusAction(userId, 'banned', 'Banned by a moderator'))}
-          >
+        )}
+        <button type="button" className={QUIET} data-account="warn" onClick={() => setMode('warn')}>
+          Warn
+        </button>
+        {!isAdmin && status !== 'banned' && (
+          <button type="button" className={HOLD} data-account="suspend" onClick={() => setMode('suspend')}>
+            {status === 'suspended' ? 'Change suspension' : 'Suspend'}
+          </button>
+        )}
+        {!isAdmin && status !== 'banned' && (
+          <button type="button" className={DANGER} data-account="ban" onClick={() => setMode('ban')}>
             Ban
           </button>
-        </>
+        )}
+      </div>
+
+      {mode !== 'none' && (
+        <div className="space-y-2 rounded-2xl border border-white/[0.08] bg-white/[0.03] p-3">
+          <textarea
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            rows={2}
+            maxLength={mode === 'warn' ? 500 : 300}
+            placeholder={
+              mode === 'warn'
+                ? 'The warning they will read'
+                : 'The reason — they are shown it'
+            }
+            className="w-full text-sm"
+            data-account-text
+          />
+          {mode === 'suspend' && (
+            <label className="flex items-center gap-2 text-xs text-white/60">
+              For
+              <select
+                value={days}
+                onChange={(event) => setDays(event.target.value)}
+                className="py-1.5 text-sm"
+                data-account-days
+              >
+                {SUSPENSION_DAYS.map((count) => (
+                  <option key={count} value={String(count)}>
+                    {count} day{count === 1 ? '' : 's'}
+                  </option>
+                ))}
+                <option value="until">Until reinstated</option>
+              </select>
+            </label>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={pending}
+              className={mode === 'ban' ? DANGER : mode === 'suspend' ? HOLD : QUIET}
+              data-account-confirm={mode}
+              onClick={() =>
+                run(() => {
+                  if (mode === 'warn') return adminWarnUserAction(userId, text);
+                  if (mode === 'suspend') {
+                    return adminSetStatusAction(userId, 'suspended', text, days === 'until' ? null : Number(days));
+                  }
+                  return adminSetStatusAction(userId, 'banned', text);
+                }, close)
+              }
+            >
+              {mode === 'warn' ? 'Send warning' : mode === 'suspend' ? 'Suspend' : 'Ban permanently'}
+            </button>
+            <button type="button" className={QUIET} onClick={close}>
+              Cancel
+            </button>
+          </div>
+        </div>
       )}
+      <Problem error={error} />
     </div>
   );
 }
@@ -179,100 +374,7 @@ export function TrustActions({ userId, trusted }: { userId: string; trusted: boo
       }`}
       onClick={() => run(() => adminSetTrustAction(userId, !trusted))}
     >
-      {trusted ? 'Revoke rating weight' : 'Restore rating weight'}
+      {trusted ? 'Flag for abuse (revoke weight)' : 'Clear abuse flag'}
     </button>
-  );
-}
-
-/**
- * The four decisions available on something under automatic review.
- *
- * None of them is available to anybody who is not an administrator, and not
- * because these buttons are hidden: every handler calls a server action that
- * re-checks the role against the database before it touches a row. A user
- * calling the action directly gets the same refusal as a user who never saw
- * the page.
- */
-export function ReviewActions({
-  postId,
-  state,
-  window: reviewWindow,
-}: {
-  postId: string;
-  /** Where the review came from, so the copy can say so. */
-  state: 'temporary_review' | 'admin_hold';
-  /** The window in words, resolved on the server so this cannot disagree with it. */
-  window: string;
-}) {
-  const held = state === 'admin_hold';
-  const { pending, run } = useAction();
-  const [reason, setReason] = useState('Breaks the community guidelines');
-  const [clearFirst, setClearFirst] = useState(true);
-
-  return (
-    <div className="mt-4 space-y-2 border-t border-white/[0.08] pt-4">
-      <input
-        value={reason}
-        onChange={(event) => setReason(event.target.value)}
-        placeholder="Reason, if you remove it"
-        className="w-full py-2 text-sm"
-      />
-      <label className="flex items-center gap-2 text-xs text-white/50">
-        <input
-          type="checkbox"
-          checked={clearFirst}
-          onChange={(event) => setClearFirst(event.target.checked)}
-          className="h-4 w-4 accent-fay"
-        />
-        Clear the reports that triggered this, so restoring does not re-hide it
-      </label>
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          disabled={pending}
-          className={`${BUTTON} border-mint/40 text-mint hover:bg-mint/10`}
-          onClick={() =>
-            run(async () => {
-              if (clearFirst) await adminClearReportsAction('post', postId);
-              await adminRestoreReviewedAction(postId);
-            })
-          }
-        >
-          Restore now
-        </button>
-        <button
-          type="button"
-          disabled={pending}
-          className={`${BUTTON} border-fay/40 text-fay hover:bg-fay/10`}
-          onClick={() => run(() => adminRemoveReviewedAction(postId, reason))}
-        >
-          Remove permanently
-        </button>
-        {!held && (
-          <button
-            type="button"
-            disabled={pending}
-            className={`${BUTTON} border-solar/40 text-solar hover:bg-solar/10`}
-            onClick={() => run(() => adminHoldReviewedAction(postId))}
-          >
-            Hold past {reviewWindow}
-          </button>
-        )}
-        <button
-          type="button"
-          disabled={pending}
-          className={`${BUTTON} text-white/50 hover:bg-white/10`}
-          onClick={() => run(() => adminClearReportsAction('post', postId))}
-        >
-          Clear reports only
-        </button>
-      </div>
-      <p className="text-[11px] text-white/30">
-        {state === 'admin_hold'
-          ? 'Held by an administrator. It will not come back on its own.'
-          : `Doing nothing is also an option: it comes back by itself when the ${reviewWindow} run out.`}{' '}
-        Removing a post does not suspend its author.
-      </p>
-    </div>
   );
 }
