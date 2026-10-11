@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import type { TextKind } from '@/lib/text-posts';
 import { record as recordModeration, underReview } from './auto-review';
 import { countUniqueReporters } from '@/lib/auto-review-rules';
+import { effectiveStatus } from '@/lib/moderation-rules';
 import { releasePostMedia, type MediaRelease } from '@/lib/media/cleanup';
 import { isMissingRelation } from '@/lib/db/errors';
 import type { Row } from '@/lib/db/types';
@@ -122,7 +123,9 @@ const publicPosts = communityCache('public-posts', async () => {
   ]);
   return {
     posts,
-    inactive: users.filter((user) => user.status !== 'active').map((user) => user.id),
+    // A temporary suspension whose time is up counts as active from that
+    // moment, whether or not anything has written that down yet.
+    inactive: users.filter((user) => effectiveStatus(user) !== 'active').map((user) => user.id),
   };
 });
 
@@ -216,7 +219,7 @@ export async function getPost(id: ID): Promise<Post | null> {
 }
 
 /** Why a delete was refused. Nothing was changed in any of these cases. */
-export type DeleteRefusal = 'not_found' | 'not_yours' | 'moderated';
+export type DeleteRefusal = 'not_found' | 'not_yours' | 'moderated' | 'under_review';
 
 export type DeletePostResult =
   | { ok: true; media: MediaRelease }
@@ -261,6 +264,10 @@ export async function deletePost(postId: ID, userId: ID): Promise<DeletePostResu
   if (!post) return { ok: false, reason: 'not_found' };
   if (post.author_id !== userId) return { ok: false, reason: 'not_yours' };
   if (post.removed) return { ok: false, reason: 'moderated' };
+  // Hidden while a moderator reviews it: the post and its files are what the
+  // report is about, so they stay until the review is decided. Once approved
+  // it is the author's to delete again.
+  if (underReview(post)) return { ok: false, reason: 'under_review' };
 
   const reports = await store.query('reports', {
     where: { target_type: 'post', target_id: postId },

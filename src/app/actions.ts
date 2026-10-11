@@ -25,17 +25,16 @@ import {
 import { markAllRead } from '@/lib/services/notifications';
 import { REPORT_REASONS } from '@/lib/moderation-reasons';
 import {
-  clearReportThreshold,
+  approvePost,
+  dismissReport,
   isUserStatus,
-  holdReviewed,
+  keepUnderReview,
   removeComment,
-  removePost,
-  removeReviewedPost,
+  removePostPermanently,
   resolveReport,
-  restorePost,
-  restoreReviewed,
   setUserStatus,
   submitReport,
+  warnUser,
 } from '@/lib/services/moderation';
 import {
   blockUser,
@@ -200,6 +199,8 @@ const DELETE_REFUSED: Record<DeleteRefusal, string> = {
   not_found: 'That post is no longer here.',
   not_yours: 'You can only delete your own posts.',
   moderated: 'A moderator removed this post, so it stays on record and cannot be deleted.',
+  under_review:
+    'This post is being reviewed by FayTarra moderation, so it cannot be deleted until the review is finished.',
 };
 
 /**
@@ -619,99 +620,108 @@ export async function logoutAction() {
 }
 
 // --- admin -----------------------------------------------------------------
-
-export async function adminRemovePostAction(postId: string, reason: string) {
-  const admin = await requireAdmin();
-  await removePost(postId, reason || 'Removed by a moderator', admin.id);
-  revalidatePath('/admin');
-}
-
-export async function adminRestorePostAction(postId: string) {
-  const admin = await requireAdmin();
-  await restorePost(postId, admin.id);
-  revalidatePath('/admin');
-}
-
-// --- automatic temporary review --------------------------------------------
 //
 // Every one of these is an ADMIN action and nothing else. `requireAdmin()` is
 // the whole authorisation story: it reads the role off the database row for the
-// signed-in session, server-side, on every call. There is no client-supplied
-// user, no client-supplied role, and no client-supplied report count anywhere
-// in this section — the counts come from counting rows.
+// signed-in session, server-side, on every call, and requires the admin's
+// emailed second step. There is no client-supplied user, role or report count
+// anywhere in this section. Each returns what happened in words, so the
+// dashboard can say why something was refused, and every decision is written
+// to the moderation log with the admin who made it.
 
-/** Reviewed and fine: the post comes back now. */
-export async function adminRestoreReviewedAction(postId: string) {
-  const admin = await requireAdmin();
-  await restoreReviewed(postId, admin.id);
+type AdminResult = { ok: true } | { ok: false; error: string };
+
+function revalidateModeration(postId?: string) {
   revalidatePath('/admin');
-  revalidatePath(`/post/${postId}`);
+  if (postId) revalidatePath(`/post/${postId}`);
+}
+
+/** Approve and restore: the post is visible again, with everything it had. */
+export async function adminApprovePostAction(postId: string, note = ''): Promise<AdminResult> {
+  const admin = await requireAdmin();
+  const result = await approvePost(String(postId), admin.id, String(note ?? ''));
+  revalidateModeration(String(postId));
+  return result;
+}
+
+/** Keep under review: hidden while a moderator looks into it. */
+export async function adminKeepUnderReviewAction(postId: string, note = ''): Promise<AdminResult> {
+  const admin = await requireAdmin();
+  const result = await keepUnderReview(String(postId), admin.id, String(note ?? ''));
+  revalidateModeration(String(postId));
+  return result;
 }
 
 /**
- * Reviewed and not fine: removed, and the author is told why.
+ * Remove permanently: off FayTarra, files cleaned up, the record kept.
  *
- * Removing a post is NOT banning its author. Reaching the threshold is ten
- * people clicking a button, which is not evidence of anything about a person,
- * and account status is left exactly where it was — a suspension is a separate,
- * deliberate decision on the Users tab.
+ * Removing a post is NOT banning its author. A report is one person pressing a
+ * button, which is not evidence of anything about a person, and account status
+ * is left exactly where it was — that is a separate decision.
  */
-export async function adminRemoveReviewedAction(postId: string, reason: string) {
+export async function adminRemovePostAction(postId: string, reason: string): Promise<AdminResult> {
   const admin = await requireAdmin();
-  await removeReviewedPost(
-    postId,
-    admin.id,
-    reason || 'Removed after review for breaking the community guidelines',
-  );
-  revalidatePath('/admin');
-  revalidatePath(`/post/${postId}`);
+  const result = await removePostPermanently(String(postId), admin.id, String(reason ?? ''));
+  revalidateModeration(String(postId));
+  return result;
 }
 
-/** Needs longer than 24 hours. Stops the automatic clock, nothing else. */
-export async function adminHoldReviewedAction(postId: string) {
-  const admin = await requireAdmin();
-  await holdReviewed(postId, admin.id);
-  revalidatePath('/admin');
+/** Restores a post removed before removal was permanent. */
+export async function adminRestorePostAction(postId: string): Promise<AdminResult> {
+  return adminApprovePostAction(postId, 'Removal reversed');
 }
 
-/**
- * Clears the reports counting toward the threshold, so restoring a post does
- * not walk straight back into the same hide. The reports stay on the record.
- */
-export async function adminClearReportsAction(
-  targetType: 'post' | 'user' | 'comment',
-  targetId: string,
-) {
+/** Dismiss one report as unfounded. Never reveals a post held for another reason. */
+export async function adminDismissReportAction(reportId: string, note = ''): Promise<AdminResult> {
   const admin = await requireAdmin();
-  await clearReportThreshold(targetType, targetId, admin.id);
-  revalidatePath('/admin');
-}
-
-export async function adminRemoveCommentAction(commentId: string) {
-  await requireAdmin();
-  await removeComment(commentId);
-  revalidatePath('/admin');
-}
-
-export async function adminSetStatusAction(
-  userId: string,
-  status: 'active' | 'suspended' | 'banned',
-  reason: string,
-) {
-  const admin = await requireAdmin();
-  if (admin.id === userId || !isUserStatus(status)) return;
-  await setUserStatus(userId, status, String(reason ?? ''), admin.id);
-  revalidatePath('/admin');
+  const result = await dismissReport(String(reportId), admin.id, String(note ?? ''));
+  revalidateModeration();
+  return result;
 }
 
 export async function adminResolveReportAction(
   reportId: string,
   status: 'resolved' | 'dismissed',
   resolution: string,
-) {
+): Promise<AdminResult> {
   const admin = await requireAdmin();
-  await resolveReport(reportId, status, resolution, admin.id);
-  revalidatePath('/admin');
+  const result = await resolveReport(String(reportId), status, String(resolution ?? ''), admin.id);
+  revalidateModeration();
+  return result;
+}
+
+export async function adminRemoveCommentAction(commentId: string, reason = ''): Promise<AdminResult> {
+  const admin = await requireAdmin();
+  await removeComment(String(commentId), admin.id, String(reason ?? ''));
+  revalidateModeration();
+  return { ok: true };
+}
+
+/** A warning the person reads as a notification. Nothing about the account changes. */
+export async function adminWarnUserAction(userId: string, message: string): Promise<AdminResult> {
+  const admin = await requireAdmin();
+  const result = await warnUser(String(userId), admin.id, String(message ?? ''));
+  revalidateModeration();
+  return result;
+}
+
+/**
+ * Suspend (for a number of days, or until reinstated), ban, or reinstate.
+ * `days` is only read for a suspension, and must be one of the offered lengths.
+ */
+export async function adminSetStatusAction(
+  userId: string,
+  status: 'active' | 'suspended' | 'banned',
+  reason: string,
+  days: number | null = null,
+): Promise<AdminResult> {
+  const admin = await requireAdmin();
+  if (!isUserStatus(status)) return { ok: false, error: 'Not an account status.' };
+  const result = await setUserStatus(String(userId), status, String(reason ?? ''), admin.id, {
+    days: status === 'suspended' ? days : null,
+  });
+  revalidateModeration();
+  return result;
 }
 
 export async function adminSetTrustAction(userId: string, trusted: boolean) {

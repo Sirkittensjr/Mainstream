@@ -1,31 +1,39 @@
 import type { Metadata } from 'next';
+import Image from 'next/image';
 import Link from 'next/link';
 import { PageTopBar } from '@/components/PageTopBar';
 import { SectionHeader } from '@/components/EmptyState';
 import { ShieldIcon } from '@/components/Icons';
 import { adminStats, adminUsers } from '@/lib/services/admin';
-import { listReports } from '@/lib/services/moderation';
 import {
-  AUTO_REVIEW_THRESHOLD,
-  reviewQueue,
-  reviewWindowLabel,
-  sweepExpiredReviews,
-  type ReviewItem,
-} from '@/lib/services/auto-review';
+  listReports,
+  moderationLog,
+  moderationQueue,
+  type QueueItem,
+} from '@/lib/services/moderation';
+import { sweepExpiredReviews } from '@/lib/services/auto-review';
+import { REPORT_HOLD_LIMIT, actionLabel, effectiveStatus } from '@/lib/moderation-rules';
+import { isVectorImage } from '@/lib/image';
 import { requireAdmin } from '@/lib/session';
-import { formatShortDate, timeAgo, timeLeft, timestamp } from '@/lib/time';
+import { formatShortDate, timeAgo, timestamp } from '@/lib/time';
 import { suspiciousRaters } from '@/lib/services/rating-integrity';
-import { ReportActions, ReviewActions, TrustActions, UserActions } from './AdminActions';
+import {
+  AccountActions,
+  DismissReport,
+  OtherReportActions,
+  PostDecisions,
+  TrustActions,
+} from './AdminActions';
 
 export const metadata: Metadata = { title: 'Admin' };
 export const dynamic = 'force-dynamic';
 
-const TABS = ['overview', 'reports', 'integrity', 'users'] as const;
+const TABS = ['overview', 'reports', 'users', 'integrity', 'log'] as const;
 
 export default async function AdminPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string; q?: string; status?: string }>;
+  searchParams: Promise<{ tab?: string; q?: string; status?: string; user?: string }>;
 }) {
   await requireAdmin();
   const params = await searchParams;
@@ -34,19 +42,21 @@ export default async function AdminPage({
     : 'overview';
   const reportStatus = (params.status === 'all' ? 'all' : 'open') as 'all' | 'open';
 
-  // FayTarra has no scheduler, so the 24-hour expiry is caught up with here,
-  // where somebody is looking at the queue anyway. Nothing depends on this
-  // having run: an expired review already reads as over everywhere else. This
-  // only writes down that the clock, and not a person, ended it.
+  // Hides from the first version of this expired after 24 hours. New hides do
+  // not expire, but a post hidden back then may still be waiting; writing its
+  // expiry down here, where somebody is looking anyway, keeps the log honest.
   if (tab === 'reports') await sweepExpiredReviews();
 
-  const [stats, reports, review, users, raters] = await Promise.all([
+  const [stats, reports, queue, users, raters, log] = await Promise.all([
     adminStats(),
     tab === 'reports' ? listReports(reportStatus) : Promise.resolve([]),
-    tab === 'reports' ? reviewQueue() : Promise.resolve([]),
+    tab === 'reports' ? moderationQueue() : Promise.resolve({ hidden: [], reported: [] }),
     tab === 'users' ? adminUsers(params.q ?? '') : Promise.resolve([]),
     tab === 'integrity' ? suspiciousRaters() : Promise.resolve([]),
+    tab === 'log' ? moderationLog({ username: params.user || undefined }) : Promise.resolve([]),
   ]);
+  // Reports about people and comments; posts have the queue above.
+  const otherReports = reports.filter((entry) => entry.report.target_type !== 'post');
 
   return (
     <>
@@ -65,7 +75,7 @@ export default async function AdminPage({
           </div>
         </div>
 
-        <nav className="flex gap-2">
+        <nav className="flex flex-wrap gap-2">
           {TABS.map((entry) => (
             <Link
               key={entry}
@@ -82,7 +92,7 @@ export default async function AdminPage({
                   with a clock on it is more urgent than a report in a queue. */}
               {entry === 'reports' && stats.totals.underReview > 0 && (
                 <span
-                  title="Under automatic review"
+                  title="Hidden and waiting for review"
                   className="rounded-full bg-solar px-1.5 text-[10px] font-bold text-ink-950"
                 >
                   {stats.totals.underReview}
@@ -253,118 +263,141 @@ export default async function AdminPage({
         )}
 
         {tab === 'reports' && (
-          <div className="mt-6 pb-12">
-            <section className="mb-8">
+          <div className="mt-6 space-y-10 pb-12">
+            <section data-queue="hidden">
               <SectionHeader
-                title={`Automatic ${AUTO_REVIEW_THRESHOLD}-report review`}
-                subtitle={`Hidden automatically once ${AUTO_REVIEW_THRESHOLD} different accounts report the same post. Not a decision — it comes back on its own after ${reviewWindowLabel()} if nobody looks.`}
+                title={`Hidden, waiting for review (${queue.hidden.length})`}
+                subtitle={`A report from an eligible account hides a post at once until somebody here decides. Nothing expires and nothing is deleted on its own. Each account can have at most ${REPORT_HOLD_LIMIT} posts hidden and waiting.`}
               />
-              {review.length === 0 ? (
-                <p className="card p-6 text-center text-sm text-white/40">
-                  Nothing is under automatic review.
-                </p>
+              {queue.hidden.length === 0 ? (
+                <p className="card p-6 text-center text-sm text-white/40">Nothing is waiting.</p>
               ) : (
-                <ul className="space-y-3">
-                  {review.map((item) => (
-                    <li key={item.postId}>
-                      <ReviewCard item={item} window={reviewWindowLabel()} />
+                <ul className="space-y-4">
+                  {queue.hidden.map((item) => (
+                    <li key={item.post.id}>
+                      <QueueCard item={item} />
                     </li>
                   ))}
                 </ul>
               )}
             </section>
 
-            <SectionHeader title="All reports" />
-            <div className="mb-4 flex gap-2">
-              <Link
-                href="/admin?tab=reports"
-                className={`chip ${reportStatus === 'open' ? 'chip-active' : 'hover:bg-white/10'}`}
-              >
-                Open
-              </Link>
-              <Link
-                href="/admin?tab=reports&status=all"
-                className={`chip ${reportStatus === 'all' ? 'chip-active' : 'hover:bg-white/10'}`}
-              >
-                All
-              </Link>
-            </div>
+            <section data-queue="reported">
+              <SectionHeader
+                title={`Reported, still visible (${queue.reported.length})`}
+                subtitle="Open reports that could not hide the post: from suspended or flagged accounts, from a reporter at the limit, or filed again after a moderator restored it."
+              />
+              {queue.reported.length === 0 ? (
+                <p className="card p-6 text-center text-sm text-white/40">No open reports about visible posts.</p>
+              ) : (
+                <ul className="space-y-4">
+                  {queue.reported.map((item) => (
+                    <li key={item.post.id}>
+                      <QueueCard item={item} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
 
-            {reports.length === 0 ? (
-              <p className="card p-8 text-center text-sm text-white/40">
-                No reports in this view. Quiet is good.
-              </p>
-            ) : (
-              <ul className="space-y-3" data-admin-reports>
-                {reports.map((entry) => (
-                  <li key={entry.report.id} className="card p-5">
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
-                      <span className="chip border-fay/40 bg-fay/10 text-fay">
-                        {entry.report.reason}
-                      </span>
-                      <span className="chip capitalize">{entry.report.target_type}</span>
-                      <span className="chip capitalize">{entry.report.status}</span>
-                      <span className="ml-auto text-white/30">
-                        {timeAgo(entry.report.created_at)}
-                      </span>
-                    </div>
+            <section>
+              <SectionHeader title="Reports about people and comments" />
+              <div className="mb-4 flex gap-2">
+                <Link
+                  href="/admin?tab=reports"
+                  className={`chip ${reportStatus === 'open' ? 'chip-active' : 'hover:bg-white/10'}`}
+                >
+                  Open
+                </Link>
+                <Link
+                  href="/admin?tab=reports&status=all"
+                  className={`chip ${reportStatus === 'all' ? 'chip-active' : 'hover:bg-white/10'}`}
+                >
+                  All, with history
+                </Link>
+              </div>
 
-                    <p className="mt-3 text-sm text-white/70">
-                      {entry.target?.type === 'post' && (
-                        <>
-                          <Link href={`/post/${entry.target.id}`} className="underline">
-                            Post
-                          </Link>{' '}
-                          by @{entry.target.authorUsername}: &ldquo;
-                          {entry.target.caption.slice(0, 160) || 'media only'}&rdquo;
-                          {entry.target.removed && (
-                            <span className="ml-2 text-fay">(already removed)</span>
-                          )}
-                          {entry.target.reviewState && (
-                            <span className="ml-2 text-solar">
-                              {entry.target.reviewState === 'admin_hold'
-                                ? '(held for review)'
-                                : '(hidden, under automatic review)'}
-                            </span>
-                          )}
-                        </>
-                      )}
-                      {entry.target?.type === 'user' && (
-                        <>
-                          User{' '}
-                          <Link href={`/u/${entry.target.username}`} className="underline">
-                            @{entry.target.username}
-                          </Link>{' '}
-                          · {entry.target.status}
-                        </>
-                      )}
-                      {entry.target?.type === 'comment' && (
-                        <>
-                          Comment by @{entry.target.authorUsername}: &ldquo;{entry.target.body}
-                          &rdquo;
-                        </>
-                      )}
-                      {!entry.target && <span className="text-white/40">Target no longer exists.</span>}
-                    </p>
+              {(reportStatus === 'all' ? reports : otherReports).length === 0 ? (
+                <p className="card p-8 text-center text-sm text-white/40">
+                  No reports in this view. Quiet is good.
+                </p>
+              ) : (
+                <ul className="space-y-3" data-admin-reports>
+                  {(reportStatus === 'all' ? reports : otherReports).map((entry) => (
+                    <li key={entry.report.id} className="card p-5">
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="chip border-fay/40 bg-fay/10 text-fay">
+                          {entry.report.reason}
+                        </span>
+                        <span className="chip capitalize">{entry.report.target_type}</span>
+                        <span className="chip capitalize">{entry.report.status}</span>
+                        <span className="ml-auto text-white/30" title={timestamp(entry.report.created_at)}>
+                          {timeAgo(entry.report.created_at)}
+                        </span>
+                      </div>
 
-                    {entry.report.details && (
-                      <p className="mt-2 text-sm text-white/40">
-                        Reporter note: {entry.report.details}
+                      <p className="mt-3 text-sm text-white/70">
+                        {entry.target?.type === 'post' && (
+                          <>
+                            <Link href={`/post/${entry.target.id}`} className="underline">
+                              Post
+                            </Link>{' '}
+                            by @{entry.target.authorUsername}: &ldquo;
+                            {entry.target.caption.slice(0, 160) || 'media only'}&rdquo;
+                            {entry.target.removed && <span className="ml-2 text-fay">(removed)</span>}
+                            {entry.target.reviewState && (
+                              <span className="ml-2 text-solar">(hidden, in the queue above)</span>
+                            )}
+                          </>
+                        )}
+                        {entry.target?.type === 'user' && (
+                          <>
+                            User{' '}
+                            <Link href={`/u/${entry.target.username}`} className="underline">
+                              @{entry.target.username}
+                            </Link>{' '}
+                            · {entry.target.status} ·{' '}
+                            <Link
+                              href={`/admin?tab=users&q=${encodeURIComponent(entry.target.username)}`}
+                              className="underline"
+                            >
+                              account actions
+                            </Link>
+                          </>
+                        )}
+                        {entry.target?.type === 'comment' && (
+                          <>
+                            Comment by @{entry.target.authorUsername}: &ldquo;{entry.target.body}
+                            &rdquo;
+                          </>
+                        )}
+                        {!entry.target && <span className="text-white/40">Target no longer exists.</span>}
                       </p>
-                    )}
-                    {entry.report.resolution && (
-                      <p className="mt-2 text-sm text-mint">
-                        Resolution: {entry.report.resolution}
+                      <p className="mt-1 text-xs text-white/40">
+                        Reported by{' '}
+                        {entry.reporter ? `@${entry.reporter.username}` : 'a deleted account'}
                       </p>
-                    )}
 
-                    {entry.report.status === 'open' && (
-                      <ReportActions reportId={entry.report.id} target={entry.target} />
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
+                      {entry.report.details && (
+                        <p className="mt-2 text-sm text-white/40">
+                          Reporter note: {entry.report.details}
+                        </p>
+                      )}
+                      {entry.report.resolution && (
+                        <p className="mt-2 text-sm text-mint">Resolution: {entry.report.resolution}</p>
+                      )}
+
+                      {entry.report.status === 'open' && entry.report.target_type !== 'post' && (
+                        <OtherReportActions
+                          reportId={entry.report.id}
+                          target={entry.target ? { type: entry.target.type, id: entry.target.id } : null}
+                        />
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
           </div>
         )}
 
@@ -393,12 +426,30 @@ export default async function AdminPage({
                     >
                       @{entry.user.username}
                     </Link>
-                    <p className="truncate text-xs text-white/40">
+                    <p className="break-words text-xs text-white/40">
                       {entry.email} · {entry.rating ? `${entry.rating.toFixed(1)} rated` : 'unrated'}{' '}
-                      · {entry.followers} followers · {entry.posts} posts · {entry.user.status}
+                      · {entry.followers} followers · {entry.posts} posts ·{' '}
+                      <span data-account-status>{effectiveStatus(entry.user)}</span>
+                      {effectiveStatus(entry.user) === 'suspended' &&
+                        (entry.user.suspended_until
+                          ? ` until ${formatShortDate(entry.user.suspended_until)}`
+                          : ' until reinstated')}
+                      {entry.user.trusted === false && ' · flagged'}
                     </p>
+                    <Link
+                      href={`/admin?tab=log&user=${encodeURIComponent(entry.user.username)}`}
+                      className="text-xs text-white/40 underline hover:text-white"
+                    >
+                      Moderation history
+                    </Link>
                   </div>
-                  <UserActions userId={entry.user.id} status={entry.user.status} />
+                  <div className="w-full sm:w-auto">
+                    <AccountActions
+                      userId={entry.user.id}
+                      status={effectiveStatus(entry.user) as 'active' | 'suspended' | 'banned'}
+                      isAdmin={entry.user.role === 'admin'}
+                    />
+                  </div>
                 </li>
               ))}
               {users.length === 0 && (
@@ -407,99 +458,234 @@ export default async function AdminPage({
             </ul>
           </div>
         )}
+        {tab === 'log' && (
+          <div className="mt-6 pb-12">
+            <form action="/admin" className="mb-4 flex gap-2">
+              <input type="hidden" name="tab" value="log" />
+              <input
+                name="user"
+                defaultValue={params.user ?? ''}
+                placeholder="Only what concerns @username"
+                className="flex-1"
+              />
+              <button type="submit" className="btn-ghost px-5">
+                Filter
+              </button>
+            </form>
+            {log.length === 0 ? (
+              <p className="card p-8 text-center text-sm text-white/40">Nothing logged here yet.</p>
+            ) : (
+              <ol className="card divide-y divide-white/[0.06]" data-moderation-log>
+                {log.map((entry) => (
+                  <li key={entry.id} className="p-4 text-sm" data-log-action={entry.action}>
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                      <span className="font-semibold text-white">{actionLabel(entry.action)}</span>
+                      <span className="text-white/50">
+                        {entry.href ? (
+                          <Link href={entry.href} className="underline hover:text-white">
+                            {entry.target}
+                          </Link>
+                        ) : (
+                          entry.target
+                        )}
+                      </span>
+                      <span className="ml-auto text-xs text-white/30" title={timestamp(entry.createdAt)}>
+                        {timestamp(entry.createdAt)}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-white/45">
+                      {entry.actor ? `by @${entry.actor}` : 'by FayTarra'}
+                      {entry.detail ? ` · ${entry.detail}` : ''}
+                    </p>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        )}
       </div>
     </>
   );
 }
 
+const STATE_COPY: Record<QueueItem['state'], { label: string; tone: string }> = {
+  report_hold: { label: 'Hidden after a report', tone: 'border-fay/40 bg-fay/10 text-fay' },
+  admin_hold: { label: 'Kept under review', tone: 'border-solar/40 bg-solar/10 text-solar' },
+  visible: { label: 'Visible — reported', tone: 'border-white/15 bg-white/[0.05] text-white/70' },
+};
+
 /**
- * One post waiting for a human.
+ * One post waiting for a decision, with what it takes to make one: the post
+ * itself, who wrote it and when, every report — by whom, how their past
+ * reports went, what they said — and everything already done about it.
  *
- * Shows how many DIFFERENT accounts reported it, what they picked, and what
- * they wrote — and deliberately not who they were. Reporting has to stay
- * something people can do without it becoming a list of names attached to
- * somebody's post.
+ * Moderators only. Reporter names and notes are on this page and nowhere else.
  */
-function ReviewCard({ item, window: reviewWindow }: { item: ReviewItem; window: string }) {
-  const held = item.state === 'admin_hold';
+function QueueCard({ item }: { item: QueueItem }) {
+  const copy = STATE_COPY[item.state];
   return (
-    <div
-      // A stable hook for the tests. A post's caption also appears further down
-      // the page in the ordinary report list, so "is the caption on the page"
-      // cannot tell whether something is in the REVIEW queue — which is the
-      // thing worth asserting, and the thing a test got wrong without this.
-      data-review-card={item.postId}
-      className={`card p-5 ${held ? 'border-solar/40' : 'border-fay/40'}`}
+    <article
+      data-queue-card={item.post.id}
+      data-queue-state={item.state}
+      className={`card p-4 sm:p-5 ${item.state === 'admin_hold' ? 'border-solar/30' : item.state === 'report_hold' ? 'border-fay/30' : ''}`}
     >
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span
-          className={`chip ${
-            held ? 'border-solar/40 bg-solar/10 text-solar' : 'border-fay/40 bg-fay/10 text-fay'
-          }`}
-        >
-          {held ? 'Held by an admin' : 'Temporarily hidden'}
+        <span className={`chip ${copy.tone}`}>{copy.label}</span>
+        <span className="chip capitalize" data-queue-kind>
+          {item.post.kind}
         </span>
-        <span className="chip">
-          {item.uniqueReports} account{item.uniqueReports === 1 ? '' : 's'} reported it
+        <span className="chip" data-queue-count>
+          {item.openReports} open report{item.openReports === 1 ? '' : 's'} · {item.uniqueReporters} account
+          {item.uniqueReporters === 1 ? '' : 's'}
         </span>
-        <span className="chip capitalize">{item.video ? 'video' : 'post'}</span>
-        <span className="ml-auto text-white/30">
-          {held
-            ? 'No automatic expiry'
-            : item.expiresAt
-              ? timeLeft(item.expiresAt)
-              : 'No expiry recorded'}
-        </span>
+        {item.post.contentWarning && <span className="chip">Content warning</span>}
+        {item.hiddenAt && (
+          <span className="ml-auto text-white/35" title={timestamp(item.hiddenAt)}>
+            Hidden {timeAgo(item.hiddenAt) === 'now' ? 'just now' : `${timeAgo(item.hiddenAt)} ago`}
+            {item.hiddenBy ? ` by @${item.hiddenBy}’s report` : ''}
+          </span>
+        )}
       </div>
 
-      <p className="mt-3 text-sm text-white/70">
-        <Link href={`/post/${item.postId}`} className="underline">
-          {item.video ? 'Video' : 'Post'}
-        </Link>{' '}
-        by @{item.authorUsername}: &ldquo;{item.caption.slice(0, 200) || 'media only'}&rdquo;
-      </p>
-
-      {item.startedAt && (
-        <p className="mt-1 text-xs text-white/30">
-          Reached the threshold {timeAgo(item.startedAt)} · {timestamp(item.startedAt)}
-        </p>
-      )}
-
-      {item.reasons.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {item.reasons.map((entry) => (
-            <span key={entry.reason} className="chip text-xs">
-              {entry.reason} · {entry.count}
-            </span>
-          ))}
+      <div className="mt-4 grid gap-4 sm:grid-cols-[180px_minmax(0,1fr)]">
+        <MediaPreview item={item} />
+        <div className="min-w-0 text-sm">
+          <p className="text-white/50">
+            By{' '}
+            <Link href={`/u/${item.author.username}`} className="font-semibold text-white underline">
+              @{item.author.username}
+            </Link>
+            {item.author.status !== 'active' && (
+              <span className="ml-1 text-fay">({item.author.status})</span>
+            )}{' '}
+            · posted <span title={timestamp(item.post.createdAt)}>{timestamp(item.post.createdAt)}</span>
+          </p>
+          {item.post.textTitle && (
+            <p className="mt-2 font-display text-base font-bold text-white">{item.post.textTitle}</p>
+          )}
+          <p className="mt-2 whitespace-pre-wrap break-words text-white/80" data-queue-caption>
+            {item.post.caption.slice(0, 800) || <span className="text-white/40">No words, media only.</span>}
+          </p>
+          <Link href={`/post/${item.post.id}`} className="mt-2 inline-block text-xs text-white/45 underline hover:text-white">
+            Open the post (visible to moderators while hidden)
+          </Link>
+          {item.reasons.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {item.reasons.map((entry) => (
+                <span key={entry.reason} className="chip text-xs">
+                  {entry.reason} · {entry.count}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
-      {item.notes.length > 0 && (
-        <ul className="mt-3 space-y-1 text-sm text-white/40">
-          {item.notes.map((note, index) => (
-            <li key={index}>&ldquo;{note.slice(0, 240)}&rdquo;</li>
-          ))}
-        </ul>
-      )}
+      <ul className="mt-4 space-y-2" data-queue-reports>
+        {item.reports.map((report) => (
+          <li
+            key={report.id}
+            data-queue-report={report.id}
+            className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-3 text-sm"
+          >
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="chip border-fay/40 bg-fay/10 text-fay">{report.reason}</span>
+              <span className="chip capitalize">{report.status}</span>
+              {report.holding && <span className="chip border-solar/40 text-solar">Keeps it hidden</span>}
+              {report.status === 'open' && report.cleared && (
+                <span className="chip" title="Filed again after a moderator dealt with it">
+                  Cannot hide it again
+                </span>
+              )}
+              <span className="ml-auto text-white/30" title={timestamp(report.createdAt)}>
+                {timestamp(report.createdAt)}
+              </span>
+            </div>
+            {report.reporter ? (
+              <p className="mt-2 text-xs text-white/50" data-reporter={report.reporter.username}>
+                Reported by{' '}
+                <Link href={`/admin?tab=log&user=${encodeURIComponent(report.reporter.username)}`} className="underline">
+                  @{report.reporter.username}
+                </Link>{' '}
+                · {report.reporter.filed} filed · {report.reporter.dismissed} dismissed ·{' '}
+                {report.reporter.holding}/{REPORT_HOLD_LIMIT} hidden and waiting
+                {!report.reporter.canHide && (
+                  <span className="ml-1 text-fay">
+                    · {report.reporter.status !== 'active' ? report.reporter.status : 'flagged'}: their
+                    reports cannot hide posts
+                  </span>
+                )}
+              </p>
+            ) : (
+              <p className="mt-2 text-xs text-white/40">Reported by an account since deleted</p>
+            )}
+            {report.details && <p className="mt-2 text-white/60">&ldquo;{report.details.slice(0, 400)}&rdquo;</p>}
+            {report.status === 'open' && <DismissReport reportId={report.id} />}
+          </li>
+        ))}
+      </ul>
 
-      <ReviewActions postId={item.postId} state={item.state} window={reviewWindow} />
+      <PostDecisions postId={item.post.id} state={item.state} />
 
       {item.history.length > 0 && (
         <details className="mt-3">
           <summary className="cursor-pointer text-xs text-white/40 hover:text-white/70">
             Moderation history ({item.history.length})
           </summary>
-          <ul className="mt-2 space-y-1 text-xs text-white/40">
+          <ul className="mt-2 space-y-1 text-xs text-white/45">
             {item.history.map((event) => (
               <li key={event.id}>
-                <span className="text-white/60">{event.action.replace(/_/g, ' ')}</span> ·{' '}
-                {timestamp(event.created_at)}
+                <span className="text-white/70">{actionLabel(event.action)}</span>
+                {event.actor ? ` by @${event.actor}` : ''} · {timestamp(event.createdAt)}
                 {event.detail ? ` · ${event.detail}` : ''}
               </li>
             ))}
           </ul>
         </details>
+      )}
+    </article>
+  );
+}
+
+/** The post's picture or video, or its words for a text post. */
+function MediaPreview({ item }: { item: QueueItem }) {
+  const first = item.post.media[0];
+  if (!first) {
+    // A text post's words are beside this already; a square of nothing would
+    // only push them down on a phone.
+    return (
+      <div className="flex items-center justify-center rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3 text-center text-xs text-white/50 sm:aspect-square">
+        {item.post.kind === 'big' ? 'Big message' : item.post.kind === 'story' ? 'Story' : 'Short message'}
+      </div>
+    );
+  }
+  if (first.kind === 'video') {
+    return (
+      <video
+        controls
+        preload="none"
+        playsInline
+        poster={first.poster}
+        src={first.url}
+        className="aspect-square w-full rounded-2xl bg-black object-contain"
+        data-queue-media="video"
+      />
+    );
+  }
+  return (
+    <div className="relative aspect-square overflow-hidden rounded-2xl bg-ink-850" data-queue-media="image">
+      <Image
+        src={first.url}
+        alt={`Photo by @${item.author.username}`}
+        fill
+        sizes="180px"
+        unoptimized={isVectorImage(first.url)}
+        className="object-cover"
+      />
+      {item.post.media.length > 1 && (
+        <span className="absolute bottom-2 right-2 rounded-full bg-black/60 px-2 py-0.5 text-[11px]">
+          +{item.post.media.length - 1}
+        </span>
       )}
     </div>
   );

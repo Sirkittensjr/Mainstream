@@ -6,6 +6,8 @@ import { createClient } from '@supabase/supabase-js';
 import { db } from '@/lib/db';
 import { supabaseAnonKey, supabaseUrl } from '@/lib/supabase/config';
 import { hasAdminVerification } from '@/lib/services/admin-step-up';
+import { liftExpiredSuspension } from '@/lib/services/moderation';
+import { suspensionOver } from '@/lib/moderation-rules';
 import { createAuthClient } from '@/lib/supabase/server';
 import type { User } from '@/lib/types';
 
@@ -23,6 +25,9 @@ export const getViewer = cache(async (): Promise<User | null> => {
 
   const profile = await db().get('users', authUserId);
   if (!profile || profile.status === 'banned') return null;
+  // A temporary suspension that has run out ends here, the first time the
+  // person is seen afterwards — before anything checks whether they may post.
+  if (suspensionOver(profile)) return liftExpiredSuspension(profile);
   return profile;
 });
 

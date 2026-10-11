@@ -95,7 +95,7 @@ describe('who may report what', () => {
 
   it('somebody else’s post: yes', async () => {
     const post = await photoPost();
-    assert.deepEqual(await report(reader.id, 'post', post.id), { ok: true });
+    assert.equal((await report(reader.id, 'post', post.id)).ok, true);
     assert.equal((await store.query('reports', { where: { target_id: post.id } })).length, 1);
   });
 
@@ -115,10 +115,11 @@ describe('who may report what', () => {
     assert.equal((await report(reader.id, 'user', crypto.randomUUID())).ok, false);
   });
 
-  it('a suspended account: no', async () => {
+  it('a suspended account: recorded for a moderator, but it hides nothing', async () => {
     const post = await photoPost();
-    assert.equal((await report(benched.id, 'post', post.id)).ok, false);
-    assert.equal((await store.query('reports', { where: { target_id: post.id } })).length, 0);
+    assert.deepEqual(await report(benched.id, 'post', post.id), { ok: true, hidden: false });
+    assert.equal((await store.query('reports', { where: { target_id: post.id } })).length, 1);
+    assert.equal((await store.get('posts', post.id))?.review_state ?? null, null);
   });
 
   it('reporting twice is still one report', async () => {
@@ -185,7 +186,8 @@ describe('the file of a hidden or removed post stays hidden', () => {
       tags: [],
       media: [{ kind: 'video', url: video, poster }],
     });
-    await moderation.removePost(post.id, 'Spam');
+    // Removed the way removal worked before it was permanent, when the files stayed.
+    await store.update('posts', post.id, { removed: true, removed_reason: 'Spam' });
     assert.equal(await reuse.mediaReuseProblem([video], author.id), 'moderated');
     assert.equal(await reuse.mediaReuseProblem([poster], author.id), 'moderated');
   });

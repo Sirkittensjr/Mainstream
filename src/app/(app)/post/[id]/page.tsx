@@ -77,7 +77,7 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
       <div className="mx-auto max-w-2xl px-4 py-16 text-center">
         <h1 className="font-display text-2xl font-bold">This post is being reviewed</h1>
         <p className="mt-2 text-white/50">
-          It is temporarily hidden while the FayTarra team checks it against the{' '}
+          It is hidden while FayTarra moderation checks it against the{' '}
           <Link href="/rules" className="underline">
             community rules
           </Link>
@@ -115,6 +115,21 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
     <>
       <PageTopBar title="Post" />
       <div className="mx-auto max-w-2xl space-y-4 px-4 pt-4 lg:pt-8">
+        {!post.removed && underReview(post) && (
+          <p
+            data-under-review
+            className="rounded-2xl border border-solar/40 bg-solar/10 px-4 py-3 text-sm text-solar"
+          >
+            {isAuthor
+              ? 'This post is hidden while FayTarra moderation reviews a report about it. Only you and moderators can see it, and it cannot be deleted until the review is finished. Nothing has been decided yet.'
+              : 'Hidden and waiting for review. '}
+            {!isAuthor && viewer?.role === 'admin' && (
+              <Link href="/admin?tab=reports" className="underline">
+                Open the moderation queue
+              </Link>
+            )}
+          </p>
+        )}
         {post.removed && (
           <p className="rounded-2xl border border-fay/40 bg-fay/10 px-4 py-3 text-sm text-fay-soft">
             This post has been removed by a moderator

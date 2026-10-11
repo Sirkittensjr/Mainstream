@@ -135,7 +135,7 @@ describe('a block holds on the server, not only in the UI', () => {
 
   it('refuses a like or comment on a removed post', async () => {
     const post = await newPost();
-    await moderation.removePost(post.id, 'test', admin.id);
+    await moderation.removePostPermanently(post.id, admin.id, 'test');
     assert.deepEqual(await posts.toggleLike(post.id, reader.id), { liked: false });
     assert.equal((await posts.addComment(post.id, reader.id, 'late')).ok, false);
   });

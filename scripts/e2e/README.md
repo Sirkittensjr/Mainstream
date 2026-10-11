@@ -228,68 +228,61 @@ checks that nothing in settings lets somebody set their own role, and that
 `ADMIN_EMAILS` is how the role is applied on sign-in locally; in production
 migration 0008 sets the same column.
 
-### 3d. The automatic ten-report review — `auto-review-flow.mjs`
+### 3d. Post moderation — `moderation-flow.mjs`
 
-Ten different accounts reporting the same post hide it while somebody looks —
-for at most 24 hours, and never as a verdict.
+A report from an eligible account hides a post at once until an administrator
+decides; nothing expires and nothing is deleted on its own. Replaces the first
+version's ten-report, 24-hour review.
 
 ```bash
-ADMIN_EMAILS=admin@faytarra.com ADMIN_SESSION_SECRET=test-secret \
-  FAY_REVIEW_WINDOW_MINUTES=2 npm start &
-FAY_REVIEW_WINDOW_MINUTES=2 node scripts/e2e/auto-review-flow.mjs
+ADMIN_EMAILS=admin@faytarra.com ADMIN_SESSION_SECRET=test-secret npm start &
+OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
+  node scripts/e2e/moderation-flow.mjs
 ```
 
-`FAY_REVIEW_WINDOW_MINUTES` shortens the window so the expiry can be watched
-happening instead of waited out for a day. It may only ever **shorten** it:
-`clampWindow` in `src/lib/auto-review-rules.ts` caps it at the documented 24
-hours, and the unit tests in `auto-review-rules.test.ts` cover the default and
-the clamp. Pass the same value to the app and to the harness — the harness uses
-it to know what wording to expect and how long to wait, and skips the expiry
-section (saying so) if the window is longer than five minutes.
-
-Two minutes, not one: filing ten reports through the dialog takes most of a
-minute, and a one-minute window can lapse before the check that the post is
-*gone* has run — which reads as a product failure and is not one.
-
-Twelve accounts get created, so give it a few minutes.
+Against an EMPTY store. Six accounts get created. `SHOTS_DIR=<folder>` keeps
+screenshots of a queue card, the audit log and the phone views.
 
 Covers, in order of how badly it would matter if it were wrong:
 
-- **One account is not ten.** Twelve reports from one person is one report row
-  and no hide; nine different accounts is no hide; the tenth hides it.
-- **Hidden means hidden.** Gone from the feeds, from Discover, from search,
-  from the author's public profile as others see it, from `/post/<id>` and from
-  `/api/v1/posts/<id>` — the author and an administrator still see it, because
-  the author was told it exists and an admin cannot review what they cannot see.
-- **Only an administrator can act.** `/admin` and its tabs are asked for
-  directly, not looked for in the navigation; no restore, remove, hold or clear
-  control is served to anybody else; the author cannot un-hide their own post;
-  every write method on the post API is refused, so there is no count to forge.
-- **Nothing is deleted.** Clearing the threshold leaves all ten report rows with
-  their reasons and reporters, marked `cleared_at`, and leaves the automatic hide
-  in `moderation_events`. Ten *fresh* reports hide it again, which is the proof
-  that clearing reset the count rather than switched it off.
-- **It is temporary.** The window runs out with no sweep, no cron and no admin,
-  and the post is in a feed again. Looking at the queue afterwards records it as
-  an *expiry* with no actor, not as a decision.
-- **Nobody learns who reported them.** No reporter handle or id appears in the
-  admin queue's text or its markup, or in either notification the author gets —
-  while what reporters wrote is still shown to the admin.
-- **A removal is not a ban.** After Remove permanently the author's status is
-  still `active`, and they get a notification saying it was removed.
-- **Hold** stops the clock without expiring, and the post stays hidden.
-- **A moderator can see there is something waiting** — the overview counts it
-  and the Reports tab carries its own badge, separate from the report count,
-  because a hide with a clock on it is more urgent than a queued report.
-
-The author's messages are **notifications**, not direct messages: the harness
-checks no `messages` row was created, because the mutual-follow rule that
-governs DMs is not being bent so that FayTarra can talk to somebody.
+- **Hidden at once, everywhere.** After one report: gone from the feeds,
+  Discover, search, the author's profile as others see it, `/post/<id>` (the
+  caption is not even in the response) and `/api/v1/posts/<id>`. The row is not
+  removed and has no expiry. The author still sees it with a notice, is told by
+  notification (not by DM, and not who reported it), and cannot delete it while
+  the review is pending.
+- **Only an administrator can decide.** `/admin` and its tabs are asked for
+  directly; then a real admin request is captured in the admin's browser and
+  sent again from a normal account against another post — it changes nothing
+  and logs nothing.
+- **The queue** shows the post, its photo, its kind, its author, the number of
+  open reports and accounts, each reporter with how many reports they have filed
+  and had dismissed and how many posts they have hidden, what they wrote, and
+  the post's moderation history.
+- **Keep under review, then dismiss the report**: still hidden.
+- **Approve and restore**: visible again, with its like and comment; the author
+  is told. The same reporter reporting again is read by a person but cannot hide
+  it; somebody new can. **Dismissing the only report** that hides a post shows it
+  again, and the log says why.
+- **Remove permanently** is refused without a reason, then removes the post,
+  keeps its record, deletes its file (the URL answers 404), shows the author the
+  reason, and leaves the author's account alone.
+- **Two reports at the same moment** are both recorded and hide the post once.
+- **At most five per reporter**: the sixth report is recorded, logged as over
+  the limit, and the post stays visible.
+- **Accounts**: a warning arrives as a notification; a one-day suspension shows
+  its reason, and that account's reports then hide nothing; suspensions and bans
+  need a reason and can be reversed; a banned account is signed out of
+  everything; suspend and ban are not offered against an administrator.
+- **The audit log** lists every decision with the admin, the target and the
+  reason, and can be filtered to one account. No reporter or moderator note
+  appears on the public post page.
+- **On a phone** the queue and the account controls fit, with the decisions
+  reachable.
 
 **Videos need nothing of their own.** A video on FayTarra *is* a post, and the
 videos feed is `visiblePosts` filtered to posts with video media, so it is the
-same code path. The only thing the media changes is the noun in the author's
-notification, hence text fixtures here rather than a recorded clip.
+same code path. The queue shows a video with its poster and controls.
 
 ### 4c. Recording on a phone — `mobile-record-flow.mjs`
 
@@ -1326,7 +1319,7 @@ it:
 `auth-flow`, `features-flow`, `video-flow`, `videos-flow`, `video-upload-flow`,
 `video-cover-flow`, `mobile-record-flow`, `multi-clip-flow`, `editor-clip-sync-flow`,
 `desktop-layout-flow`, `profile-appearance-flow`, `messaging-flow`,
-`profile-colours-flow`, `top-creators-flow`, `auto-review-flow`, `admin-badge`,
+`profile-colours-flow`, `top-creators-flow`, `moderation-flow`, `admin-badge`,
 `text-overlays-flow`, `landing-flow` and `social-navigation` create their own
 accounts and want an EMPTY store
 (`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and

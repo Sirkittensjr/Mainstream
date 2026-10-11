@@ -159,11 +159,18 @@ describe('nobody can delete a post that is not theirs', () => {
 
   it('a post a moderator removed stays as the record, even for its author', async () => {
     const post = await postOf('photo');
-    await moderation.removePost(post.id, 'Spam', admin.id);
+    await moderation.removePostPermanently(post.id, admin.id, 'Spam');
     assert.deepEqual(await posts.deletePost(post.id, alice.id), { ok: false, reason: 'moderated' });
-    assert.ok(await store.get('posts', post.id));
+    const kept = await store.get('posts', post.id);
+    assert.ok(kept, 'the row stays as the record');
+    assert.equal(kept?.removed_reason, 'Spam');
+  });
+
+  it('a post removed before removal was permanent can still be restored by a moderator', async () => {
+    const post = await postOf('photo');
+    await store.update('posts', post.id, { removed: true, removed_reason: 'Spam' });
+    assert.deepEqual(await posts.deletePost(post.id, alice.id), { ok: false, reason: 'moderated' });
     assert.equal(onDisk(post.media[0].url), true);
-    // And the moderator's own tools still work on it.
     await moderation.restorePost(post.id, admin.id);
     assert.equal((await store.get('posts', post.id))?.removed, false);
   });
@@ -306,7 +313,8 @@ describe('a deleted post’s files', () => {
       tags: [],
       media: [{ kind: 'image', url: held }],
     });
-    await moderation.removePost(removed.id, 'Spam', admin.id);
+    // Removed the way removal worked before it was permanent: the row keeps its files.
+    await store.update('posts', removed.id, { removed: true, removed_reason: 'Spam' });
     const mine = await posts.createPost({
       authorId: alice.id,
       caption: 'same file',
