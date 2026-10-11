@@ -127,83 +127,118 @@ before(async () => {
 
 after(() => rmSync(dataDir, { recursive: true, force: true }));
 
-describe('a report from an eligible account hides the post at once', () => {
-  it('everywhere the public looks — and nothing is deleted', async () => {
-    const post = await photo('sunset over the harbour');
-    const before = await publiclyVisible(post.id, 'harbour');
-    assert.deepEqual(before, { feed: true, profile: true, search: true, discover: true });
+const THRESHOLD = 10;
 
+/** `n` fresh eligible accounts each reporting the post, one after another. */
+async function reportedBy(postId: string, n: number, reason = 'Spam') {
+  const people = [];
+  for (let i = 0; i < n; i += 1) {
     const someone = await reporter();
-    assert.deepEqual(await report(someone.id, post.id, 'Spam', 'looks like an ad'), { ok: true, hidden: true });
+    people.push(someone);
+    await report(someone.id, postId, reason);
+  }
+  return people;
+}
 
-    assert.deepEqual(await publiclyVisible(post.id, 'harbour'), {
-      feed: false,
-      profile: false,
-      search: false,
-      discover: false,
-    });
+describe('reports below the threshold: recorded, shown to admins, post stays up', () => {
+  it('one to nine valid reports leave it visible and put it in the dashboard at once', async () => {
+    const post = await photo('nine is not ten');
+    for (let n = 1; n < THRESHOLD; n += 1) {
+      const result = await report((await reporter()).id, post.id);
+      assert.deepEqual(result, { ok: true, hidden: false }, `report ${n}`);
+      const queue = await moderation.moderationQueue();
+      const item = queue.reported.find((entry) => entry.post.id === post.id);
+      assert.ok(item, `in the dashboard after report ${n}`);
+      assert.equal(item.validReports, n);
+      assert.equal(item.openReports, n);
+    }
+    assert.deepEqual(await stateOf(post.id), { removed: false, review: null });
+    assert.deepEqual(await publiclyVisible(post.id, 'nine is not ten'), { feed: true, profile: true, search: true, discover: true });
+  });
+});
+
+describe('the tenth valid report hides it pending admin review', () => {
+  it('hidden everywhere the public looks, kept, and in the queue', async () => {
+    const post = await photo('sunset over the harbour');
+    await reportedBy(post.id, THRESHOLD - 1);
+    assert.deepEqual(await report((await reporter()).id, post.id), { ok: true, hidden: true });
+
+    assert.deepEqual(await publiclyVisible(post.id, 'harbour'), { feed: false, profile: false, search: false, discover: false });
     const row = await store.get('posts', post.id);
     assert.equal(row?.review_state, 'temporary_review');
-    assert.equal(row?.review_expires_at ?? null, null, 'no expiry: it waits for a moderator');
+    assert.equal(row?.review_expires_at ?? null, null, 'no expiry: it waits for an admin');
     assert.equal(row?.removed, false);
     assert.equal(onDisk(post.media[0].url), true, 'its file is kept');
+    const queue = await moderation.moderationQueue();
+    const item = queue.hidden.find((entry) => entry.post.id === post.id);
+    assert.equal(item?.state, 'report_hold');
+    assert.equal(item?.validReports, THRESHOLD);
   });
 
   it('its author and moderators still see it', async () => {
     const post = await photo();
-    await report((await reporter()).id, post.id);
+    await reportedBy(post.id, THRESHOLD);
     assert.ok((await posts.postsByAuthor(author.id, author)).some((p) => p.id === post.id));
     assert.ok((await posts.postsByAuthor(author.id, admin)).some((p) => p.id === post.id));
   });
 
-  it('the log says whose report hid it; the author is told, without being told who', async () => {
+  it('is logged, and the author is told it is temporarily hidden, without being told who', async () => {
     const post = await photo();
-    const someone = await reporter('named');
-    await report(someone.id, post.id, 'Harassment');
-    const [hide] = await events(post.id, 'report_hidden');
-    assert.equal(hide.actor_id, someone.id);
-    assert.match(hide.detail, /Harassment/);
+    const people = await reportedBy(post.id, THRESHOLD, 'Harassment');
+    const [hide] = await events(post.id, 'auto_review_started');
+    assert.equal(hide.actor_id, null);
+    assert.equal(hide.unique_reports, THRESHOLD);
     const told = (await store.query('notifications', { where: { user_id: author.id, post_id: post.id } }))[0];
-    assert.ok(told, 'the author is notified');
-    assert.ok(!told.body.includes(someone.username), 'and not told who reported it');
-    assert.match(told.body, /review/i);
+    assert.match(told.body, /temporarily hidden pending review/i);
+    for (const someone of people) assert.ok(!told.body.includes(someone.username));
+  });
+
+  it('an eleventh report does not hide it again', async () => {
+    const post = await photo();
+    await reportedBy(post.id, THRESHOLD);
+    assert.deepEqual(await report((await reporter()).id, post.id), { ok: true, hidden: false });
+    assert.equal((await events(post.id, 'auto_review_started')).length, 1);
   });
 
   it('it survives a restart: the state is written to the store, not kept in memory', async () => {
     const post = await photo();
-    await report((await reporter()).id, post.id);
-    // What a fresh process would load: the file on disk.
+    await reportedBy(post.id, THRESHOLD);
     const { readFileSync } = await import('node:fs');
     await new Promise((resolve) => setTimeout(resolve, 50));
     const saved = JSON.parse(readFileSync(path.join(dataDir, 'faytarra.json'), 'utf8'));
-    const row = saved.posts.find((p: { id: string }) => p.id === post.id);
-    assert.equal(row.review_state, 'temporary_review');
-    assert.ok(saved.reports.some((r: { target_id: string }) => r.target_id === post.id));
+    assert.equal(saved.posts.find((p: { id: string }) => p.id === post.id).review_state, 'temporary_review');
+  });
+
+  it('a post already held, or removed, is never hidden again by reports', async () => {
+    const held = await photo();
+    await moderation.keepUnderReview(held.id, admin.id, 'looking');
+    await reportedBy(held.id, THRESHOLD);
+    assert.deepEqual(await stateOf(held.id), { removed: false, review: 'admin_hold' });
+    assert.equal((await events(held.id, 'auto_review_started')).length, 0);
   });
 });
 
-describe('who can hide a post by reporting it', () => {
-  it('a suspended account: recorded, not hidden', async () => {
+describe('only valid reports count', () => {
+  it('suspended, flagged and banned accounts never make up the tenth', async () => {
     const post = await photo();
+    await reportedBy(post.id, THRESHOLD - 1);
     assert.deepEqual(await report(benched.id, post.id), { ok: true, hidden: false });
-    assert.deepEqual(await stateOf(post.id), { removed: false, review: null });
-    assert.equal((await store.query('reports', { where: { target_id: post.id } })).length, 1);
-  });
-
-  it('an account flagged for abuse: recorded, not hidden', async () => {
-    const post = await photo();
     assert.deepEqual(await report(flagged.id, post.id), { ok: true, hidden: false });
-    assert.deepEqual(await stateOf(post.id), { removed: false, review: null });
-  });
-
-  it('a banned account: not even recorded', async () => {
-    const post = await photo();
     assert.equal((await report(banned.id, post.id)).ok, false);
-    assert.equal((await store.query('reports', { where: { target_id: post.id } })).length, 0);
+    assert.deepEqual(await stateOf(post.id), { removed: false, review: null });
+    assert.equal(await moderation.validReportCount(post.id), THRESHOLD - 1);
+    assert.equal((await store.query('reports', { where: { target_id: post.id } })).length, THRESHOLD + 1, 'still recorded');
   });
-});
 
-describe('one account, one report — and duplicates change nothing', () => {
+  it('a duplicate from the same account adds nothing, even sent five times at once', async () => {
+    const post = await photo();
+    const someone = await reporter();
+    const results = await Promise.all(Array.from({ length: 5 }, () => report(someone.id, post.id)));
+    assert.ok(results.every((result) => result.ok));
+    assert.equal((await store.query('reports', { where: { target_id: post.id } })).length, 1);
+    assert.equal(await moderation.validReportCount(post.id), 1);
+  });
+
   it('reporting again keeps one row, and the earlier wording is in the log', async () => {
     const post = await photo();
     const someone = await reporter();
@@ -215,70 +250,51 @@ describe('one account, one report — and duplicates change nothing', () => {
     const [refiled] = await events(post.id, 'report_refiled');
     assert.match(refiled.detail, /Spam/);
     assert.match(refiled.detail, /first/);
-    assert.equal((await events(post.id, 'report_hidden')).length, 1, 'hidden once');
-  });
-
-  it('the same report sent five times at once is one report and one hide', async () => {
-    const post = await photo();
-    const someone = await reporter();
-    const results = await Promise.all(Array.from({ length: 5 }, () => report(someone.id, post.id)));
-    assert.ok(results.every((result) => result.ok));
-    assert.equal(results.filter((result) => result.ok && result.hidden).length, 1);
-    assert.equal((await store.query('reports', { where: { target_id: post.id } })).length, 1);
-    assert.equal((await events(post.id, 'report_hidden')).length, 1);
-  });
-
-  it('ten different accounts reporting at once hide it once, consistently', async () => {
-    const post = await photo();
-    const people = await Promise.all(Array.from({ length: 10 }, () => reporter()));
-    const results = await Promise.all(people.map((someone) => report(someone.id, post.id)));
-    assert.ok(results.every((result) => result.ok));
-    assert.equal(results.filter((result) => result.ok && result.hidden).length, 1);
-    assert.equal((await store.query('reports', { where: { target_id: post.id } })).length, 10);
-    assert.equal((await events(post.id, 'report_hidden')).length, 1);
-    assert.deepEqual(await stateOf(post.id), { removed: false, review: 'temporary_review' });
   });
 });
 
-describe('each reporter can have at most five posts hidden and waiting', () => {
-  it('the sixth report is recorded but hides nothing', async () => {
-    const someone = await reporter();
-    const seven = await Promise.all(Array.from({ length: 7 }, () => photo()));
-    const results = [];
-    for (const post of seven) results.push(await report(someone.id, post.id));
-    assert.deepEqual(
-      results.map((result) => result.ok && result.hidden),
-      [true, true, true, true, true, false, false],
-    );
-    assert.equal((await moderation.activeHoldsBy(someone.id)).length, 5);
-    assert.equal((await events(seven[5].id, 'report_hold_limit')).length, 1);
-    assert.equal((await store.query('reports', { where: { target_id: seven[6].id } })).length, 1);
+describe('reports arriving together', () => {
+  it('ten different accounts at once hide it exactly once', async () => {
+    const post = await photo();
+    const people = await Promise.all(Array.from({ length: THRESHOLD }, () => reporter()));
+    const results = await Promise.all(people.map((someone) => report(someone.id, post.id)));
+    assert.ok(results.every((result) => result.ok));
+    assert.equal(results.filter((result) => result.ok && result.hidden).length, 1);
+    assert.equal((await events(post.id, 'auto_review_started')).length, 1);
+    assert.deepEqual(await stateOf(post.id), { removed: false, review: 'temporary_review' });
   });
 
-  it('sent all at once, still no more than five', async () => {
-    const someone = await reporter();
-    const eight = await Promise.all(Array.from({ length: 8 }, () => photo()));
-    const results = await Promise.all(eight.map((post) => report(someone.id, post.id)));
-    assert.equal(results.filter((result) => result.ok && result.hidden).length, 5);
-    assert.equal((await moderation.activeHoldsBy(someone.id)).length, 5);
-    const hidden = [];
-    for (const post of eight) if ((await stateOf(post.id)).review) hidden.push(post.id);
-    assert.equal(hidden.length, 5);
+  it('nine accounts plus a burst of duplicates and ineligible reports does not get there', async () => {
+    const post = await photo();
+    const people = await Promise.all(Array.from({ length: THRESHOLD - 1 }, () => reporter()));
+    await Promise.all([
+      ...people.map((someone) => report(someone.id, post.id)),
+      ...people.map((someone) => report(someone.id, post.id)),
+      report(benched.id, post.id),
+      report(flagged.id, post.id),
+    ]);
+    assert.deepEqual(await stateOf(post.id), { removed: false, review: null });
+    assert.equal(await moderation.validReportCount(post.id), THRESHOLD - 1);
   });
+});
 
-  it('a decision frees a place', async () => {
-    const someone = await reporter();
-    const six = await Promise.all(Array.from({ length: 6 }, () => photo()));
-    for (const post of six.slice(0, 5)) await report(someone.id, post.id);
-    assert.deepEqual(await report(someone.id, six[5].id), { ok: true, hidden: false }, 'at the limit');
-    await moderation.approvePost(six[0].id, admin.id, 'fine');
-    const another = await photo();
-    assert.deepEqual(await report(someone.id, another.id), { ok: true, hidden: true });
+describe('a hidden post stays hidden until an admin decides', () => {
+  it('no clock brings it back, and dismissing reports does not either', async () => {
+    const post = await photo();
+    await reportedBy(post.id, THRESHOLD);
+    // A day and more passes.
+    await store.update('posts', post.id, { review_started_at: new Date(Date.now() - 3 * 86_400_000).toISOString() });
+    assert.deepEqual(await stateOf(post.id), { removed: false, review: 'temporary_review' });
+    assert.equal((await posts.visiblePosts(viewer.id)).some((p) => p.id === post.id), false);
+    for (const row of await store.query('reports', { where: { target_id: post.id } })) {
+      await moderation.dismissReport(row.id, admin.id, 'unfounded');
+    }
+    assert.deepEqual(await stateOf(post.id), { removed: false, review: 'temporary_review' }, 'still hidden');
   });
 });
 
 describe('approve and restore', () => {
-  it('brings it back with every like, comment and rating it had', async () => {
+  it('brings it back with every like, comment and rating it had, and tells the author', async () => {
     const post = await photo('worth keeping');
     const fan = await reporter('fan');
     await posts.toggleLike(post.id, fan.id);
@@ -286,7 +302,7 @@ describe('approve and restore', () => {
     const rated = await ratings.submitRating({ raterId: fan.id, targetType: 'post', targetId: post.id, score: 9, reactions: [] });
     assert.ok(rated.ok);
 
-    await report((await reporter()).id, post.id);
+    await reportedBy(post.id, THRESHOLD);
     assert.deepEqual(await moderation.approvePost(post.id, admin.id, 'not spam'), { ok: true });
 
     assert.deepEqual(await stateOf(post.id), { removed: false, review: null });
@@ -294,104 +310,119 @@ describe('approve and restore', () => {
     assert.equal((await store.query('likes', { where: { post_id: post.id } })).length, 1);
     assert.equal((await store.query('comments', { where: { post_id: post.id } })).length, 1);
     assert.equal((await store.query('ratings', { where: { target_id: post.id } })).length, 1);
+    const [approved] = await events(post.id, 'admin_approved');
+    assert.equal(approved.actor_id, admin.id);
+    const told = await store.query('notifications', { where: { user_id: author.id, post_id: post.id } });
+    assert.ok(told.some((note) => /visible again/i.test(note.body)));
   });
 
-  it('resolves its reports, and the people who reported it cannot hide it again', async () => {
+  it('clears its reports: the same people reporting again cannot hide it', async () => {
     const post = await photo();
-    const first = await reporter('first');
-    await report(first.id, post.id, 'Spam');
+    const people = await reportedBy(post.id, THRESHOLD);
     await moderation.approvePost(post.id, admin.id);
-    const [row] = await store.query('reports', { where: { target_id: post.id } });
-    assert.equal(row.status, 'resolved');
-    assert.ok(row.cleared_at);
-
-    // Reported again by the same account: read by a person, hides nothing.
-    assert.deepEqual(await report(first.id, post.id, 'Harassment'), { ok: true, hidden: false });
+    for (const someone of people) assert.deepEqual(await report(someone.id, post.id), { ok: true, hidden: false });
     assert.deepEqual(await stateOf(post.id), { removed: false, review: null });
-    const again = await store.get('reports', row.id);
-    assert.equal(again?.status, 'open', 'back in front of a moderator');
-    assert.ok(again?.cleared_at, 'but it cannot hide or hold the post');
-    assert.equal((await store.query('reports', { where: { target_id: post.id } })).length, 1, 'history kept, not duplicated');
+    assert.equal(await moderation.validReportCount(post.id), 0);
+    assert.equal((await store.query('reports', { where: { target_id: post.id } })).length, THRESHOLD, 'history kept, not duplicated');
+  });
+});
 
-    // Somebody new still can.
-    assert.deepEqual(await report((await reporter('newcomer')).id, post.id), { ok: true, hidden: true });
+describe('deny — keep removed', () => {
+  it('needs a reason', async () => {
+    const post = await photo();
+    await reportedBy(post.id, THRESHOLD);
+    assert.equal((await moderation.denyPost(post.id, admin.id, ' ')).ok, false);
+    assert.deepEqual(await stateOf(post.id), { removed: false, review: 'temporary_review' });
+  });
+
+  it('keeps it out of public view without deleting it, logs it and tells the author why', async () => {
+    const post = await photo('deny this');
+    await reportedBy(post.id, THRESHOLD);
+    assert.deepEqual(await moderation.denyPost(post.id, admin.id, 'Graphic content'), { ok: true });
+    const row = await store.get('posts', post.id);
+    assert.equal(row?.removed, true);
+    assert.equal(row?.removed_reason, 'Graphic content');
+    assert.equal(onDisk(post.media[0].url), true, 'not deleted: its file stays');
+    assert.deepEqual(await publiclyVisible(post.id, 'deny this'), { feed: false, profile: false, search: false, discover: false });
+    const [denied] = await events(post.id, 'admin_denied');
+    assert.equal(denied.actor_id, admin.id);
+    assert.match(denied.detail, /Graphic content/);
+    const told = await store.query('notifications', { where: { user_id: author.id, post_id: post.id } });
+    assert.ok(told.some((note) => /Reason: Graphic content/.test(note.body)));
+    // Still reversible.
+    assert.deepEqual(await moderation.approvePost(post.id, admin.id, 'on appeal'), { ok: true });
+    assert.equal((await store.get('posts', post.id))?.removed, false);
+  });
+});
+
+describe('remove from public viewing (the ••• menu)', () => {
+  it('needs a reason', async () => {
+    const post = await photo();
+    assert.equal((await moderation.hideFromPublic(post.id, admin.id, '')).ok, false);
+    assert.deepEqual(await stateOf(post.id), { removed: false, review: null });
+  });
+
+  it('hides it everywhere at once, keeps everything, logs the details, tells the author why', async () => {
+    const post = await photo('menu removal');
+    const fan = await reporter();
+    await posts.addComment(post.id, fan.id, 'hi');
+    assert.deepEqual(await moderation.hideFromPublic(post.id, admin.id, 'Misleading'), { ok: true });
+    assert.deepEqual(await stateOf(post.id), { removed: false, review: 'admin_hold' });
+    assert.deepEqual(await publiclyVisible(post.id, 'menu removal'), { feed: false, profile: false, search: false, discover: false });
+    assert.equal(onDisk(post.media[0].url), true);
+    assert.equal((await store.query('comments', { where: { post_id: post.id } })).length, 1);
+    const [logged] = await events(post.id, 'admin_hidden');
+    assert.equal(logged.actor_id, admin.id);
+    assert.match(logged.detail, /Misleading/);
+    assert.match(logged.detail, /menu removal/);
+    assert.match(logged.detail, new RegExp(author.username));
+    const told = await store.query('notifications', { where: { user_id: author.id, post_id: post.id } });
+    assert.ok(told.some((note) => /removed from public viewing.*Reason: Misleading/.test(note.body)));
+  });
+
+  it('puts it in the queue, where an admin can restore it', async () => {
+    const post = await photo();
+    await moderation.hideFromPublic(post.id, admin.id, 'Checking');
+    const queue = await moderation.moderationQueue();
+    assert.equal(queue.hidden.find((entry) => entry.post.id === post.id)?.state, 'admin_hold');
+    await moderation.approvePost(post.id, admin.id, 'fine');
+    assert.deepEqual(await stateOf(post.id), { removed: false, review: null });
+  });
+
+  it('is refused on a post already removed or already held', async () => {
+    const post = await photo();
+    await moderation.hideFromPublic(post.id, admin.id, 'Checking');
+    assert.equal((await moderation.hideFromPublic(post.id, admin.id, 'again')).ok, false);
+    const gone = await photo();
+    await moderation.removePostPermanently(gone.id, admin.id, 'Spam');
+    assert.equal((await moderation.hideFromPublic(gone.id, admin.id, 'late')).ok, false);
   });
 });
 
 describe('keep under review', () => {
   it('holds it hidden; dismissing every report does not reveal it; approval does', async () => {
     const post = await photo();
-    const someone = await reporter();
-    await report(someone.id, post.id);
+    await reportedBy(post.id, THRESHOLD);
     assert.deepEqual(await moderation.keepUnderReview(post.id, admin.id, 'checking with the author'), { ok: true });
     assert.deepEqual(await stateOf(post.id), { removed: false, review: 'admin_hold' });
-
-    const [row] = await store.query('reports', { where: { target_id: post.id } });
-    assert.deepEqual(await moderation.dismissReport(row.id, admin.id, 'unfounded'), { ok: true });
+    for (const row of await store.query('reports', { where: { target_id: post.id } })) {
+      await moderation.dismissReport(row.id, admin.id, 'unfounded');
+    }
     assert.deepEqual(await stateOf(post.id), { removed: false, review: 'admin_hold' }, 'still held');
-
     await moderation.approvePost(post.id, admin.id);
     assert.deepEqual(await stateOf(post.id), { removed: false, review: null });
-  });
-
-  it('can hide a post nobody eligible reported', async () => {
-    const post = await photo();
-    await report(flagged.id, post.id);
-    assert.deepEqual(await moderation.keepUnderReview(post.id, admin.id), { ok: true });
-    assert.deepEqual(await stateOf(post.id), { removed: false, review: 'admin_hold' });
   });
 });
 
 describe('dismissing a report', () => {
-  it('the only report keeping it hidden: dismissed, and the post is back', async () => {
-    const post = await photo();
-    await report((await reporter()).id, post.id);
-    const [row] = await store.query('reports', { where: { target_id: post.id } });
-    assert.deepEqual(await moderation.dismissReport(row.id, admin.id, 'not a rule break'), { ok: true });
-    assert.deepEqual(await stateOf(post.id), { removed: false, review: null });
-    assert.equal((await events(post.id, 'review_lifted')).length, 1);
-    assert.equal((await store.get('reports', row.id))?.status, 'dismissed');
-  });
-
-  it('with another valid report still open: still hidden until that one is dealt with too', async () => {
-    const post = await photo();
-    await report((await reporter()).id, post.id);
-    await report((await reporter()).id, post.id);
-    const [a, b] = await store.query('reports', { where: { target_id: post.id } });
-    await moderation.dismissReport(a.id, admin.id);
-    assert.deepEqual(await stateOf(post.id), { removed: false, review: 'temporary_review' });
-    await moderation.dismissReport(b.id, admin.id);
-    assert.deepEqual(await stateOf(post.id), { removed: false, review: null });
-  });
-
-  it('a report from a suspended account does not keep it hidden on its own', async () => {
-    const post = await photo();
-    await report((await reporter()).id, post.id);
-    await report(benched.id, post.id);
-    const eligible = (await store.query('reports', { where: { target_id: post.id } })).find(
-      (row) => row.reporter_id !== benched.id,
-    )!;
-    await moderation.dismissReport(eligible.id, admin.id);
-    assert.deepEqual(await stateOf(post.id), { removed: false, review: null });
-  });
-
-  it('never restores a removed post', async () => {
-    const post = await photo();
-    await report((await reporter()).id, post.id);
-    await report((await reporter()).id, post.id);
-    const [a] = await store.query('reports', { where: { target_id: post.id } });
-    await moderation.removePostPermanently(post.id, admin.id, 'Graphic violence');
-    // Already resolved by the removal: dismissing it again is refused and changes nothing.
-    assert.equal((await moderation.dismissReport(a.id, admin.id)).ok, false);
-    assert.equal((await stateOf(post.id)).removed, true);
-  });
-
-  it('twice is refused the second time', async () => {
+  it('closes it, logs it, and is refused the second time', async () => {
     const post = await photo();
     await report((await reporter()).id, post.id);
     const [row] = await store.query('reports', { where: { target_id: post.id } });
     const both = await Promise.all([moderation.dismissReport(row.id, admin.id), moderation.dismissReport(row.id, admin.id)]);
     assert.equal(both.filter((result) => result.ok).length, 1);
+    assert.equal((await store.get('reports', row.id))?.status, 'dismissed');
+    assert.equal(await moderation.validReportCount(post.id), 0, 'a dismissed report no longer counts');
   });
 });
 
@@ -444,7 +475,7 @@ describe('remove permanently', () => {
 describe('the author while it is under review', () => {
   it('cannot delete it until the review is decided', async () => {
     const post = await photo();
-    await report((await reporter()).id, post.id);
+    await reportedBy(post.id, THRESHOLD);
     assert.deepEqual(await posts.deletePost(post.id, author.id), { ok: false, reason: 'under_review' });
     assert.ok(await store.get('posts', post.id));
     await moderation.approvePost(post.id, admin.id);
@@ -550,26 +581,26 @@ describe('what moderators read', () => {
 
     await report(loud.id, post.id, 'Nudity', 'not for kids');
     await report(benched.id, post.id, 'Spam');
+    await reportedBy(post.id, THRESHOLD - 1);
     const queue = await moderation.moderationQueue();
     const item = queue.hidden.find((entry) => entry.post.id === post.id);
     assert.ok(item, 'in the hidden queue');
     assert.equal(item.state, 'report_hold');
     assert.equal(item.post.kind, 'photo');
     assert.equal(item.author.username, author.username);
-    assert.equal(item.hiddenBy, loud.username);
-    assert.equal(item.openReports, 2);
-    assert.equal(item.uniqueReporters, 2);
+    assert.equal(item.openReports, THRESHOLD + 1);
+    assert.equal(item.validReports, THRESHOLD);
     const theirs = item.reports.find((entry) => entry.reporter?.id === loud.id)!;
     assert.equal(theirs.reason, 'Nudity');
     assert.equal(theirs.details, 'not for kids');
+    assert.equal(theirs.status, 'open');
     assert.equal(theirs.holding, true);
     assert.equal(theirs.reporter?.filed, 2);
     assert.equal(theirs.reporter?.dismissed, 1);
-    assert.equal(theirs.reporter?.holding, 1);
     const suspended = item.reports.find((entry) => entry.reporter?.id === benched.id)!;
-    assert.equal(suspended.holding, false);
+    assert.equal(suspended.holding, false, 'shown, but not counted');
     assert.equal(suspended.reporter?.canHide, false);
-    assert.ok(item.history.some((event) => event.action === 'report_hidden' && event.actor === loud.username));
+    assert.ok(item.history.some((event) => event.action === 'auto_review_started'));
   });
 
   it('a visible post with reports that could not hide it is listed separately', async () => {

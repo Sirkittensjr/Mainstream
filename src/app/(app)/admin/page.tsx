@@ -11,8 +11,7 @@ import {
   moderationQueue,
   type QueueItem,
 } from '@/lib/services/moderation';
-import { sweepExpiredReviews } from '@/lib/services/auto-review';
-import { REPORT_HOLD_LIMIT, actionLabel, effectiveStatus } from '@/lib/moderation-rules';
+import { REPORT_THRESHOLD, actionLabel, effectiveStatus } from '@/lib/moderation-rules';
 import { isVectorImage } from '@/lib/image';
 import { requireAdmin } from '@/lib/session';
 import { formatShortDate, timeAgo, timestamp } from '@/lib/time';
@@ -41,11 +40,6 @@ export default async function AdminPage({
     ? (params.tab as (typeof TABS)[number])
     : 'overview';
   const reportStatus = (params.status === 'all' ? 'all' : 'open') as 'all' | 'open';
-
-  // Hides from the first version of this expired after 24 hours. New hides do
-  // not expire, but a post hidden back then may still be waiting; writing its
-  // expiry down here, where somebody is looking anyway, keeps the log honest.
-  if (tab === 'reports') await sweepExpiredReviews();
 
   const [stats, reports, queue, users, raters, log] = await Promise.all([
     adminStats(),
@@ -267,7 +261,7 @@ export default async function AdminPage({
             <section data-queue="hidden">
               <SectionHeader
                 title={`Hidden, waiting for review (${queue.hidden.length})`}
-                subtitle={`A report from an eligible account hides a post at once until somebody here decides. Nothing expires and nothing is deleted on its own. Each account can have at most ${REPORT_HOLD_LIMIT} posts hidden and waiting.`}
+                subtitle={`Hidden at ${REPORT_THRESHOLD} valid reports from different eligible accounts, or removed from public viewing by an admin. Nothing expires and nothing is deleted on its own: each stays hidden until somebody here approves or denies it.`}
               />
               {queue.hidden.length === 0 ? (
                 <p className="card p-6 text-center text-sm text-white/40">Nothing is waiting.</p>
@@ -285,7 +279,7 @@ export default async function AdminPage({
             <section data-queue="reported">
               <SectionHeader
                 title={`Reported, still visible (${queue.reported.length})`}
-                subtitle="Open reports that could not hide the post: from suspended or flagged accounts, from a reporter at the limit, or filed again after a moderator restored it."
+                subtitle={`Every report shows here at once, before the threshold. A post is hidden pending review when ${REPORT_THRESHOLD} different eligible accounts have reported it; reports from suspended or flagged accounts, and reports a moderator already dealt with, are shown but not counted.`}
               />
               {queue.reported.length === 0 ? (
                 <p className="card p-6 text-center text-sm text-white/40">No open reports about visible posts.</p>
@@ -514,8 +508,8 @@ export default async function AdminPage({
 }
 
 const STATE_COPY: Record<QueueItem['state'], { label: string; tone: string }> = {
-  report_hold: { label: 'Hidden after a report', tone: 'border-fay/40 bg-fay/10 text-fay' },
-  admin_hold: { label: 'Kept under review', tone: 'border-solar/40 bg-solar/10 text-solar' },
+  report_hold: { label: 'Hidden pending admin review', tone: 'border-fay/40 bg-fay/10 text-fay' },
+  admin_hold: { label: 'Removed from public viewing — under review', tone: 'border-solar/40 bg-solar/10 text-solar' },
   visible: { label: 'Visible — reported', tone: 'border-white/15 bg-white/[0.05] text-white/70' },
 };
 
@@ -542,6 +536,9 @@ function QueueCard({ item }: { item: QueueItem }) {
         <span className="chip" data-queue-count>
           {item.openReports} open report{item.openReports === 1 ? '' : 's'} · {item.uniqueReporters} account
           {item.uniqueReporters === 1 ? '' : 's'}
+        </span>
+        <span className="chip" data-queue-valid title="Distinct eligible accounts whose report counts toward the threshold">
+          {item.validReports}/{REPORT_THRESHOLD} valid
         </span>
         {item.post.contentWarning && <span className="chip">Content warning</span>}
         {item.hiddenAt && (
@@ -596,7 +593,7 @@ function QueueCard({ item }: { item: QueueItem }) {
             <div className="flex flex-wrap items-center gap-2 text-xs">
               <span className="chip border-fay/40 bg-fay/10 text-fay">{report.reason}</span>
               <span className="chip capitalize">{report.status}</span>
-              {report.holding && <span className="chip border-solar/40 text-solar">Keeps it hidden</span>}
+              {report.holding && <span className="chip border-solar/40 text-solar">Counts toward threshold</span>}
               {report.status === 'open' && report.cleared && (
                 <span className="chip" title="Filed again after a moderator dealt with it">
                   Cannot hide it again
@@ -612,12 +609,11 @@ function QueueCard({ item }: { item: QueueItem }) {
                 <Link href={`/admin?tab=log&user=${encodeURIComponent(report.reporter.username)}`} className="underline">
                   @{report.reporter.username}
                 </Link>{' '}
-                · {report.reporter.filed} filed · {report.reporter.dismissed} dismissed ·{' '}
-                {report.reporter.holding}/{REPORT_HOLD_LIMIT} hidden and waiting
+                · {report.reporter.filed} filed · {report.reporter.dismissed} dismissed
                 {!report.reporter.canHide && (
                   <span className="ml-1 text-fay">
-                    · {report.reporter.status !== 'active' ? report.reporter.status : 'flagged'}: their
-                    reports cannot hide posts
+                    · {report.reporter.status !== 'active' ? report.reporter.status : 'flagged'}: not
+                    counted toward the threshold
                   </span>
                 )}
               </p>

@@ -32,8 +32,11 @@ export const REPORT_HOLD: ReviewState = 'temporary_review';
 /** Kept hidden by a moderator while they look into it. */
 export const ADMIN_HOLD: ReviewState = 'admin_hold';
 
-/** How many posts one account's reports may have hidden and waiting at once. */
-export const REPORT_HOLD_LIMIT = 5;
+/**
+ * How many VALID reports, from that many different eligible accounts, hide a
+ * post pending admin review. See `holdingReports` for what makes one valid.
+ */
+export const REPORT_THRESHOLD = 10;
 
 interface ReviewedPost {
   removed?: boolean;
@@ -41,7 +44,7 @@ interface ReviewedPost {
   review_expires_at?: string | null;
 }
 
-/** Hidden right now because somebody reported it. */
+/** Hidden right now because it reached the report threshold. */
 export function isReportHold(post: ReviewedPost, now: number = Date.now()): boolean {
   return post.review_state === REPORT_HOLD && underReview(post, now);
 }
@@ -82,12 +85,10 @@ interface OpenReport {
 }
 
 /**
- * The reports that still keep a report-hidden post hidden: open, not cleared by
- * a moderator, and from an account that could have hidden it.
- *
- * When the last of these is dismissed, the report hold has nothing left under
- * it and lifts. A report from a suspended or flagged account never counts here
- * — it could not hide the post, so it cannot keep it hidden either.
+ * The VALID reports — the ones that count toward REPORT_THRESHOLD: open, not
+ * cleared by a moderator, and from an account allowed to hide a post. A report
+ * from a suspended, banned or flagged account, or one a moderator dismissed or
+ * cleared, is still shown to moderators but never counted.
  */
 export function holdingReports<T extends OpenReport>(
   reports: T[],
@@ -152,13 +153,15 @@ export function suspensionEnd(days: number | null, from: Date = new Date()): str
 
 /** How each logged action reads in the dashboard. Unknown actions read as themselves. */
 export const ACTION_LABELS: Record<string, string> = {
-  auto_review_started: 'Hidden by ten reports (old rule)',
-  auto_review_expired: 'Hide expired (old rule)',
-  report_hidden: 'Hidden by a report',
+  auto_review_started: 'Hidden pending admin review (10 reports)',
+  auto_review_expired: 'Hide expired (old 24-hour rule)',
+  report_hidden: 'Hidden by a report (earlier rule)',
   report_hold_limit: 'Report recorded, not hidden (reporter at limit)',
   report_hold_withdrawn: 'Hide withdrawn (reporter over limit)',
   report_refiled: 'Reported again',
-  review_lifted: 'Shown again (reports dismissed)',
+  review_lifted: 'Shown again (reports dismissed, earlier rule)',
+  admin_hidden: 'Removed from public viewing',
+  admin_denied: 'Denied — kept removed',
   admin_approved: 'Approved and restored',
   admin_restored: 'Restored',
   admin_removed: 'Removed',

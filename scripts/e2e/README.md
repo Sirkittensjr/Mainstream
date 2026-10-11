@@ -230,46 +230,48 @@ migration 0008 sets the same column.
 
 ### 3d. Post moderation — `moderation-flow.mjs`
 
-A report from an eligible account hides a post at once until an administrator
-decides; nothing expires and nothing is deleted on its own. Replaces the first
-version's ten-report, 24-hour review.
+Reports reach administrators at once; a post is hidden pending admin review
+only by its tenth valid report from ten different eligible accounts, and stays
+hidden until an administrator decides — nothing expires and nothing is deleted
+on its own. An administrator can also remove any post from public viewing from
+its ••• menu. Replaces the earlier one-report hide and the first version's
+24-hour review.
 
 ```bash
 ADMIN_EMAILS=admin@faytarra.com ADMIN_SESSION_SECRET=test-secret npm start &
 OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
-  node scripts/e2e/moderation-flow.mjs
+FIXTURES=/tmp/fay-video-fixtures node scripts/e2e/moderation-flow.mjs
 ```
 
-Against an EMPTY store. Six accounts get created. `SHOTS_DIR=<folder>` keeps
-screenshots of a queue card, the audit log and the phone views.
+Against an EMPTY store, with the fixtures from `make-video-fixtures.mjs`.
+Thirteen accounts get created. `SHOTS_DIR=<folder>` keeps screenshots of a
+queue card, the audit log and the phone views.
 
 Covers, in order of how badly it would matter if it were wrong:
 
-- **Hidden at once, everywhere.** After one report: gone from the feeds,
-  Discover, search, the author's profile as others see it, `/post/<id>` (the
-  caption is not even in the response) and `/api/v1/posts/<id>`. The row is not
-  removed and has no expiry. The author still sees it with a notice, is told by
-  notification (not by DM, and not who reported it), and cannot delete it while
-  the review is pending.
-- **Only an administrator can decide.** `/admin` and its tabs are asked for
-  directly; then a real admin request is captured in the admin's browser and
-  sent again from a normal account against another post — it changes nothing
-  and logs nothing.
-- **The queue** shows the post, its photo, its kind, its author, the number of
-  open reports and accounts, each reporter with how many reports they have filed
-  and had dismissed and how many posts they have hidden, what they wrote, and
-  the post's moderation history.
-- **Keep under review, then dismiss the report**: still hidden.
-- **Approve and restore**: visible again, with its like and comment; the author
-  is told. The same reporter reporting again is read by a person but cannot hide
-  it; somebody new can. **Dismissing the only report** that hides a post shows it
-  again, and the log says why.
-- **Remove permanently** is refused without a reason, then removes the post,
-  keeps its record, deletes its file (the URL answers 404), shows the author the
-  reason, and leaves the author's account alone.
-- **Two reports at the same moment** are both recorded and hide the post once.
-- **At most five per reporter**: the sixth report is recorded, logged as over
-  the limit, and the post stays visible.
+- **Below the threshold**: one report is in the dashboard straight away with
+  its reason and status and "1/10 valid"; the post stays up and the author is
+  not told.
+- **Remove from public viewing (•••)**: offered to an administrator only — not
+  to a normal account or the author; asks first and needs a reason. The post is
+  held, not deleted: gone from the feeds, Discover, search, the author's profile
+  as others see it, `/post/<id>` and `/api/v1/posts/<id>`. The log records the
+  admin, reason and post; the author is told the reason; it is in the queue and
+  can be restored. The same option is on a slide in the Videos feed.
+- **Only an administrator can do it.** The admin's real request is captured and
+  replayed from a normal account against another post — it changes nothing.
+  `/admin` and its tabs turn normal accounts away.
+- **The tenth valid report**: nine leave the post up and show "9/10 valid"; the
+  tenth and an eleventh arriving together hide it exactly once, as "Hidden
+  pending admin review", with its likes and comments kept. The author is told it
+  is temporarily hidden, without being told who reported it, and cannot delete
+  it meanwhile. Dismissing a report does not bring it back — only a decision.
+- **Deny** is refused without a reason, then keeps the post out of public view
+  (restorable, record and engagement kept), logs the admin and tells the author
+  why.
+- **Delete permanently** removes the post, keeps its record, deletes its file
+  (the URL answers 404), shows the author the reason, and leaves the author's
+  account alone.
 - **Accounts**: a warning arrives as a notification; a one-day suspension shows
   its reason, and that account's reports then hide nothing; suspensions and bans
   need a reason and can be reversed; a banned account is signed out of

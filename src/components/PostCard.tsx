@@ -17,6 +17,8 @@ import { FollowButton } from './FollowButton';
 import { RateButton } from './RateSheet';
 import { DeletePost } from './DeletePost';
 import { ReportDialog } from './ReportDialog';
+import { AdminRemovePost } from './AdminRemovePost';
+import { useViewerIsAdmin } from './ViewerRole';
 import { CommentIcon, EyeIcon, HeartIcon, ShareIcon } from './Icons';
 import { SpeechBubble } from './SpeechBubble';
 import { drawnAs } from '@/lib/text-posts';
@@ -107,6 +109,7 @@ export function PostCard({
   const [, startTransition] = useTransition();
   const router = useRouter();
   const isOwn = viewerId === data.author.id;
+  const viewerIsAdmin = useViewerIsAdmin();
   const isVideo = data.media.some((item) => item.kind === 'video');
 
   function toggleLike() {
@@ -340,6 +343,18 @@ export function PostCard({
                     Copy link
                   </button>
                   {!isOwn && viewerId && <ReportDialog targetType="post" targetId={data.id} />}
+                  {/* Administrators only, and only as a convenience: the server
+                      action re-checks the role whoever sends it. */}
+                  {viewerIsAdmin && !isOwn && !data.removed && (
+                    <AdminRemovePost
+                      postId={data.id}
+                      onRemoved={() => {
+                        setMenuOpen(false);
+                        setDeleted(true);
+                      }}
+                      onCancel={() => setMenuOpen(false)}
+                    />
+                  )}
                   {/* The author's own post, unless a moderator removed it —
                       that one stays as the record. The server holds both
                       rules whatever this shows. */}

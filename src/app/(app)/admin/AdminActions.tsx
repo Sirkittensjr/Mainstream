@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   adminApprovePostAction,
+  adminDenyPostAction,
   adminDismissReportAction,
   adminKeepUnderReviewAction,
   adminRemoveCommentAction,
@@ -84,7 +85,7 @@ export function PostDecisions({
         <input
           value={note}
           onChange={(event) => setNote(event.target.value)}
-          placeholder="Reason — required to remove, and then shown to the author"
+          placeholder="Reason — required to deny or delete, and then shown to the author"
           maxLength={300}
           className="w-full py-2 text-sm"
           data-decision-note
@@ -111,6 +112,17 @@ export function PostDecisions({
             {state === 'visible' ? 'Hide and keep under review' : 'Keep under review'}
           </button>
         )}
+        {state !== 'visible' && (
+          <button
+            type="button"
+            disabled={pending}
+            className={DANGER}
+            data-decision="deny"
+            onClick={() => run(() => adminDenyPostAction(postId, note))}
+          >
+            Deny — keep removed
+          </button>
+        )}
         {confirming ? (
           <>
             <button
@@ -120,7 +132,7 @@ export function PostDecisions({
               data-decision="remove-confirm"
               onClick={() => run(() => adminRemovePostAction(postId, note), () => setConfirming(false))}
             >
-              Yes, remove permanently
+              Yes, delete permanently
             </button>
             <button type="button" disabled={pending} className={QUIET} onClick={() => setConfirming(false)}>
               Cancel
@@ -134,7 +146,7 @@ export function PostDecisions({
             data-decision="remove"
             onClick={() => setConfirming(true)}
           >
-            Remove permanently
+            Delete permanently
           </button>
         )}
       </div>

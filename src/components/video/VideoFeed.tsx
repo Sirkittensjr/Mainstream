@@ -18,6 +18,8 @@ import type { PostCardData } from '@/components/PostCard';
 import { RateButton } from '@/components/RateSheet';
 import { DeletePost } from '@/components/DeletePost';
 import { ReportDialog } from '@/components/ReportDialog';
+import { AdminRemovePost } from '@/components/AdminRemovePost';
+import { useViewerIsAdmin } from '@/components/ViewerRole';
 import { useVideoView } from './useVideoView';
 import { VideoComments, type CommenterInfo, type VideoComment } from './VideoComments';
 import { VideoText } from './VideoText';
@@ -285,6 +287,7 @@ function Slide({
   const [likes, setLikes] = useState(data.likes);
   const router = useRouter();
   const isOwn = viewerId === data.author.id;
+  const viewerIsAdmin = useViewerIsAdmin();
 
   /**
    * The watch count, and the one thing in this slide that reports a view.
@@ -666,6 +669,18 @@ function Slide({
                     Open post
                   </Link>
                   {!isOwn && viewerId && <ReportDialog targetType="post" targetId={data.id} />}
+                  {/* Administrators only, and only as a convenience: the server
+                      action re-checks the role whoever sends it. */}
+                  {viewerIsAdmin && !isOwn && !data.removed && (
+                    <AdminRemovePost
+                      postId={data.id}
+                      onRemoved={() => {
+                        setMenuOpen(false);
+                        onDeleted();
+                      }}
+                      onCancel={() => setMenuOpen(false)}
+                    />
+                  )}
                   {/* Your own video only reaches this feed from a link to it. */}
                   {isOwn && !data.removed && (
                     <DeletePost
