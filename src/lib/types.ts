@@ -158,6 +158,17 @@ export interface TextOverlay {
   x: number;
   y: number;
   size: 'm' | 'l';
+  /**
+   * How much bigger or smaller than its `size` the line is drawn — set by
+   * pinching it in the editor, or by its resize handle with a mouse.
+   *
+   * A multiplier rather than a pixel size, because the text is sized as a
+   * fraction of the video frame (see VideoText): the same number is the same
+   * size relative to the picture in a 200px editor preview and a full-screen
+   * feed slide. Absent means 1, which is what every line made before pinching
+   * existed means. Kept within MIN_TEXT_SCALE and MAX_TEXT_SCALE.
+   */
+  scale?: number;
   /** From FayTarra's palette. Not a colour picker — an unbounded colour is how
    *  text ends up invisible on its own video. */
   tone: 'light' | 'dark' | 'fay';
@@ -193,6 +204,10 @@ export const MAX_TEXT_OVERLAYS = 4;
 
 /** The longest one line may be. */
 export const MAX_TEXT_OVERLAY_LENGTH = 120;
+
+/** How small and how large a line may be pinched, as a multiple of its size. */
+export const MIN_TEXT_SCALE = 0.5;
+export const MAX_TEXT_SCALE = 3;
 
 export interface Post {
   id: ID;

@@ -20,6 +20,8 @@ import {
   LEGACY_TEXT_SPOTS,
   MAX_TEXT_OVERLAYS,
   MAX_TEXT_OVERLAY_LENGTH,
+  MAX_TEXT_SCALE,
+  MIN_TEXT_SCALE,
   type Media,
   type MediaKind,
   type TextOverlay,
@@ -175,6 +177,17 @@ const fraction = (value: unknown): number | undefined =>
     ? Math.round(Math.min(Math.max(value, 0), 1) * 1000) / 1000
     : undefined;
 
+/**
+ * How much a line was pinched, or undefined for its plain size. Clamped into
+ * the bounds the editor allows, so a client cannot store a line that covers the
+ * whole video or one too small to read.
+ */
+const textScale = (value: unknown): number | undefined => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
+  const scale = Math.round(Math.min(Math.max(value, MIN_TEXT_SCALE), MAX_TEXT_SCALE) * 100) / 100;
+  return scale === 1 ? undefined : scale;
+};
+
 /** A moment in the finished video, in seconds. */
 const moment = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 24 * 3600
@@ -220,6 +233,7 @@ function sanitiseTextOverlays(input: unknown): TextOverlay[] | undefined {
     const from = moment(candidate.from);
     const to = moment(candidate.to);
     const timed = from !== undefined && to !== undefined && to > from;
+    const scale = textScale(candidate.scale);
 
     out.push({
       text,
@@ -232,6 +246,7 @@ function sanitiseTextOverlays(input: unknown): TextOverlay[] | undefined {
         ? (candidate.tone as TextOverlay['tone'])
         : 'light',
       ...(timed ? { from, to } : {}),
+      ...(scale !== undefined ? { scale } : {}),
     });
   }
   return out.length > 0 ? out : undefined;

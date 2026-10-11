@@ -271,6 +271,12 @@ function Slide({
   const video = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
+  /**
+   * The playhead in seconds, for timed text. Kept apart from `progress`
+   * because a browser-recorded WebM often reports `duration` as Infinity, which
+   * made `progress` — and with it every line's timing — stick at zero.
+   */
+  const [seconds, setSeconds] = useState(0);
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -304,6 +310,7 @@ function Slide({
       element.pause();
       element.currentTime = 0;
       setProgress(0);
+      setSeconds(0);
       return;
     }
 
@@ -387,7 +394,7 @@ function Slide({
       aria-label={`${data.author.displayName}: ${data.caption || 'video'}`}
       className="relative h-full w-full snap-start snap-always overflow-hidden bg-black"
     >
-      <div className="absolute inset-0 flex items-center justify-center">
+      <div className="video-picture-stage absolute inset-0 flex items-center justify-center">
         {mounted ? (
           <video
             ref={video}
@@ -408,7 +415,11 @@ function Slide({
             onSeeked={watch.onSeeked}
             onTimeUpdate={(event) => {
               const element = event.currentTarget;
-              if (element.duration > 0) setProgress(element.currentTime / element.duration);
+              const length = Number.isFinite(element.duration) && element.duration > 0
+                ? element.duration
+                : (media.duration ?? 0);
+              if (length > 0) setProgress(element.currentTime / length);
+              setSeconds(element.currentTime);
               watch.onTimeUpdate(event);
             }}
             className="h-full w-full object-contain"
@@ -427,14 +438,33 @@ function Slide({
         {/* Whatever the creator wrote over it, on the mounted slide and on the
             poster alike — a slide that has not mounted its player yet is still
             showing this video. */}
-        {/* `progress` is a fraction of the video, which is what this slide
-            already tracks; timed text wants it in seconds. A slide showing only
-            its poster has no playhead and shows every line, which is right: a
-            still frame is not a moment in the video. */}
-        <VideoText
-          media={media}
-          now={media.duration != null && playing ? progress * media.duration : undefined}
-        />
+        {/* The playhead in seconds, straight from the player. Paused is still a
+            moment in the video — with several lines on different windows,
+            showing them all at once when it stops would put words on screen
+            that never appear together. A slide showing only its poster has no
+            playhead and shows every line, which is right: a still frame is not
+            a moment in the video.
+
+            Laid over the PICTURE, not the slide: the video letterboxes inside
+            the slide, and a line placed at a fraction of the frame in the
+            editor belongs at that fraction of the picture. */}
+        {media.width && media.height ? (
+          <div
+            className="video-picture-box pointer-events-none"
+            data-video-picture-box
+            style={{ '--picture-ratio': `${media.width / media.height}` } as React.CSSProperties}
+          >
+            <VideoText
+              media={media}
+              now={mounted ? seconds : undefined}
+            />
+          </div>
+        ) : (
+          <VideoText
+            media={media}
+            now={mounted ? seconds : undefined}
+          />
+        )}
       </div>
 
       {covered && (

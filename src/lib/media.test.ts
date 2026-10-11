@@ -174,6 +174,35 @@ describe('playback properties on a video', () => {
     }
   });
 
+  it('keeps every line with its own window, place and size — several at once', () => {
+    const overlays = video({
+      text: [
+        { text: 'one', x: 0.2, y: 0.2, size: 'l', tone: 'light', from: 0, to: 3, scale: 1.5 },
+        { text: 'two', x: 0.8, y: 0.5, size: 'm', tone: 'fay', from: 2, to: 5 },
+        { text: 'three', x: 0.5, y: 0.8, size: 'l', tone: 'dark', from: 6, to: 9, scale: 0.75 },
+      ],
+    })!.text!;
+    assert.deepEqual(
+      overlays.map((o) => [o.text, o.x, o.y, o.size, o.tone, o.from, o.to, o.scale]),
+      [
+        ['one', 0.2, 0.2, 'l', 'light', 0, 3, 1.5],
+        ['two', 0.8, 0.5, 'm', 'fay', 2, 5, undefined],
+        ['three', 0.5, 0.8, 'l', 'dark', 6, 9, 0.75],
+      ],
+    );
+  });
+
+  it('keeps a pinched size, held within what the editor allows', () => {
+    const scaleOf = (scale: unknown) => video({ text: [{ text: 'x', scale }] })!.text![0].scale;
+    assert.equal(scaleOf(2.25), 2.25);
+    assert.equal(scaleOf(40), 3);
+    assert.equal(scaleOf(0.01), 0.5);
+    // A plain size is stored as no scale at all, and nonsense is ignored.
+    for (const nothing of [1, 0, -2, 'big', Number.NaN, null, undefined]) {
+      assert.equal(scaleOf(nothing), undefined, String(nothing));
+    }
+  });
+
   it('caps the length of one line', () => {
     const long = 'a'.repeat(400);
     const [overlay] = video({ text: [{ text: long }] })!.text!;

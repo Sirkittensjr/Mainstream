@@ -98,6 +98,36 @@
     @apply text-[11px] font-bold uppercase tracking-[0.18em] text-white/40;
   }
 
+  /* Words over a video, sized against the frame they sit in — see VideoText
+     and TEXT_BASE. The pixel size is for browsers without container query
+     units (iOS Safari before 16); everything else measures the frame. */
+  .video-text-words {
+    font-size: calc(var(--vt-px) * 1px);
+  }
+  @supports (width: 1cqw) {
+    .video-text-words {
+      font-size: calc(var(--vt-cqw) * 1cqw);
+    }
+  }
+
+  /* The picture's own box inside a letterboxing slide, so text over a video is
+     placed against the picture rather than the slide around it. Without
+     container query units it stays the whole slide, which is how it was. */
+  .video-picture-stage {
+    container-type: size;
+  }
+  .video-picture-box {
+    position: absolute;
+    inset: 0;
+  }
+  @supports (width: 1cqw) {
+    .video-picture-box {
+      margin: auto;
+      width: min(100cqw, calc(100cqh * var(--picture-ratio)));
+      height: min(100cqh, calc(100cqw / var(--picture-ratio)));
+    }
+  }
+
   .gradient-text {
     background-image: linear-gradient(100deg, #ffb443, #ff3d9a 48%, #7c5cff);
     -webkit-background-clip: text;

@@ -46,7 +46,7 @@ import {
 import { stageAfterNext, stageAfterSegment } from '@/lib/video/camera';
 import { postCaption } from '@/lib/video/compose';
 import { grabFrame, probeLocalVideo } from '@/lib/video/capture';
-import { locate, timeline } from '@/lib/video/playlist';
+import { locate, timeline, timelineDuration } from '@/lib/video/playlist';
 import {
   MAX_COVER_BYTES,
   MAX_VIDEO_BYTES,
@@ -247,6 +247,13 @@ export function VideoStudio({
   /** The posting screen's own preview, for a project with no rendered file yet. */
   const postPlayer = useRef<ClipPlayerHandle>(null);
   const [postPlaying, setPostPlaying] = useState(false);
+  /**
+   * Where the posting screen's preview is, and how long it is, so each line of
+   * text shows there only in its own window — as it will in the post. Without
+   * these, every line showed at once.
+   */
+  const [postNow, setPostNow] = useState(0);
+  const [postFileLength, setPostFileLength] = useState(0);
   /** Which editing tool is open, so arriving to pick a cover can start there. */
   const [editorTool, setEditorTool] = useState<EditorTool>('trim');
   const [overlays, setOverlays] = useState<TextOverlay[]>([]);
@@ -1129,9 +1136,17 @@ export function VideoStudio({
             playsInline
             muted={mutedOnPost}
             preload="metadata"
+            onLoadedMetadata={(event) => setPostFileLength(event.currentTarget.duration || 0)}
+            onTimeUpdate={(event) => setPostNow(event.currentTarget.currentTime)}
             className="absolute inset-0 h-full w-full object-contain"
           />
-          <VideoText media={{ text: overlays.filter((entry) => entry.text.trim().length > 0) }} />
+          <VideoText
+            media={{
+              text: overlays.filter((entry) => entry.text.trim().length > 0),
+              duration: postFileLength || timelineDuration(timeline(clips)),
+            }}
+            now={postNow}
+          />
         </div>
       ) : (
         // Several clips and no render yet. Played in sequence rather than
@@ -1147,9 +1162,16 @@ export function VideoStudio({
             clips={clips}
             muted={mutedOnPost}
             onPlayingChange={setPostPlaying}
+            onTime={setPostNow}
             className="absolute inset-0"
           />
-          <VideoText media={{ text: overlays.filter((entry) => entry.text.trim().length > 0) }} />
+          <VideoText
+            media={{
+              text: overlays.filter((entry) => entry.text.trim().length > 0),
+              duration: timelineDuration(timeline(clips)),
+            }}
+            now={postNow}
+          />
           <button
             type="button"
             onClick={() => postPlayer.current?.toggle()}
