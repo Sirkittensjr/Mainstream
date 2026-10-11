@@ -9,6 +9,7 @@ import { isTextPostNotStorable } from '@/lib/services/insert-post';
 import { mediaKindForUrl, sanitiseAvatarUrl, sanitiseMedia } from '@/lib/media';
 import { PROFILE_DEFAULT, isProfileBackgroundKey, isProfileColorKey } from '@/lib/profile-theme';
 import { checkLimit } from '@/lib/services/rate-limit';
+import { MEDIA_REUSE_ERROR, mediaFiles, mediaReuseProblem } from '@/lib/services/media-reuse';
 import { getViewer, requireAdmin, requireViewer } from '@/lib/session';
 import { clearAdminVerification } from '@/lib/services/admin-step-up';
 import { RESERVED_NAME_ERROR, isReservedDisplayName } from '@/lib/reserved-names';
@@ -135,6 +136,11 @@ export async function followAction(userId: string, shouldFollow: boolean) {
   const viewer = await getViewer();
   if (!viewer) return { ok: false as const, error: 'Sign in to follow creators.' };
   if (shouldFollow) {
+    // Unfollowing is always allowed; following is something a suspended
+    // account does not get to do, like posting, liking and commenting.
+    if (viewer.status !== 'active') {
+      return { ok: false as const, error: 'Your account is suspended, so you cannot follow people.' };
+    }
     const limit = await checkLimit('follows', viewer.id);
     if (!limit.ok) return { ok: false as const, error: limit.error };
     await follow(viewer.id, userId);
@@ -231,13 +237,14 @@ export async function reportAction(formData: FormData) {
     return { ok: false as const, error: 'That cannot be reported.' };
   }
   const asked = String(formData.get('reason') || '');
-  await submitReport({
+  const filed = await submitReport({
     reporterId: viewer.id,
     targetType: targetType as 'post' | 'user' | 'comment',
     targetId,
     reason: (REPORT_REASONS as readonly string[]).includes(asked) ? asked : 'Something else',
     details: String(formData.get('details') || ''),
   });
+  if (!filed.ok) return { ok: false as const, error: filed.error };
   return { ok: true as const };
 }
 
@@ -285,6 +292,10 @@ export async function createVideoPostAction(input: CreateVideoPostInput) {
   if (media.duration != null && media.duration > MAX_VIDEO_SECONDS_ENFORCED) {
     return { error: `FayTarra videos can be up to ${MAX_VIDEO_SECONDS / 60} minutes.` };
   }
+  // Not somebody else's upload, and not the file of a post moderation is
+  // holding or removed. See services/media-reuse.ts.
+  const reuse = await mediaReuseProblem(mediaFiles([media]), viewer.id);
+  if (reuse) return { error: MEDIA_REUSE_ERROR[reuse] };
 
   const categoryInput = String(input.category || 'Life') as Category;
   const post = await createPost({
@@ -376,6 +387,8 @@ export async function createPostAction(_prev: unknown, formData: FormData) {
   if (!caption && media.length === 0) {
     return { error: 'Add a caption or some media before posting.' };
   }
+  const reuse = await mediaReuseProblem(mediaFiles(media), viewer.id);
+  if (reuse) return { error: MEDIA_REUSE_ERROR[reuse] };
   const categoryInput = String(formData.get('category') || 'Life') as Category;
   const category = CATEGORIES.includes(categoryInput) ? categoryInput : 'Life';
 
@@ -484,12 +497,20 @@ export async function updateProfileAction(_prev: unknown, formData: FormData) {
     return { ok: false as const, error: RESERVED_NAME_ERROR };
   }
 
+  // A profile picture is held to the same rules as a post's media: your own
+  // upload, and not the file of a post moderation is holding or removed.
+  const avatar = sanitiseAvatarUrl(formData.get('avatar_url'));
+  if (avatar && avatar !== viewer.avatar_url) {
+    const reuse = await mediaReuseProblem([avatar], viewer.id);
+    if (reuse) return { ok: false as const, error: MEDIA_REUSE_ERROR[reuse] };
+  }
+
   await updateProfile(viewer.id, {
     display_name: displayName,
     bio: String(formData.get('bio') || '').slice(0, 240),
     location: String(formData.get('location') || '').slice(0, 60) || null,
     // Same reasoning as post media: only an avatar we stored.
-    avatar_url: sanitiseAvatarUrl(formData.get('avatar_url')),
+    avatar_url: avatar,
     ...(interests.length > 0 ? { interests } : {}),
   });
   revalidatePath('/settings');
@@ -539,6 +560,10 @@ export async function updateProfileCoverAction(url: string | null) {
   const cover = url === null ? null : sanitiseAvatarUrl(url);
   if (url !== null && (!cover || mediaKindForUrl(cover) !== 'image')) {
     return { ok: false as const, error: 'That is not a picture uploaded here.' };
+  }
+  if (cover && cover !== viewer.profile_cover_url) {
+    const reuse = await mediaReuseProblem([cover], viewer.id);
+    if (reuse) return { ok: false as const, error: MEDIA_REUSE_ERROR[reuse] };
   }
   const saved = await updateProfileCover(viewer.id, cover);
   if (!saved.ok) return { ok: false as const, error: saved.error };

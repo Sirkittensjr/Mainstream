@@ -33,9 +33,19 @@ export async function submitReport(input: {
   targetId: ID;
   reason: string;
   details?: string;
-}): Promise<void> {
+}): Promise<{ ok: true } | { ok: false; error: string }> {
   const store = db();
   const details = (input.details ?? '').slice(0, 1000);
+
+  // Who is reporting, and what. A report is a moderation signal, so it has to
+  // come from an account in good standing and be about something that exists
+  // and is somebody else's — a request does not have to come from the button.
+  const reporter = await store.get('users', input.reporterId);
+  if (!reporter || reporter.status !== 'active') {
+    return { ok: false, error: 'Your account cannot send reports right now.' };
+  }
+  const refusal = await reportRefusal(input.reporterId, input.targetType, input.targetId);
+  if (refusal) return { ok: false, error: refusal };
 
   const existing = (
     await store.query('reports', {
@@ -78,6 +88,32 @@ export async function submitReport(input: {
   }
 
   await maybeAutoReview(input.targetType, input.targetId);
+  return { ok: true };
+}
+
+/** Why this cannot be reported by this person, or null when it can. */
+async function reportRefusal(
+  reporterId: ID,
+  targetType: ReportTarget,
+  targetId: ID,
+): Promise<string | null> {
+  const store = db();
+  if (targetType === 'post') {
+    const post = await store.get('posts', targetId).catch(() => null);
+    if (!post || post.removed) return 'That post is no longer available.';
+    if (post.author_id === reporterId) return 'You cannot report your own post. You can delete it instead.';
+    return null;
+  }
+  if (targetType === 'comment') {
+    const comment = await store.get('comments', targetId).catch(() => null);
+    if (!comment || comment.removed) return 'That comment is no longer available.';
+    if (comment.user_id === reporterId) return 'You cannot report your own comment.';
+    return null;
+  }
+  const user = await store.get('users', targetId).catch(() => null);
+  if (!user) return 'That account does not exist.';
+  if (user.id === reporterId) return 'You cannot report your own account.';
+  return null;
 }
 
 export interface ReportView {

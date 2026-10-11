@@ -336,9 +336,10 @@ export async function toggleLike(postId: ID, userId: ID): Promise<{ liked: boole
   }
 
   // Taking a like back is always allowed; giving one is not, on a post that has
-  // been removed or between two people where either has blocked the other. The
-  // UI never offers it, but a request does not have to come from the UI.
-  if (post.removed || (await isBlockedEitherWay(userId, post.author_id))) {
+  // been removed or is hidden for review, or between two people where either
+  // has blocked the other. The UI never offers it, but a request does not have
+  // to come from the UI.
+  if (post.removed || underReview(post) || (await isBlockedEitherWay(userId, post.author_id))) {
     return { liked: false };
   }
 
@@ -377,6 +378,8 @@ export async function addComment(
   const store = db();
   const post = await store.get('posts', postId);
   if (!post || post.removed) return { ok: false, error: 'That post is no longer available.' };
+  // Hidden while moderation looks at it: nobody adds to it in the meantime.
+  if (underReview(post)) return { ok: false, error: 'This post is being reviewed, so it cannot take comments right now.' };
   if (await isBlockedEitherWay(userId, post.author_id)) {
     return { ok: false, error: 'You cannot comment on this post.' };
   }
