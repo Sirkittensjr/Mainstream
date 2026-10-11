@@ -397,7 +397,8 @@ async function run() {
   await actions.locator('[data-account="warn"]').click();
   await actions.locator('[data-account-text]').fill('Please keep reports honest.');
   await actions.locator('[data-account-confirm="warn"]').click();
-  await admin.page.waitForTimeout(1200);
+  // The warning lands as a notification row; wait for it rather than a clock.
+  await settle((s) => s.notifications.some((n) => n.user_id === r3.id && /keep reports honest/.test(n.body)));
   await r3.page.goto('/notifications', { waitUntil: 'domcontentloaded' });
   check('the warning reaches them', /A warning from FayTarra moderation: Please keep reports honest\./.test(await r3.page.locator('body').innerText()));
 
@@ -441,6 +442,17 @@ async function run() {
   actions = await accountCard(admin.handle);
   check('suspend and ban are not offered against an administrator', (await actions.locator('[data-account="suspend"], [data-account="ban"]').count()) === 0);
 
+  // Flagging for abuse, from the Users tab: their reports are recorded and hide nothing.
+  await admin.page.goto(`/admin?tab=users&q=${r1.handle}`, { waitUntil: 'domcontentloaded' });
+  await admin.page.waitForLoadState('networkidle');
+  await admin.page.locator('button', { hasText: 'Flag for abuse' }).first().click();
+  await admin.page.waitForTimeout(1200);
+  check('an account can be flagged for abuse from the Users tab', (await settle((s) => s.users.find((u) => u.id === r1.id)?.trusted === false))?.users.find((u) => u.id === r1.id)?.trusted === false);
+  const afterFlag = await publish(author, `after flag ${stamp}`);
+  await report(r1, afterFlag);
+  await settle((s) => s.reports.some((r) => r.target_id === afterFlag && r.reporter_id === r1.id));
+  check('and its report hides nothing', (postRow(afterFlag)?.review_state ?? null) === null && (await apiStatus(viewer, afterFlag)) === 200);
+
   /* ==================================================================== */
   section('THE AUDIT LOG');
   await admin.page.goto('/admin?tab=log', { waitUntil: 'domcontentloaded' });
@@ -455,6 +467,7 @@ async function run() {
     ['admin_suspended', 'Suspended'],
     ['admin_banned', 'Banned'],
     ['admin_reinstated', 'Reinstated'],
+    ['admin_flagged', 'Flagged for abuse'],
   ]) {
     check(`it lists: ${words}`, log.includes(words) && (await admin.page.locator(`[data-log-action="${action}"]`).count()) > 0);
   }

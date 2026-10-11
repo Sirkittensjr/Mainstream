@@ -515,6 +515,21 @@ describe('accounts', () => {
     assert.equal((await store.get('users', target.id))?.suspended_until ?? null, null);
   });
 
+  it('flagging an account for abuse is logged, and its reports then hide nothing', async () => {
+    const suspect = await reporter('suspect');
+    assert.deepEqual(await moderation.setAbuseFlag(suspect.id, admin.id, true), { ok: true });
+    assert.equal((await store.get('users', suspect.id))?.trusted, false);
+    const post = await photo();
+    assert.deepEqual(await report(suspect.id, post.id), { ok: true, hidden: false });
+    assert.deepEqual(await stateOf(post.id), { removed: false, review: null });
+    const [flaggedEvent] = await store.query('moderation_events', { where: { target_id: suspect.id, action: 'admin_flagged' } });
+    assert.equal(flaggedEvent.actor_id, admin.id);
+    assert.deepEqual(await moderation.setAbuseFlag(suspect.id, admin.id, false), { ok: true });
+    assert.equal((await store.get('users', suspect.id))?.trusted, true);
+    assert.equal((await moderation.setAbuseFlag(otherAdmin.id, admin.id, true)).ok, false);
+    assert.equal((await moderation.setAbuseFlag(admin.id, admin.id, true)).ok, false);
+  });
+
   it('nobody can suspend or ban themselves, or another administrator', async () => {
     assert.equal((await moderation.setUserStatus(admin.id, 'banned', 'oops', admin.id)).ok, false);
     assert.equal((await moderation.setUserStatus(otherAdmin.id, 'suspended', 'takeover', admin.id, { days: 7 })).ok, false);
