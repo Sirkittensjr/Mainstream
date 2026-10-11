@@ -397,7 +397,8 @@ async function run() {
   await actions.locator('[data-account="warn"]').click();
   await actions.locator('[data-account-text]').fill('Please keep reports honest.');
   await actions.locator('[data-account-confirm="warn"]').click();
-  await admin.page.waitForTimeout(1200);
+  // The warning lands as a notification row; wait for it rather than a clock.
+  await settle((s) => s.notifications.some((n) => n.user_id === r3.id && /keep reports honest/.test(n.body)));
   await r3.page.goto('/notifications', { waitUntil: 'domcontentloaded' });
   check('the warning reaches them', /A warning from FayTarra moderation: Please keep reports honest\./.test(await r3.page.locator('body').innerText()));
 
