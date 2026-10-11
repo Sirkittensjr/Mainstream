@@ -331,7 +331,8 @@ function Slide({
               loading={eager ? 'eager' : 'lazy'}
               unoptimized={isVectorImage(card.thumb.url)}
               draggable={false}
-              className="object-cover"
+              // A photo is shown whole inside the card, never cut to its shape.
+              className={card.thumb.kind === 'video' ? 'object-cover' : 'object-contain'}
             />
           )
         )}

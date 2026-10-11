@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { sniffType } from '@/lib/file-type';
+import { imageSize } from '@/lib/media/image-size';
 import { newId } from '@/lib/ids';
 import { checkUploadLimit } from '@/lib/services/rate-limit';
 import { getViewer } from '@/lib/session';
@@ -79,6 +80,12 @@ export async function POST(request: Request) {
     width = probe.width;
     height = probe.height;
     duration = probe.seconds;
+  } else {
+    // Read from the header only: the file is stored exactly as it arrived, and
+    // the size lets a post keep the photo's own shape instead of a preset one.
+    const size = imageSize(data, type);
+    width = size?.width ?? null;
+    height = size?.height ?? null;
   }
 
   const url = await db().putMedia(`${newId()}${extensionFor(type)}`, type, data);

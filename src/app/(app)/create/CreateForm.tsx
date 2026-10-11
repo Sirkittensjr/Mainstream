@@ -76,12 +76,12 @@ export function CreateForm({
     <div>
       <div className="flex flex-wrap gap-3">
         {media.map((item, index) => (
-          <div key={item.url} className="relative h-24 w-24 overflow-hidden rounded-2xl">
+          <div key={item.url} className="relative h-24 w-24 overflow-hidden rounded-2xl bg-ink-850">
             {item.kind === 'video' ? (
               <video src={item.url} className="h-full w-full object-cover" muted />
             ) : (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={item.url} alt="" className="h-full w-full object-cover" />
+              <img src={item.url} alt="" className="h-full w-full object-contain" />
             )}
             <button
               type="button"

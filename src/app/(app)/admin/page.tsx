@@ -681,7 +681,8 @@ function MediaPreview({ item }: { item: QueueItem }) {
         fill
         sizes="180px"
         unoptimized={isVectorImage(first.url)}
-        className="object-cover"
+        // Whole, so nothing a moderator needs to see is outside the square.
+        className="object-contain"
       />
       {item.post.media.length > 1 && (
         <span className="absolute bottom-2 right-2 rounded-full bg-black/60 px-2 py-0.5 text-[11px]">
