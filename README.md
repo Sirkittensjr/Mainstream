@@ -73,7 +73,7 @@ npm run typecheck # tsc --noEmit
 | `/notifications` | Follows, likes, comments, ratings |
 | `/search` | People, posts, categories |
 | `/settings` | Profile, blocked accounts, sign out, delete account |
-| `/admin` | Reports, rating integrity, users, platform stats |
+| `/admin` | Moderation queue (reported posts are hidden until an admin decides), account controls, audit log, rating integrity, platform stats |
 | `/rules` | Community rules |
 
 Deliberately **not** in the MVP: challenges, "give me a shot", levels, points
