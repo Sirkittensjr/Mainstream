@@ -157,8 +157,10 @@ export interface UnsafeMedia {
   text?: unknown;
 }
 
+// 65535 is the largest side a JPEG can have; a 200-megapixel phone photo is
+// over 16000 pixels across, and dropping its size would cost it its shape.
 const dimension = (value: unknown): number | undefined =>
-  typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 8192
+  typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 65535
     ? Math.round(value)
     : undefined;
 

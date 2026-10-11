@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { sniffType } from '@/lib/file-type';
+import { imageSize } from '@/lib/media/image-size';
 import {
   discardPending,
   inspectPending,
@@ -69,6 +70,12 @@ export async function POST(request: Request) {
     width = probe.width;
     height = probe.height;
     duration = probe.seconds;
+  } else {
+    // Read from the header only: the file is stored exactly as it arrived, and
+    // the size lets a post keep the photo's own shape instead of a preset one.
+    const size = imageSize(object.head, type);
+    width = size?.width ?? null;
+    height = size?.height ?? null;
   }
 
   try {

@@ -50,6 +50,10 @@ const nextConfig = {
     // Sample/seed content uses remote placeholder imagery. Real uploads are
     // served from the app itself (/api/media/... or Supabase Storage).
     remotePatterns: [{ protocol: 'https', hostname: '**' }],
+    // 75 is Next's default and what every other picture uses. Post photos in a
+    // list ask for 90: their resized copies are the photo most people see, and
+    // 75 visibly softens it. (The original file is never re-encoded.)
+    qualities: [75, 90],
   },
 };
 

@@ -286,6 +286,33 @@ Covers, in order of how badly it would matter if it were wrong:
 videos feed is `visiblePosts` filtered to posts with video media, so it is the
 same code path. The queue shows a video with its poster and controls.
 
+### 3e. Photos, whole and untouched — `photo-flow.mjs`
+
+What is posted is what is stored is what is shown.
+
+```bash
+npm start &
+OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
+  node scripts/e2e/photo-flow.mjs
+```
+
+Against an EMPTY store. Makes its own fixtures with `sharp` (installed with
+Next): a portrait JPEG, a landscape PNG, a square WebP, a phone-style JPEG stored
+sideways with an EXIF rotation, a 300×200 JPEG and a 600×2400 PNG screenshot.
+`SHOTS_DIR=<folder>` keeps a screenshot of every surface.
+
+- **Stored untouched**: each upload comes back from its URL byte for byte (same
+  SHA-256), with its own content type; the sideways JPEG keeps its EXIF.
+- **Its real size**: the post records the photo's width and height, upright.
+- **Shown whole** in the feed, Discover, search, the profile and the post page,
+  on an iPhone 13 and a 1440px desktop: `object-contain`, the picture entirely
+  inside its frame, the frame the photo's own shape unless the photo is taller
+  than the screen allows. The 300px photo is not blown up past 300px.
+- **Lists vs the post page**: lists show Next's resized copy of the photo at
+  quality 90; the post page shows the original file at its full pixel size, and
+  tapping it opens that file. Tapping a photo in a list opens the post.
+- **Older posts**: a post with no recorded size still shows its photo whole.
+
 ### 4c. Recording on a phone — `mobile-record-flow.mjs`
 
 The camera flow at phone size, from the + in the bottom navigation to the video
@@ -1322,7 +1349,7 @@ it:
 `video-cover-flow`, `mobile-record-flow`, `multi-clip-flow`, `editor-clip-sync-flow`,
 `desktop-layout-flow`, `profile-appearance-flow`, `messaging-flow`,
 `profile-colours-flow`, `top-creators-flow`, `moderation-flow`, `admin-badge`,
-`text-overlays-flow`, `landing-flow` and `social-navigation` create their own
+`text-overlays-flow`, `landing-flow`, `photo-flow` and `social-navigation` create their own
 accounts and want an EMPTY store
 (`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and
 `social-flow` sign in as the seeded demo accounts and check against them —

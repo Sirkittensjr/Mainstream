@@ -238,6 +238,7 @@ export function PostCard({
           warned={data.contentWarning === true}
           videoViews={videoViews}
           onVideoViews={setVideoViews}
+          full={full}
         />
       )}
 
@@ -388,6 +389,7 @@ function MediaStrip({
   warned,
   videoViews = 0,
   onVideoViews,
+  full = false,
 }: {
   media: Media[];
   postId: string;
@@ -397,6 +399,8 @@ function MediaStrip({
   /** The watch count as the server rendered it, handed to the player. */
   videoViews?: number;
   onVideoViews?: (count: number) => void;
+  /** The post's own page: photos are the original files, not resized copies. */
+  full?: boolean;
 }) {
   const [index, setIndex] = useState(0);
   // The cover is in front of the media rather than instead of it: the post,
@@ -419,7 +423,7 @@ function MediaStrip({
         </button>
       )}
       <div
-        className="hide-scrollbar flex snap-x snap-mandatory overflow-x-auto"
+        className="hide-scrollbar flex snap-x snap-mandatory items-center overflow-x-auto"
         onScroll={(event) => {
           const el = event.currentTarget;
           setIndex(Math.round(el.scrollLeft / Math.max(1, el.clientWidth)));
@@ -439,28 +443,20 @@ function MediaStrip({
                 onViewCount={onVideoViews}
               />
             ) : (
-              // Sized to the column it lands in rather than to whatever came
-              // off the camera: a feed of full-resolution phone photos is the
-              // single heaviest thing a phone has to download here.
-              <div className="relative aspect-[4/5] max-h-[68vh] w-full overflow-hidden rounded-2xl bg-ink-850 lg:max-h-[78vh]">
-                <Image
-                  src={item.url}
-                  alt={
-                    media.length > 1
-                      ? `Photo ${i + 1} of ${media.length} by @${author}`
-                      : `Photo by @${author}`
-                  }
-                  fill
-                  sizes="(max-width: 640px) 100vw, (max-width: 1024px) 640px, 760px"
-                  // The first card is usually on screen before anything is
-                  // scrolled, so it is worth fetching straight away; the rest
-                  // wait until they are approached.
-                  priority={i === 0 && index === 0}
-                  loading={i === 0 && index === 0 ? undefined : 'lazy'}
-                  unoptimized={isVectorImage(item.url)}
-                  className="h-full w-full object-cover"
-                />
-              </div>
+              <PostPhoto
+                item={item}
+                postId={postId}
+                original={full}
+                alt={
+                  media.length > 1
+                    ? `Photo ${i + 1} of ${media.length} by @${author}`
+                    : `Photo by @${author}`
+                }
+                // The first card is usually on screen before anything is
+                // scrolled, so it is worth fetching straight away; the rest
+                // wait until they are approached.
+                eager={i === 0 && index === 0}
+              />
             )}
           </div>
         ))}
@@ -478,5 +474,76 @@ function MediaStrip({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The shape a photo's space takes before the file arrives, when the post does
+ * not know the photo's size (posts from before sizes were recorded). Only a
+ * placeholder: once the picture loads, its own proportions replace it.
+ */
+const UNKNOWN_SIZE = { width: 1080, height: 1350 };
+
+/**
+ * How hard the resized copy in a list may be compressed. Next's default is
+ * 75, which visibly softens a photo; at 90 the copy is indistinguishable at the
+ * size it is shown. The stored original is never touched either way.
+ */
+const LIST_PHOTO_QUALITY = 90;
+
+/**
+ * One photo, whole.
+ *
+ * Never cropped: the photo sets its own height from its own proportions, so a
+ * portrait, a landscape and a square each show every pixel of what was
+ * posted. A photo taller than the screen is scaled down to fit (`object-contain`)
+ * rather than cut, and one smaller than the column is shown at its own size
+ * rather than blown up.
+ *
+ * In a list it is a resized copy for the column it is in, at the screen's
+ * pixel density and high quality — a feed of full-size phone photos is the
+ * heaviest thing a phone downloads here. On the post's own page it is the
+ * original file, and tapping it there opens that file at full size; in a list,
+ * tapping it opens the post.
+ */
+function PostPhoto({
+  item,
+  postId,
+  alt,
+  original,
+  eager,
+}: {
+  item: Media;
+  postId: string;
+  alt: string;
+  original: boolean;
+  eager: boolean;
+}) {
+  const known = Boolean(item.width && item.height);
+  const picture = (
+    <Image
+      src={item.url}
+      alt={alt}
+      width={item.width ?? UNKNOWN_SIZE.width}
+      height={item.height ?? UNKNOWN_SIZE.height}
+      sizes="(max-width: 640px) 100vw, (max-width: 1024px) 640px, 760px"
+      quality={LIST_PHOTO_QUALITY}
+      unoptimized={original || isVectorImage(item.url)}
+      priority={eager}
+      loading={eager ? undefined : 'lazy'}
+      data-post-photo={original ? 'original' : 'list'}
+      className="block h-auto max-h-[68vh] w-full object-contain lg:max-h-[78vh]"
+      style={known ? { maxWidth: `${item.width}px` } : undefined}
+    />
+  );
+  const frame = 'flex w-full justify-center overflow-hidden rounded-2xl bg-ink-850';
+  return original ? (
+    <a href={item.url} target="_blank" rel="noopener noreferrer" className={frame} data-photo-frame>
+      {picture}
+    </a>
+  ) : (
+    <Link href={`/post/${postId}`} className={frame} data-photo-frame>
+      {picture}
+    </Link>
   );
 }
