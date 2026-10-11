@@ -39,6 +39,7 @@ import type {
   UserStatus,
 } from '@/lib/types';
 import { notify } from './notifications';
+import { setRaterTrust } from './rating-integrity';
 import { serially } from './serial';
 import { toPublicUser } from './users';
 
@@ -696,6 +697,29 @@ export async function warnUser(userId: ID, adminId: ID, message: string): Promis
     action: 'admin_warned',
     actorId: adminId,
     detail: `@${user.username}: ${text}`,
+  });
+  return { ok: true };
+}
+
+/**
+ * Flags an account for abuse, or clears the flag. The flag is the rating
+ * integrity switch that already existed: a flagged account's ratings carry no
+ * weight, and now its reports are recorded without hiding anything. Logged like
+ * every other decision; never for yourself or another administrator.
+ */
+export async function setAbuseFlag(userId: ID, adminId: ID, flagged: boolean): Promise<Decision> {
+  const user = await db().get('users', userId);
+  if (!user) return { ok: false, error: 'That account does not exist.' };
+  if (user.id === adminId) return { ok: false, error: 'You cannot flag your own account.' };
+  if (flagged && user.role === 'admin') return { ok: false, error: 'Administrators cannot be flagged.' };
+  await setRaterTrust(userId, !flagged);
+  refreshCommunity();
+  await recordModeration({
+    targetType: 'user',
+    targetId: userId,
+    action: flagged ? 'admin_flagged' : 'admin_unflagged',
+    actorId: adminId,
+    detail: `@${user.username}: ${flagged ? 'ratings carry no weight; reports hide nothing' : 'flag cleared'}`,
   });
   return { ok: true };
 }

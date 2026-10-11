@@ -32,6 +32,7 @@ import {
   removeComment,
   removePostPermanently,
   resolveReport,
+  setAbuseFlag,
   setUserStatus,
   submitReport,
   warnUser,
@@ -55,7 +56,6 @@ import { submitRating } from '@/lib/services/ratings';
 import { saveTopCreators } from '@/lib/services/top-creators';
 import { normaliseTags } from '@/lib/video/hashtags';
 import { MAX_VIDEO_SECONDS, MAX_VIDEO_SECONDS_ENFORCED } from '@/lib/video/limits';
-import { setRaterTrust } from '@/lib/services/rating-integrity';
 import { recordVideoView } from '@/lib/services/video-views';
 import { sanitiseSessionKey } from '@/lib/video/views';
 import type { Reaction, RatingTarget } from '@/lib/types';
@@ -724,8 +724,10 @@ export async function adminSetStatusAction(
   return result;
 }
 
-export async function adminSetTrustAction(userId: string, trusted: boolean) {
-  await requireAdmin();
-  await setRaterTrust(userId, trusted);
-  revalidatePath('/admin');
+/** Flag an account for abuse (trusted = false), or clear the flag. Logged. */
+export async function adminSetTrustAction(userId: string, trusted: boolean): Promise<AdminResult> {
+  const admin = await requireAdmin();
+  const result = await setAbuseFlag(String(userId), admin.id, trusted !== true);
+  revalidateModeration();
+  return result;
 }

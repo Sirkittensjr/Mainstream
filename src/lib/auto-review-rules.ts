@@ -59,6 +59,9 @@ export type ModerationAction =
   | 'admin_dismissed_report'
   | 'admin_resolved_report'
   | 'admin_warned'
+  // Flagged for abuse (or cleared): ratings carry no weight, reports hide nothing.
+  | 'admin_flagged'
+  | 'admin_unflagged'
   | 'admin_suspended'
   | 'admin_banned'
   | 'admin_reinstated'

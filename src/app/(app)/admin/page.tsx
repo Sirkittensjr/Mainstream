@@ -443,12 +443,17 @@ export default async function AdminPage({
                       Moderation history
                     </Link>
                   </div>
-                  <div className="w-full sm:w-auto">
+                  <div className="w-full space-y-2 sm:w-auto">
                     <AccountActions
                       userId={entry.user.id}
                       status={effectiveStatus(entry.user) as 'active' | 'suspended' | 'banned'}
                       isAdmin={entry.user.role === 'admin'}
                     />
+                    {/* The same flag as the Integrity tab's: a flagged account's
+                        ratings carry no weight and its reports hide nothing. */}
+                    {entry.user.role !== 'admin' && (
+                      <TrustActions userId={entry.user.id} trusted={entry.user.trusted !== false} />
+                    )}
                   </div>
                 </li>
               ))}

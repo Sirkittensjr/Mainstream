@@ -442,6 +442,17 @@ async function run() {
   actions = await accountCard(admin.handle);
   check('suspend and ban are not offered against an administrator', (await actions.locator('[data-account="suspend"], [data-account="ban"]').count()) === 0);
 
+  // Flagging for abuse, from the Users tab: their reports are recorded and hide nothing.
+  await admin.page.goto(`/admin?tab=users&q=${r1.handle}`, { waitUntil: 'domcontentloaded' });
+  await admin.page.waitForLoadState('networkidle');
+  await admin.page.locator('button', { hasText: 'Flag for abuse' }).first().click();
+  await admin.page.waitForTimeout(1200);
+  check('an account can be flagged for abuse from the Users tab', (await settle((s) => s.users.find((u) => u.id === r1.id)?.trusted === false))?.users.find((u) => u.id === r1.id)?.trusted === false);
+  const afterFlag = await publish(author, `after flag ${stamp}`);
+  await report(r1, afterFlag);
+  await settle((s) => s.reports.some((r) => r.target_id === afterFlag && r.reporter_id === r1.id));
+  check('and its report hides nothing', (postRow(afterFlag)?.review_state ?? null) === null && (await apiStatus(viewer, afterFlag)) === 200);
+
   /* ==================================================================== */
   section('THE AUDIT LOG');
   await admin.page.goto('/admin?tab=log', { waitUntil: 'domcontentloaded' });
@@ -456,6 +467,7 @@ async function run() {
     ['admin_suspended', 'Suspended'],
     ['admin_banned', 'Banned'],
     ['admin_reinstated', 'Reinstated'],
+    ['admin_flagged', 'Flagged for abuse'],
   ]) {
     check(`it lists: ${words}`, log.includes(words) && (await admin.page.locator(`[data-log-action="${action}"]`).count()) > 0);
   }

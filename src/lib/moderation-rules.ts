@@ -168,6 +168,8 @@ export const ACTION_LABELS: Record<string, string> = {
   admin_dismissed_report: 'Report dismissed',
   admin_resolved_report: 'Report resolved',
   admin_warned: 'Warned',
+  admin_flagged: 'Flagged for abuse',
+  admin_unflagged: 'Abuse flag cleared',
   admin_suspended: 'Suspended',
   admin_banned: 'Banned',
   admin_reinstated: 'Reinstated',
