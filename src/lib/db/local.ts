@@ -207,6 +207,30 @@ class LocalDriver implements Driver {
     return removed;
   }
 
+  async updateWhere<T extends TableName>(table: T, where: Partial<Row<T>>, patch: Partial<Row<T>>) {
+    const entries = Object.entries(where).filter(([, value]) => value !== undefined) as [
+      keyof Row<T>,
+      unknown,
+    ][];
+    if (entries.length === 0) return 0;
+    const store = await this.load();
+    const list = store[table] as Row<T>[];
+    let changed = 0;
+    // Synchronous from the match to the write: nothing else in this process can
+    // run in between, which is what makes this a compare-and-set here.
+    for (let index = 0; index < list.length; index += 1) {
+      const row = list[index];
+      const matches = entries.every(([key, value]) =>
+        value === null ? (row[key] ?? null) === null : row[key] === value,
+      );
+      if (!matches) continue;
+      list[index] = { ...row, ...patch };
+      changed += 1;
+    }
+    if (changed > 0) await this.flush();
+    return changed;
+  }
+
   async clear() {
     this.store = structuredClone(EMPTY);
     await this.flush();

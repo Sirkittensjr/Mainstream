@@ -91,6 +91,13 @@ export interface User {
    * been run yet.
    */
   top_creators?: string[] | null;
+  /**
+   * When a temporary suspension ends. Null or absent for an account that is
+   * not suspended, or is suspended until a moderator reinstates it. Optional
+   * because migration 0014 may not have been run; never granted to the API
+   * roles, so nobody can shorten their own.
+   */
+  suspended_until?: ISODate | null;
   created_at: ISODate;
   last_active_at: ISODate;
 }

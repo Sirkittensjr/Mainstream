@@ -69,6 +69,21 @@ export interface Driver {
    * be anybody else's. An empty `where` deletes nothing.
    */
   removeWhere<T extends TableName>(table: T, where: Partial<Row<T>>): Promise<number>;
+  /**
+   * Updates the rows matching every one of `where`'s columns, as ONE
+   * statement, and returns how many changed.
+   *
+   * The update for a state change whose condition is the point — "hide this
+   * post only if nothing has hidden it yet", "lift the hold only if it is still
+   * the report hold" — so two requests racing each other cannot both make the
+   * same change, or undo one another's. A `null` in `where` matches a column
+   * that is null (or absent). An empty `where` changes nothing.
+   */
+  updateWhere<T extends TableName>(
+    table: T,
+    where: Partial<Row<T>>,
+    patch: Partial<Row<T>>,
+  ): Promise<number>;
   /** Wipe every table. Used by the seed script. */
   clear(): Promise<void>;
   /** Persist an uploaded file, returning a URL the app can render. */

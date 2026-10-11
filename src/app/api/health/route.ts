@@ -52,6 +52,7 @@ const ADDED_COLUMNS: { table: TableName; column: string; migration: string }[] =
   { table: 'users', column: 'profile_box', migration: '0005' },
   { table: 'users', column: 'profile_cover_url', migration: '0013' },
   { table: 'users', column: 'top_creators', migration: '0006' },
+  { table: 'users', column: 'suspended_until', migration: '0014' },
   { table: 'posts', column: 'content_warning', migration: '0007' },
   { table: 'posts', column: 'review_state', migration: '0009' },
   { table: 'reports', column: 'cleared_at', migration: '0009' },
