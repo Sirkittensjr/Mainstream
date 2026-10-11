@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { BottomNav, Sidebar, type NavUser } from '@/components/Nav';
 import { RightRail } from '@/components/RightRail';
 import { UnreadWatch } from '@/components/UnreadWatch';
+import { ViewerRoleProvider } from '@/components/ViewerRole';
 import { unreadCount } from '@/lib/services/notifications';
 import { unreadMessageCount } from '@/lib/services/messages';
 import { getViewer, markActive } from '@/lib/session';
@@ -28,6 +29,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     // Three columns on a desktop: navigation, the page, and the rail. The frame
     // stops growing at 1480px so a wide monitor gets margins rather than a
     // feed stretched past reading width.
+    <ViewerRoleProvider isAdmin={viewer?.role === 'admin'}>
     <div className="mx-auto flex w-full max-w-[1480px]">
       <Sidebar user={navUser} />
       {/* Clears the bottom navigation, which grows by the home-indicator inset
@@ -51,5 +53,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           stale, so a message that arrives mid-read still announces itself. */}
       {viewer && <UnreadWatch messages={unreadMessages} notifications={unread} />}
     </div>
+    </ViewerRoleProvider>
   );
 }

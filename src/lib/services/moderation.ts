@@ -7,6 +7,7 @@ import {
   patchReview,
   record as recordModeration,
   tellAuthorHidden,
+  tellAuthorHiddenByAdmin,
   tellAuthorRemoved,
   tellAuthorRestored,
   underReview,
@@ -15,10 +16,9 @@ import { countUniqueReporters, type ModerationAction } from '@/lib/auto-review-r
 import {
   ADMIN_HOLD,
   REPORT_HOLD,
-  REPORT_HOLD_LIMIT,
+  REPORT_THRESHOLD,
   canHideByReport,
   holdingReports,
-  isReportHold,
   isSuspensionLength,
   postKind,
   suspensionEnd,
@@ -64,15 +64,21 @@ export type ReportResult = { ok: true; hidden: boolean } | { ok: false; error: s
  *     function's lookup is the friendly path to the same answer). Reporting
  *     again updates the wording and writes the earlier wording to the
  *     moderation log, so nothing said is lost.
- *   - Only an account's FIRST report about a post can hide it, and only when
- *     the account is active and not flagged for abuse (`canHideByReport`), and
- *     only while it has fewer than REPORT_HOLD_LIMIT posts hidden and waiting.
- *     Because only the first report can hide, a reporter whose report a
- *     moderator already dealt with — by restoring the post or dismissing it —
- *     can never hide that post again; somebody new can.
- *   - Hiding is a conditional update ("only if nothing has hidden it"), so two
- *     reports arriving together hide the post once.
- *
+ *   - Reports show in the moderation dashboard straight away, whatever their
+ *     number. A post is hidden pending admin review when it reaches
+ *     REPORT_THRESHOLD VALID reports: open, not cleared by a moderator, from
+ *     that many DISTINCT accounts that are active and not flagged for abuse
+ *     (`canHideByReport`). Reports from anybody else are recorded and shown to
+ *     moderators but never counted.
+ *   - A report a moderator already dealt with (by restoring the post or
+ *     dismissing it) is cleared and stops counting, and reporting again does
+ *     not un-clear it — so the same people cannot hide a restored post again.
+ *   - Hiding is a conditional update ("only if nothing has hidden it"), and
+ *     every report counts AFTER its own row is written, so of ten reports
+ *     arriving together at least the last to count sees all ten, and the post
+ *     is hidden exactly once.
+ *   - It stays hidden until an administrator decides. Nothing expires.
+
  * Nothing is deleted, nobody is suspended, and the author is told without
  * being told who.
  */
@@ -135,7 +141,7 @@ async function fileReport(input: {
   }
 
   if (input.targetType !== 'post') return { ok: true, hidden: false };
-  return { ok: true, hidden: await hideOnReport(input.targetId, reporter, reason) };
+  return { ok: true, hidden: await hideAtThreshold(input.targetId) };
 }
 
 async function findReport(reporterId: ID, targetType: ReportTarget, targetId: ID) {
@@ -199,138 +205,54 @@ async function reportRefusal(
 }
 
 /**
- * Hides a post because of this report, if this reporter may.
- *
- * Returns whether THIS report hid it. A post somebody else's report already
- * hid stays hidden and this report is one more reason it is.
+ * The VALID reports about a post: open, not cleared by a moderator, from an
+ * account that is active and not flagged for abuse — one per account.
  */
-async function hideOnReport(postId: ID, reporter: User, reason: string): Promise<boolean> {
-  if (!canHideByReport(reporter)) return false;
+export async function validReportCount(postId: ID): Promise<number> {
+  const reports = await db().query('reports', { where: { target_type: 'post', target_id: postId } });
+  const reporters = await usersById(reports.map((report) => report.reporter_id));
+  return countUniqueReporters(holdingReports(reports, reporters));
+}
+
+/**
+ * Hides a post pending admin review once it has REPORT_THRESHOLD valid reports.
+ *
+ * Returns whether THIS call hid it. A post already hidden, removed or held by a
+ * moderator is left alone — the conditional update only matches a post nothing
+ * has restricted — so a report beyond the tenth never hides it twice.
+ */
+async function hideAtThreshold(postId: ID): Promise<boolean> {
   if (!(await autoReviewAvailable())) return false;
   const store = db();
   const post = await store.get('posts', postId);
   if (!post || post.removed || underReview(post)) return false;
 
-  if ((await activeHoldsBy(reporter.id)).length >= REPORT_HOLD_LIMIT) {
-    await recordModeration({
-      targetType: 'post',
-      targetId: postId,
-      action: 'report_hold_limit',
-      actorId: reporter.id,
-      detail: `Recorded but not hidden: this reporter already has ${REPORT_HOLD_LIMIT} posts hidden and waiting for review.`,
-    });
-    return false;
-  }
+  const valid = await validReportCount(postId);
+  if (valid < REPORT_THRESHOLD) return false;
 
-  const startedAt = new Date().toISOString();
-  // Only if nothing has hidden it since we looked. A review from the first
-  // version of this that has lapsed is matched as it is, so it can be replaced.
   const hidden = await store.updateWhere(
     'posts',
-    {
-      id: postId,
-      removed: false,
-      review_state: post.review_state ?? null,
-      ...(post.review_state ? { review_expires_at: post.review_expires_at ?? null } : {}),
-    },
+    { id: postId, removed: false, review_state: null },
     {
       review_state: REPORT_HOLD,
-      review_started_at: startedAt,
+      review_started_at: new Date().toISOString(),
       review_expires_at: null,
-      review_reports: 1,
+      review_reports: valid,
     },
   );
   if (hidden === 0) return false;
 
+  refreshCommunity();
   await recordModeration({
     targetType: 'post',
     targetId: postId,
-    action: 'report_hidden',
-    actorId: reporter.id,
-    uniqueReports: 1,
-    detail: `Hidden after a report: ${reason}`,
+    action: 'auto_review_started',
+    actorId: null,
+    uniqueReports: valid,
+    detail: `Hidden pending admin review: ${valid} valid reports from different accounts.`,
   });
-
-  // Re-counted after acting. In one process `serially` already made this
-  // impossible; across several, two requests can both pass the check above.
-  // Whichever hides are newest beyond the limit are undone, so the limit holds.
-  const holds = await activeHoldsBy(reporter.id);
-  if (holds.length > REPORT_HOLD_LIMIT) {
-    const allowed = new Set(holds.slice(0, REPORT_HOLD_LIMIT).map((hold) => hold.postId));
-    if (!allowed.has(postId)) {
-      const undone = await store.updateWhere(
-        'posts',
-        { id: postId, review_state: REPORT_HOLD, review_started_at: startedAt },
-        { review_state: null, review_started_at: null, review_reports: 0 },
-      );
-      if (undone > 0) {
-        await recordModeration({
-          targetType: 'post',
-          targetId: postId,
-          action: 'report_hold_withdrawn',
-          actorId: reporter.id,
-          detail: `Shown again at once: this reporter was over the limit of ${REPORT_HOLD_LIMIT} posts hidden and waiting.`,
-        });
-        return false;
-      }
-    }
-  }
-
-  refreshCommunity();
   await tellAuthorHidden(post.author_id, postId, isVideoPost(post));
   return true;
-}
-
-/**
- * The posts this account's reports have hidden that are still waiting, oldest
- * hide first.
- *
- * A post counts against the reporter whose report hid it most recently, and
- * only while it is hidden BY THAT REPORT: once a moderator restores it, keeps
- * it under review themselves, or removes it, it stops counting.
- */
-export async function activeHoldsBy(reporterId: ID): Promise<{ postId: ID; hiddenAt: string }[]> {
-  const store = db();
-  let mine: ModerationEvent[];
-  try {
-    mine = await store.query('moderation_events', {
-      where: { action: 'report_hidden', actor_id: reporterId },
-    });
-  } catch (error) {
-    if (isMissingRelation(error)) return [];
-    throw error;
-  }
-  const postIds = [...new Set(mine.map((event) => event.target_id))];
-  if (postIds.length === 0) return [];
-
-  const [posts, hides] = await Promise.all([
-    store.query('posts', { in: { id: postIds } }),
-    store.query('moderation_events', {
-      where: { target_type: 'post', action: 'report_hidden' },
-      in: { target_id: postIds },
-    }),
-  ]);
-  const latest = latestBy(hides);
-  return posts
-    .filter((post) => !post.removed && isReportHold(post) && latest.get(post.id)?.actor_id === reporterId)
-    .map((post) => ({ postId: post.id, hiddenAt: latest.get(post.id)!.created_at }))
-    .sort((a, b) => a.hiddenAt.localeCompare(b.hiddenAt) || a.postId.localeCompare(b.postId));
-}
-
-/** The newest event per target. */
-function latestBy(events: ModerationEvent[]): Map<ID, ModerationEvent> {
-  const out = new Map<ID, ModerationEvent>();
-  for (const event of events) {
-    const seen = out.get(event.target_id);
-    if (
-      !seen ||
-      event.created_at > seen.created_at ||
-      (event.created_at === seen.created_at && event.id > seen.id)
-    ) {
-      out.set(event.target_id, event);
-    }
-  }
-  return out;
 }
 
 // --- a moderator's decisions about a post -------------------------------------
@@ -418,6 +340,86 @@ export async function keepUnderReview(postId: ID, adminId: ID, note = ''): Promi
 }
 
 /**
+ * Remove from public viewing, pending review — the admin action on a post's
+ * ••• menu.
+ *
+ * The post is held by a moderator (the same state as Keep under review), so
+ * it is gone from every public surface at once while the post, its files, its
+ * likes, comments, ratings, reports and history all stay. The author is told,
+ * with the reason. It is in the moderation queue, where Approve and restore
+ * brings it back and Deny or Remove permanently ends it.
+ */
+export async function hideFromPublic(postId: ID, adminId: ID, reason: string): Promise<Decision> {
+  const why = String(reason ?? '').trim().slice(0, 300);
+  if (!why) return { ok: false, error: 'Give a reason for removing it from public viewing.' };
+  const store = db();
+  const post = await store.get('posts', postId);
+  if (!post) return { ok: false, error: 'That post no longer exists.' };
+  if (post.removed) return { ok: false, error: 'That post has already been removed.' };
+  if (post.review_state === ADMIN_HOLD) return { ok: false, error: 'That post is already removed from public viewing.' };
+  if (!(await autoReviewAvailable())) {
+    return { ok: false, error: 'Removing posts from public viewing needs migration 0009 on this database.' };
+  }
+
+  const held = await store.updateWhere(
+    'posts',
+    { id: postId, removed: false, review_state: post.review_state ?? null },
+    {
+      review_state: ADMIN_HOLD,
+      review_expires_at: null,
+      review_started_at: post.review_started_at ?? new Date().toISOString(),
+    },
+  );
+  if (held === 0) return { ok: false, error: 'It changed while you were looking. Reload and try again.' };
+
+  refreshCommunity();
+  const author = await store.get('users', post.author_id);
+  await recordModeration({
+    targetType: 'post',
+    targetId: postId,
+    action: 'admin_hidden',
+    actorId: adminId,
+    detail:
+      `${why} · post by @${author?.username ?? 'unknown'}: ` +
+      `“${(post.text_title || post.caption || 'media only').slice(0, 80)}”`,
+  });
+  await tellAuthorHiddenByAdmin(post.author_id, postId, isVideoPost(post), why);
+  return { ok: true };
+}
+
+/**
+ * Deny — keep removed: a moderator reviewed a hidden post and it stays off
+ * FayTarra. Removed, not deleted: its files and records stay, and Approve
+ * and restore can still reverse it. The author is told, with the reason.
+ * Permanent deletion is a separate, explicit choice (`removePostPermanently`).
+ */
+export async function denyPost(postId: ID, adminId: ID, reason: string): Promise<Decision> {
+  const why = String(reason ?? '').trim().slice(0, 300);
+  if (!why) return { ok: false, error: 'Give a reason for keeping it removed.' };
+  const store = db();
+  const post = await store.get('posts', postId);
+  if (!post) return { ok: false, error: 'That post no longer exists.' };
+  if (post.removed) return { ok: false, error: 'That post has already been removed.' };
+
+  const removed = await store.updateWhere('posts', { id: postId, removed: false }, { removed: true, removed_reason: why });
+  if (removed === 0) return { ok: false, error: 'It changed while you were looking. Reload and try again.' };
+  await patchReview(postId, { review_state: null, review_expires_at: null });
+  const closed = await closeReportsAbout('post', postId, 'resolved', `Kept removed: ${why}`);
+
+  refreshCommunity();
+  await recordModeration({
+    targetType: 'post',
+    targetId: postId,
+    action: 'admin_denied',
+    actorId: adminId,
+    uniqueReports: closed.uniqueReporters,
+    detail: why,
+  });
+  await tellAuthorRemoved(post.author_id, postId, isVideoPost(post), why);
+  return { ok: true };
+}
+
+/**
  * Remove permanently: off FayTarra for good.
  *
  * The post row stays as the record — its caption, who wrote it, why it was
@@ -454,7 +456,7 @@ export async function removePostPermanently(postId: ID, adminId: ID, reason: str
       `${why} · ${files.removed.length} file${files.removed.length === 1 ? '' : 's'} deleted` +
       (files.kept.length ? `, ${files.kept.length} kept because something else uses them` : ''),
   });
-  await tellAuthorRemoved(post.author_id, postId, media.some((item) => item?.kind === 'video'));
+  await tellAuthorRemoved(post.author_id, postId, media.some((item) => item?.kind === 'video'), why);
   return { ok: true };
 }
 
@@ -521,40 +523,9 @@ async function closeReport(
     detail: `${report.reason} from @${reporter?.username ?? 'unknown'}: ${resolution}`,
   });
 
-  if (report.target_type === 'post') await liftIfNothingHolds(report.target_id, adminId);
+  // Not a decision about the post: a hidden post stays hidden until an
+  // administrator approves or denies it.
   return { ok: true };
-}
-
-/**
- * Shows a report-hidden post again when nothing is keeping it hidden any more.
- *
- * Conditional on it STILL being the report hold, so a moderator who chose to
- * keep it under review a moment ago is not overruled by a dismissal racing them.
- */
-async function liftIfNothingHolds(postId: ID, adminId: ID | null): Promise<void> {
-  const store = db();
-  const post = await store.get('posts', postId);
-  if (!post || post.removed || !isReportHold(post)) return;
-
-  const reports = await store.query('reports', { where: { target_type: 'post', target_id: postId } });
-  const reporters = await usersById(reports.map((report) => report.reporter_id));
-  if (holdingReports(reports, reporters).length > 0) return;
-
-  const lifted = await store.updateWhere(
-    'posts',
-    { id: postId, removed: false, review_state: REPORT_HOLD },
-    { review_state: null, review_expires_at: null },
-  );
-  if (lifted === 0) return;
-  refreshCommunity();
-  await recordModeration({
-    targetType: 'post',
-    targetId: postId,
-    action: 'review_lifted',
-    actorId: adminId,
-    detail: 'Every report that kept it hidden was dismissed, so it is visible again.',
-  });
-  await tellAuthorRestored(post.author_id, postId, isVideoPost(post));
 }
 
 /** Closes every open report about something, and clears every report about it. */
@@ -828,8 +799,6 @@ export interface ReporterHistory {
   canHide: boolean;
   filed: number;
   dismissed: number;
-  /** Posts their reports have hidden that are still waiting. */
-  holding: number;
 }
 
 export interface QueueReport {
@@ -872,6 +841,8 @@ export interface QueueItem {
   reports: QueueReport[];
   openReports: number;
   uniqueReporters: number;
+  /** Distinct eligible accounts whose report counts toward REPORT_THRESHOLD. */
+  validReports: number;
   reasons: { reason: string; count: number }[];
   history: QueueEvent[];
 }
@@ -908,7 +879,7 @@ export async function moderationQueue(): Promise<{ hidden: QueueItem[]; reported
   if (posts.length === 0) return { hidden: [], reported: [] };
 
   const postIds = posts.map((post) => post.id);
-  const [reports, events, allReportHolds] = await Promise.all([
+  const [reports, events] = await Promise.all([
     store.query('reports', { where: { target_type: 'post' }, in: { target_id: postIds } }),
     store
       .query('moderation_events', {
@@ -918,7 +889,6 @@ export async function moderationQueue(): Promise<{ hidden: QueueItem[]; reported
         desc: true,
       })
       .catch((error) => (isMissingRelation(error) ? [] : Promise.reject(error))),
-    reportHoldsByReporter(),
   ]);
   const reporterIds = [...new Set(reports.map((report) => report.reporter_id))];
   const [people, reporterReports] = await Promise.all([
@@ -943,7 +913,6 @@ export async function moderationQueue(): Promise<{ hidden: QueueItem[]; reported
       canHide: canHideByReport(person),
       filed: theirs.length,
       dismissed: theirs.filter((report) => report.status === 'dismissed').length,
-      holding: allReportHolds.get(id) ?? 0,
     });
   }
 
@@ -995,6 +964,7 @@ export async function moderationQueue(): Promise<{ hidden: QueueItem[]; reported
       })),
       openReports: open.length,
       uniqueReporters: countUniqueReporters(open),
+      validReports: countUniqueReporters(holdingReports(theirs, people)),
       reasons: [...byReason.entries()]
         .map(([reason, count]) => ({ reason, count }))
         .sort((a, b) => b.count - a.count),
@@ -1014,25 +984,6 @@ export async function moderationQueue(): Promise<{ hidden: QueueItem[]; reported
     hidden: held.map(toItem).sort(byAge),
     reported: reportedPosts.map(toItem).sort((a, b) => b.openReports - a.openReports || byAge(a, b)),
   };
-}
-
-/** For every reporter, how many posts their reports hid that are still waiting. */
-async function reportHoldsByReporter(): Promise<Map<ID, number>> {
-  const store = db();
-  if (!(await autoReviewAvailable())) return new Map();
-  const holds = (await store.query('posts', { where: { review_state: REPORT_HOLD } })).filter(
-    (post) => !post.removed && isReportHold(post),
-  );
-  if (holds.length === 0) return new Map();
-  const hides = await store.query('moderation_events', {
-    where: { target_type: 'post', action: 'report_hidden' },
-    in: { target_id: holds.map((post) => post.id) },
-  });
-  const counts = new Map<ID, number>();
-  for (const event of latestBy(hides).values()) {
-    if (event.actor_id) counts.set(event.actor_id, (counts.get(event.actor_id) ?? 0) + 1);
-  }
-  return counts;
 }
 
 export interface LogEntry {

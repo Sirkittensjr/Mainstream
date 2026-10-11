@@ -121,7 +121,7 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
             className="rounded-2xl border border-solar/40 bg-solar/10 px-4 py-3 text-sm text-solar"
           >
             {isAuthor
-              ? 'This post is hidden while FayTarra moderation reviews a report about it. Only you and moderators can see it, and it cannot be deleted until the review is finished. Nothing has been decided yet.'
+              ? 'This post is hidden pending review by FayTarra moderation. Only you and moderators can see it, and it cannot be deleted until the review is finished.'
               : 'Hidden and waiting for review. '}
             {!isAuthor && viewer?.role === 'admin' && (
               <Link href="/admin?tab=reports" className="underline">

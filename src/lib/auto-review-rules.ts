@@ -51,6 +51,10 @@ export type ModerationAction =
   // Every report keeping a post hidden was dismissed, so the hide lifted.
   | 'review_lifted'
   | 'admin_approved'
+  // An admin took a visible post out of public view from its ••• menu, pending review.
+  | 'admin_hidden'
+  // An admin reviewed a hidden post and kept it removed (not permanently deleted).
+  | 'admin_denied'
   | 'admin_restored'
   | 'admin_removed'
   | 'admin_removed_permanently'
@@ -132,19 +136,19 @@ export function underReview(post: ReviewablePost, now: number = Date.now()): boo
   const state = post.review_state ?? null;
   if (!state) return false;
   if (state === 'admin_hold') return true;
-  if (state !== 'temporary_review') return false;
-  const expires = post.review_expires_at;
-  // A temporary review with no expiry recorded stays hidden rather than
-  // silently becoming permanent-but-invisible or instantly public. It shows up
-  // in the queue, where a person resolves it.
-  return !expires || new Date(expires).getTime() > now;
+  // Hidden by reports stays hidden until an administrator decides. Posts hidden
+  // under the first version of this carry an expiry; it is no longer honoured,
+  // because nothing should come back on its own after 24 hours.
+  void now;
+  return state === 'temporary_review';
 }
 
 /** Whether a review has run its course and should be written off as expired. */
 export function reviewHasExpired(post: ReviewablePost, now: number = Date.now()): boolean {
-  if (post.review_state !== 'temporary_review') return false;
-  const expires = post.review_expires_at;
-  return expires ? new Date(expires).getTime() <= now : false;
+  // Nothing expires any more: see `underReview`.
+  void post;
+  void now;
+  return false;
 }
 
 /** The columns migration 0009 adds to `posts`. */

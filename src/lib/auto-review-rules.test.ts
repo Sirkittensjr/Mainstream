@@ -77,18 +77,12 @@ describe('underReview', () => {
     assert.equal(underReview(post, NOW), true);
   });
 
-  /**
-   * No sweep has to have run for this. The post is visible again because the
-   * time passed, not because a job noticed the time passed.
-   */
-  it('an expired temporary review does not, with no sweep involved', () => {
+  // Hidden by reports stays hidden until an administrator decides: the 24-hour
+  // expiry of the first version is no longer honoured, even on old rows.
+  it('an old temporary review whose time is up stays hidden', () => {
     const post = { review_state: 'temporary_review', review_expires_at: iso(NOW - 1) };
-    assert.equal(underReview(post, NOW), false);
-  });
-
-  it('exactly at the expiry the post is back', () => {
-    const post = { review_state: 'temporary_review', review_expires_at: iso(NOW) };
-    assert.equal(underReview(post, NOW), false);
+    assert.equal(underReview(post, NOW), true);
+    assert.equal(underReview({ review_state: 'temporary_review', review_expires_at: iso(NOW) }, NOW), true);
   });
 
   it('an admin hold ignores the clock entirely', () => {
@@ -109,10 +103,10 @@ describe('underReview', () => {
 });
 
 describe('reviewHasExpired', () => {
-  it('is true only for a temporary review whose time is up', () => {
+  it('is never true: nothing comes back on its own any more', () => {
     assert.equal(
       reviewHasExpired({ review_state: 'temporary_review', review_expires_at: iso(NOW - 1) }, NOW),
-      true,
+      false,
     );
     assert.equal(
       reviewHasExpired({ review_state: 'temporary_review', review_expires_at: iso(NOW + 1) }, NOW),

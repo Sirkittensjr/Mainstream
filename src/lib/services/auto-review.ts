@@ -9,7 +9,6 @@ import {
   clampWindow,
   describeWindow,
   isMissingReviewColumn,
-  reviewHasExpired,
   underReview,
   type ModerationAction,
   type ReviewState,
@@ -204,8 +203,25 @@ export async function tellAuthorHidden(authorId: ID, postId: ID, video: boolean)
     type: 'system',
     postId,
     body:
-      `Your ${video ? 'video' : 'post'} is hidden while FayTarra moderation reviews a report ` +
-      'about it. Nothing has been decided yet, and nothing has been deleted.',
+      `Your ${video ? 'video' : 'post'} is temporarily hidden pending review by FayTarra ` +
+      'moderation, after several reports. Nothing has been decided yet, and nothing has been deleted.',
+  });
+}
+
+/** An administrator took it out of public view, pending review, and says why. */
+export async function tellAuthorHiddenByAdmin(
+  authorId: ID,
+  postId: ID,
+  video: boolean,
+  reason: string,
+): Promise<void> {
+  await notify({
+    userId: authorId,
+    type: 'system',
+    postId,
+    body:
+      `Your ${video ? 'video' : 'post'} was removed from public viewing by FayTarra moderation ` +
+      `pending review. Reason: ${reason}`,
   });
 }
 
@@ -225,11 +241,12 @@ export function isVideoPost(post: { media?: unknown }): boolean {
   return media.some((item) => (item as { kind?: string })?.kind === 'video');
 }
 
-/** The message after an admin decides to remove something. */
+/** The message after an admin decides it stays off FayTarra — kept removed, or deleted. */
 export async function tellAuthorRemoved(
   authorId: ID,
   postId: ID,
   video: boolean,
+  reason?: string,
 ): Promise<void> {
   await notify({
     userId: authorId,
@@ -237,63 +254,7 @@ export async function tellAuthorRemoved(
     postId,
     body:
       `Your ${video ? 'video' : 'post'} was removed by FayTarra moderation ` +
-      'because it violated our community guidelines.',
+      'because it violated our community guidelines.' +
+      (reason ? ` Reason: ${reason}` : ''),
   });
-}
-
-/**
- * Puts expired reviews back, and records that the clock ran out rather than
- * that anybody decided anything.
- *
- * Lazy: called when somebody looks, because FayTarra has no scheduler and a
- * feature that needs one to be correct would be wrong here. `underReview`
- * already treats an expired review as over, so this is bookkeeping catching
- * up with a decision that has already taken effect — not the thing that makes
- * the post visible.
- */
-export async function sweepExpiredReviews(): Promise<number> {
-  if (!(await autoReviewAvailable())) return 0;
-
-  const store = db();
-  let candidates;
-  try {
-    candidates = await store.query('posts', { where: { review_state: 'temporary_review' } });
-  } catch (error) {
-    if (!isMissingReviewColumn(error)) throw error;
-    noteMissing();
-    return 0;
-  }
-
-  const now = Date.now();
-  const expired = candidates.filter((post) => reviewHasExpired(post, now));
-  if (expired.length === 0) return 0;
-
-  for (const post of expired) {
-    await patchReview(post.id, { review_state: null, review_expires_at: null });
-    await record({
-      targetType: 'post',
-      targetId: post.id,
-      action: 'auto_review_expired',
-      actorId: null,
-      uniqueReports: (post as { review_reports?: number }).review_reports ?? 0,
-      detail:
-        `Nobody reviewed it within ${reviewWindowLabel()}, so it was restored ` +
-        'automatically.',
-    });
-  }
-
-  // NO refreshCommunity() here, for two reasons that happen to agree.
-  //
-  // It is not needed: the community cache holds post ROWS, and `underReview`
-  // evaluates the expiry against the clock every time it is asked, so a cached
-  // row whose window has passed already reads as visible. This loop is writing
-  // down a decision the clock already made, not the thing that makes the post
-  // reappear.
-  //
-  // And it is not allowed: `refreshCommunity` is `revalidateTag`, which Next.js
-  // refuses during a render — and this is called from the admin page's render,
-  // because that is where somebody is looking. Calling it there turned
-  // /admin?tab=reports into a 500 the first time a review had lapsed, which is
-  // precisely when a moderator most needs the page.
-  return expired.length;
 }

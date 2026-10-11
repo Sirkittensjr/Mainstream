@@ -40,7 +40,8 @@ const STORE = process.env.FAY_STORE || '.data/faytarra.json';
 const CHROMIUM = process.env.CHROMIUM_PATH;
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@faytarra.com';
 const PASSWORD = 'a long enough password';
-const LIMIT = 5;
+const THRESHOLD = 10;
+const FIXTURES = process.env.FIXTURES || '/tmp/fay-video-fixtures';
 /** Set to a folder to keep screenshots of the queue, the log and the phone view. */
 const SHOTS = process.env.SHOTS_DIR;
 const shot = async (page, name, fullPage = true) => {
@@ -206,185 +207,197 @@ async function run() {
   const viewer = await signUp(browser, `vw${stamp}@example.com`, `vw${stamp}`);
 
   /* ==================================================================== */
-  section('A REPORT HIDES IT AT ONCE');
+  section('BELOW THE THRESHOLD: SHOWN TO ADMINS, POST STAYS UP');
   const caption = `moderate me ${stamp}`;
   const postId = await publish(author, caption);
-  // Engagement from before the report, to check it survives approval.
+  // Engagement from before anything happens, to check it survives.
   await r2.page.goto(`/post/${postId}`, { waitUntil: 'domcontentloaded' });
   await r2.page.waitForLoadState('networkidle');
   await r2.page.locator('button[aria-label="Like"]').first().click();
   await r2.page.fill('textarea[placeholder^="Say something useful"]', 'great post');
   await r2.page.locator('form:has(textarea[placeholder^="Say something useful"]) button[type=submit]').click();
   await settle((s) => s.likes.some((l) => l.post_id === postId) && s.comments.some((c) => c.post_id === postId));
-  check('it starts out findable', (await findable(viewer, postId, caption)) !== null);
 
   await report(r1, postId, { reason: 0, note: 'looks like an ad' });
-  // Either the dialog's thanks, or — because the report hid the post and the
-  // page refreshed — the notice that it is being reviewed.
-  check('the reporter is told it worked', /we have it|being reviewed/i.test(await r1.page.locator('body').innerText()));
-  check('the post is hidden in the store, with no expiry', (await reviewOf(postId, 'temporary_review')) === 'temporary_review' && !postRow(postId).review_expires_at);
-  check('nothing was deleted', postRow(postId) && !postRow(postId).removed);
-  check('not findable in the feed, Discover or search', (await findable(viewer, postId, caption)) === null);
-  check('the API will not serve it', (await apiStatus(viewer, postId)) === 404);
-  await viewer.page.goto(`/post/${postId}`, { waitUntil: 'domcontentloaded' });
-  check('its page says it is being reviewed', /being reviewed/i.test(await viewer.page.locator('body').innerText()));
-  check('and does not contain it', !(await viewer.page.content()).includes(caption));
-  await viewer.page.goto(`/u/${author.handle}`, { waitUntil: 'domcontentloaded' });
-  check('gone from the author’s profile as others see it', !(await viewer.page.locator('body').innerText()).includes(caption));
+  check('the reporter is thanked', /we have it/i.test(await r1.page.locator('body').innerText()));
+  check('one report records it and leaves the post up', (await settle((s) => s.reports.some((r) => r.target_id === postId)))?.reports.filter((r) => r.target_id === postId).length === 1 && (postRow(postId)?.review_state ?? null) === null);
+  check('still findable', (await findable(viewer, postId, caption)) !== null);
+  await openQueue(admin);
+  const early = admin.page.locator(`[data-queue="reported"] [data-queue-card="${postId}"]`);
+  check('the report is in the admin dashboard at once', (await early.count()) === 1);
+  check('with the count toward the threshold', (await early.locator('[data-queue-valid]').innerText()).trim() === `1/${THRESHOLD} valid`);
+  check('who reported it, why, and its status', (await early.locator(`[data-reporter="${r1.handle}"]`).count()) === 1 && (await early.innerText()).includes('looks like an ad') && /open/i.test(await early.innerText()));
+  await author.page.goto('/notifications', { waitUntil: 'networkidle' });
+  const authorNotes = await author.page.locator('body').innerText();
+  check('the author is not told anything yet, and never who reported', !/hidden/i.test(authorNotes) && !authorNotes.includes(r1.handle));
 
-  await author.page.goto(`/post/${postId}`, { waitUntil: 'domcontentloaded' });
-  await author.page.waitForLoadState('networkidle');
-  const ownView = await author.page.locator('body').innerText();
-  check('the author still sees it, with a notice', ownView.includes(caption) && (await author.page.locator('[data-under-review]').count()) === 1);
-  await author.page.goto('/notifications', { waitUntil: 'domcontentloaded' });
-  const told = await author.page.locator('body').innerText();
-  check('the author is told', /hidden while FayTarra moderation reviews a report/i.test(told));
-  check('and not told who reported it', !told.includes(r1.handle));
+  /* ==================================================================== */
+  section('AN ADMIN REMOVES A POST FROM PUBLIC VIEWING FROM ITS ••• MENU');
+  const menuCaption = `menu remove ${stamp}`;
+  const menuId = await publish(author, menuCaption);
+  const openMenu = async (actor, id) => {
+    await actor.page.goto(`/post/${id}`, { waitUntil: 'domcontentloaded' });
+    await actor.page.waitForLoadState('networkidle');
+    await actor.page.locator('button[aria-label="More options"]').first().click();
+  };
+  await openMenu(r1, menuId);
+  check('a normal account is not offered it', (await r1.page.locator('[data-admin-remove-post]').count()) === 0);
+  await openMenu(author, menuId);
+  check('nor is the author', (await author.page.locator('[data-admin-remove-post]').count()) === 0);
+  await openMenu(admin, menuId);
+  check('an admin is offered “Remove from public viewing”', (await admin.page.locator('[data-admin-remove-post]').innerText()).includes('Remove from public viewing'));
+  const captured = [];
+  admin.page.on('request', (request) => {
+    const action = request.headers()['next-action'];
+    if (action && request.method() === 'POST') captured.push({ action, url: request.url() });
+  });
+  await admin.page.locator('[data-admin-remove-post]').click();
+  check('it asks first', await admin.page.locator('[data-admin-remove-confirm]').waitFor({ timeout: 5000 }).then(() => true, () => false));
+  await admin.page.locator('[data-admin-remove-confirm-button]').click();
+  check('and will not go ahead without a reason', /Give a reason/.test(await admin.page.locator('[data-admin-remove-confirm]').innerText()) && (postRow(menuId)?.review_state ?? null) === null);
+  await admin.page.fill('[data-admin-remove-reason]', 'Misleading claims');
+  await admin.page.locator('[data-admin-remove-confirm-button]').click();
+  check('held for review, not deleted', (await reviewOf(menuId, 'admin_hold')) === 'admin_hold' && !postRow(menuId)?.removed);
+  const hideAction = captured.at(-1);
+  check('not findable in the feed, Discover or search', (await findable(viewer, menuId, menuCaption)) === null);
+  check('the API will not serve it', (await apiStatus(viewer, menuId)) === 404);
+  await viewer.page.goto(`/post/${menuId}`, { waitUntil: 'domcontentloaded' });
+  check('its own URL says it is being reviewed, without its words', /being reviewed/i.test(await viewer.page.locator('body').innerText()) && !(await viewer.page.content()).includes(menuCaption));
+  await viewer.page.goto(`/u/${author.handle}`, { waitUntil: 'domcontentloaded' });
+  check('gone from the author’s profile as others see it', !(await viewer.page.locator('body').innerText()).includes(menuCaption));
+  const hiddenEvent = (await settle((s) => s.moderation_events.some((e) => e.target_id === menuId && e.action === 'admin_hidden')))?.moderation_events.find((e) => e.target_id === menuId && e.action === 'admin_hidden');
+  check('logged with the admin, the reason and the post', hiddenEvent?.actor_id === admin.id && /Misleading claims/.test(hiddenEvent?.detail ?? '') && (hiddenEvent?.detail ?? '').includes(menuCaption));
+  await author.page.goto('/notifications', { waitUntil: 'networkidle' });
+  check('the author is told, with the reason', /removed from public viewing.*Reason: Misleading claims/s.test(await author.page.locator('body').innerText()));
+  await openQueue(admin);
+  check('it is in the moderation queue', (await card(admin, menuId).getAttribute('data-queue-state')) === 'admin_hold');
+
+  // A forged request: the admin's real one, sent from a normal account.
+  const decoy = await publish(author, `decoy ${stamp}`);
+  check('captured the admin’s request', Boolean(hideAction?.action));
+  const replay = await r1.page.evaluate(
+    async ({ action, url, id }) => {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Next-Action': action, 'Content-Type': 'text/plain;charset=UTF-8', Accept: 'text/x-component' },
+        body: JSON.stringify([id, 'forged']),
+      });
+      return response.status;
+    },
+    { action: hideAction?.action, url: hideAction?.url, id: decoy },
+  );
+  await wait(1200);
+  check('replayed from a normal account, it changes nothing', (postRow(decoy)?.review_state ?? null) === null && !postRow(decoy)?.removed, `status ${replay}`);
+  check('and is not logged as a decision', !store().moderation_events.some((e) => e.target_id === decoy));
+  for (const path of ['/admin', '/admin?tab=reports', '/admin?tab=log']) {
+    await r1.page.goto(path, { waitUntil: 'domcontentloaded' });
+    check(`a normal account is turned away from ${path}`, new URL(r1.page.url()).pathname !== '/admin', r1.page.url());
+  }
+
+  section('… AND RESTORES IT');
+  await decide(admin, menuId, 'approve', 'reviewed: fine');
+  check('visible again', (await reviewOf(menuId, null)) === null && (await findable(viewer, menuId, menuCaption)) !== null);
+  await author.page.goto('/notifications', { waitUntil: 'networkidle' });
+  check('the author is told it is back', /visible again/i.test(await author.page.locator('body').innerText()));
+
+  /* ==================================================================== */
+  section('THE SAME OPTION ON A VIDEO');
+  const videoTitle = `video to remove ${stamp}`;
+  await author.page.goto('/create/video?upload=1', { waitUntil: 'domcontentloaded' });
+  await author.page.waitForSelector('text=Post a video', { timeout: 15000 });
+  await author.page.locator('input[type=file]').setInputFiles({ name: 'square.webm', mimeType: 'video/webm', buffer: readFileSync(`${FIXTURES}/square.webm`) });
+  await author.page.waitForSelector('#video-title', { timeout: 30000 });
+  await author.page.fill('#video-title', videoTitle);
+  await author.page.selectOption('#video-category', 'Music');
+  await author.page.locator('button', { hasText: /^Post video$/ }).click();
+  await author.page.waitForURL(/\/post\//, { timeout: 180000 });
+  const videoId = author.page.url().split('/post/')[1];
+  await admin.page.goto(`/videos?v=${videoId}`, { waitUntil: 'domcontentloaded' });
+  await admin.page.waitForLoadState('networkidle');
+  const slide = admin.page.locator('section[data-index]', { hasText: videoTitle }).first();
+  await slide.locator('button[aria-label="More options"]').click();
+  check('the Videos feed’s ••• menu offers it to an admin', (await slide.locator('[data-admin-remove-post]').count()) === 1);
+  await slide.locator('[data-admin-remove-post]').click();
+  await admin.page.fill('[data-admin-remove-reason]', 'Copyrighted music');
+  await admin.page.locator('[data-admin-remove-confirm-button]').click();
+  check('and removes the video from public viewing', (await reviewOf(videoId, 'admin_hold')) === 'admin_hold' && (await apiStatus(viewer, videoId)) === 404);
+
+  /* ==================================================================== */
+  section(`THE ${THRESHOLD}TH VALID REPORT HIDES IT PENDING REVIEW`);
+  const crowd = [r1, r2, r3, viewer];
+  for (let i = crowd.length; i < THRESHOLD + 1; i += 1) crowd.push(await signUp(browser, `cr${i}${stamp}@example.com`, `cr${i}${stamp}`));
+  // r1 has already reported postId; eight more make nine.
+  for (const someone of crowd.slice(1, THRESHOLD - 1)) await report(someone, postId, { reason: 1 });
+  const nine = await settle((s) => s.reports.filter((r) => r.target_id === postId).length === THRESHOLD - 1);
+  check(`${THRESHOLD - 1} valid reports leave it up`, nine.reports.filter((r) => r.target_id === postId).length === THRESHOLD - 1 && (postRow(postId)?.review_state ?? null) === null && (await apiStatus(r1, postId)) === 200);
+  await openQueue(admin);
+  check(`the dashboard shows ${THRESHOLD - 1}/${THRESHOLD}`, (await card(admin, postId).locator('[data-queue-valid]').innerText()).trim() === `${THRESHOLD - 1}/${THRESHOLD} valid`);
+  // The tenth and an eleventh, at the same moment.
+  await Promise.all([report(crowd[THRESHOLD - 1], postId, { reason: 2 }), report(crowd[THRESHOLD], postId, { reason: 2 })]);
+  check('the tenth hides it', (await reviewOf(postId, 'temporary_review')) === 'temporary_review' && (await apiStatus(r1, postId)) === 404);
+  const hides = await settle((s) => s.moderation_events.some((e) => e.target_id === postId && e.action === 'auto_review_started'));
+  check('exactly once, though two reports arrived together', hides.moderation_events.filter((e) => e.target_id === postId && e.action === 'auto_review_started').length === 1);
+  check('nothing is deleted: likes and comments kept', Boolean(postRow(postId)) && !postRow(postId).removed && store().likes.some((l) => l.post_id === postId) && store().comments.some((c) => c.post_id === postId));
+  check('not findable in the feed, Discover or search', (await findable(viewer, postId, caption)) === null);
+  await author.page.goto('/notifications', { waitUntil: 'networkidle' });
+  const hiddenNote = (await author.page.locator('li', { hasText: /temporarily hidden pending review/i }).first().innerText().catch(() => '')) || '';
+  check('the author is told it is temporarily hidden pending review', /temporarily hidden pending review/i.test(hiddenNote));
+  check('without being told who reported it', hiddenNote.length > 0 && crowd.every((someone) => !hiddenNote.includes(someone.handle)));
+  await openQueue(admin);
+  const held = card(admin, postId);
+  check('in the queue as “Hidden pending admin review”', (await held.getAttribute('data-queue-state')) === 'report_hold' && (await held.innerText()).includes('Hidden pending admin review'));
+  if (SHOTS) await held.screenshot({ path: `${SHOTS}/queue-card.png` });
   await author.page.goto(`/post/${postId}`, { waitUntil: 'domcontentloaded' });
   await author.page.waitForLoadState('networkidle');
   await author.page.locator('button[aria-label="More options"]').first().click();
   await author.page.locator('[data-delete-post]').first().click();
   await author.page.locator('[data-delete-confirm-button]').click();
   await author.page.waitForTimeout(1500);
-  check('the author cannot delete it while it is reviewed', /cannot be deleted until the review is finished/i.test(await author.page.locator('[data-delete-confirm]').innerText().catch(() => '')));
-  check('and it is still there', Boolean(postRow(postId)));
+  check('the author cannot delete it meanwhile', /cannot be deleted until the review is finished/i.test(await author.page.locator('[data-delete-confirm]').innerText().catch(() => '')));
 
-  /* ==================================================================== */
-  section('THE QUEUE');
-  await openQueue(admin);
-  const queued = card(admin, postId);
-  check('it is in the hidden queue', (await admin.page.locator(`[data-queue="hidden"] [data-queue-card="${postId}"]`).count()) === 1);
-  check('as hidden after a report', (await queued.getAttribute('data-queue-state')) === 'report_hold');
-  const cardText = await queued.innerText();
-  check('with the post and its author', cardText.includes(caption) && cardText.includes(`@${author.handle}`));
-  check('the report count', /1 open report · 1 account/.test(cardText), cardText.match(/\d+ open reports? · \d+ accounts?/)?.[0]);
-  check('who reported it, and how their reports have gone', (await queued.locator(`[data-reporter="${r1.handle}"]`).innerText()).includes('1 filed · 0 dismissed · 1/5'));
-  check('what they wrote', cardText.includes('looks like an ad'));
-  check('and its moderation history', /Hidden by a report/.test(cardText) || (await queued.locator('details summary').innerText()).includes('Moderation history'));
-  if (SHOTS) await queued.screenshot({ path: `${SHOTS}/queue-card.png` });
-
-  /* ==================================================================== */
-  section('ONLY AN ADMINISTRATOR CAN DECIDE');
-  for (const path of ['/admin', '/admin?tab=reports', '/admin?tab=log']) {
-    await r1.page.goto(path, { waitUntil: 'domcontentloaded' });
-    check(`a normal account is turned away from ${path}`, new URL(r1.page.url()).pathname !== '/admin', r1.page.url());
-  }
-  // Capture a REAL admin request, then send it from a normal account. Hiding a
-  // button is not a lock; this is the lock being tried.
-  const decoy = await publish(author, `decoy ${stamp}`);
-  const captured = [];
-  admin.page.on('request', (request) => {
-    const action = request.headers()['next-action'];
-    if (action && request.method() === 'POST') captured.push({ action, url: request.url() });
-  });
-  await decide(admin, postId, 'hold', 'checking');
-  const holdAction = captured.at(-1);
-  check('captured the admin’s request', Boolean(holdAction?.action));
-  const replay = await r1.page.evaluate(
-    async ({ action, url, id }) => {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Next-Action': action, 'Content-Type': 'text/plain;charset=UTF-8', Accept: 'text/x-component' },
-        body: JSON.stringify([id, 'replayed']),
-      });
-      return response.status;
-    },
-    { action: holdAction?.action, url: holdAction?.url, id: decoy },
-  );
-  await wait(1200);
-  check('replayed from a normal account, it changes nothing', (postRow(decoy)?.review_state ?? null) === null, `status ${replay}`);
-  check('and is not logged as a decision', !store().moderation_events.some((e) => e.target_id === decoy));
-  check('the admin’s own request did hold the post', (await reviewOf(postId, 'admin_hold')) === 'admin_hold');
-
-  /* ==================================================================== */
-  section('KEEP UNDER REVIEW, THEN DISMISS: STILL HIDDEN');
-  await openQueue(admin);
-  check('the card says kept under review', (await card(admin, postId).getAttribute('data-queue-state')) === 'admin_hold');
-  const reportId = store().reports.find((r) => r.target_id === postId && r.reporter_id === r1.id)?.id;
-  await card(admin, postId).locator(`[data-dismiss-report="${reportId}"]`).click();
-  await card(admin, postId).locator('[data-dismiss-note]').fill('not an ad');
-  await card(admin, postId).locator(`[data-dismiss-confirm="${reportId}"]`).click();
+  const oneReport = store().reports.find((r) => r.target_id === postId && r.reporter_id === r1.id)?.id;
+  await held.locator(`[data-dismiss-report="${oneReport}"]`).click();
+  await held.locator(`[data-dismiss-confirm="${oneReport}"]`).click();
   await admin.page.waitForTimeout(1500);
-  check('the report is dismissed', (await settle((s) => s.reports.find((r) => r.id === reportId)?.status === 'dismissed'))?.reports.find((r) => r.id === reportId)?.status === 'dismissed');
-  check('but the post is still held', (postRow(postId)?.review_state ?? null) === 'admin_hold');
-  check('and still not findable', (await findable(viewer, postId, caption)) === null);
+  check('dismissing a report does not bring it back: only a decision does', (postRow(postId)?.review_state ?? null) === 'temporary_review');
 
   /* ==================================================================== */
-  section('APPROVE AND RESTORE');
-  await decide(admin, postId, 'approve', 'reviewed: fine');
-  check('visible again', (await reviewOf(postId, null)) === null && (await findable(viewer, postId, caption)) !== null);
-  check('with its like and comment', store().likes.filter((l) => l.post_id === postId).length === 1 && store().comments.filter((c) => c.post_id === postId).length === 1);
-  await viewer.page.goto(`/post/${postId}`, { waitUntil: 'domcontentloaded' });
-  check('the comment shows on its page', (await viewer.page.locator('body').innerText()).includes('great post'));
-  check('the author is told it is back', await (async () => {
-    await author.page.goto('/notifications', { waitUntil: 'domcontentloaded' });
-    return /visible again/i.test(await author.page.locator('body').innerText());
-  })());
-
-  await report(r1, postId, { reason: 1 });
-  check('the same reporter cannot hide it again', (await reviewOf(postId, null)) === null && (await apiStatus(viewer, postId)) === 200);
+  section('DENY — KEEP REMOVED');
   await openQueue(admin);
-  check('their new report waits for a person, with the post still visible', (await admin.page.locator(`[data-queue="reported"] [data-queue-card="${postId}"]`).count()) === 1);
-  check('and it says it cannot hide it again', /Cannot hide it again/.test(await card(admin, postId).innerText()));
-  await report(r3, postId, { reason: 2 });
-  check('somebody new can', (await reviewOf(postId, 'temporary_review')) === 'temporary_review');
-
-  /* ==================================================================== */
-  section('DISMISSING THE ONLY REPORT THAT HIDES IT');
-  const r3Report = store().reports.find((r) => r.target_id === postId && r.reporter_id === r3.id)?.id;
-  await openQueue(admin);
-  await card(admin, postId).locator(`[data-dismiss-report="${r3Report}"]`).click();
-  await card(admin, postId).locator(`[data-dismiss-confirm="${r3Report}"]`).click();
+  await card(admin, postId).locator('[data-decision="deny"]').click();
   await admin.page.waitForTimeout(1500);
-  check('shows it again', (await reviewOf(postId, null)) === null);
-  check('and the log says why', store().moderation_events.some((e) => e.target_id === postId && e.action === 'review_lifted'));
+  check('without a reason it is refused', /Give a reason/i.test(await card(admin, postId).innerText()) && !postRow(postId)?.removed);
+  await decide(admin, postId, 'deny', 'Repeated spam');
+  const denied = (await settle((s) => s.posts.find((p) => p.id === postId)?.removed === true))?.posts.find((p) => p.id === postId);
+  check('kept out of public view, with the reason', denied?.removed === true && denied?.removed_reason === 'Repeated spam');
+  check('logged with the admin', store().moderation_events.some((e) => e.target_id === postId && e.action === 'admin_denied' && e.actor_id === admin.id));
+  await author.page.goto('/notifications', { waitUntil: 'networkidle' });
+  check('the author is told the decision and why', /Reason: Repeated spam/.test(await author.page.locator('body').innerText()));
+  check('the record and its engagement are kept', store().comments.some((c) => c.post_id === postId) && store().reports.filter((r) => r.target_id === postId).length === THRESHOLD + 1);
 
   /* ==================================================================== */
-  section('REMOVE PERMANENTLY');
+  section('DELETE PERMANENTLY');
   const photoCaption = `remove this photo ${stamp}`;
   const photoId = await publishPhoto(author, photoCaption);
   const photoUrl = postRow(photoId)?.media?.[0]?.url;
-  await report(r2, photoId, { reason: 0 });
-  await reviewOf(photoId, 'temporary_review');
+  await openMenu(admin, photoId);
+  await admin.page.locator('[data-admin-remove-post]').click();
+  await admin.page.fill('[data-admin-remove-reason]', 'Explicit image');
+  await admin.page.locator('[data-admin-remove-confirm-button]').click();
+  await reviewOf(photoId, 'admin_hold');
   await openQueue(admin);
   check('the queue shows the photo itself', (await card(admin, photoId).locator('[data-queue-media="image"] img').count()) === 1);
   if (SHOTS) await card(admin, photoId).screenshot({ path: `${SHOTS}/queue-photo-card.png` });
   check('and says what kind of post it is', (await card(admin, photoId).locator('[data-queue-kind]').textContent()).trim() === 'photo');
-  await card(admin, photoId).locator('[data-decision="remove"]').click();
-  await card(admin, photoId).locator('[data-decision="remove-confirm"]').click();
-  await admin.page.waitForTimeout(1500);
-  check('without a reason it is refused, and says so', /Give a reason/i.test(await card(admin, photoId).innerText()) && !postRow(photoId)?.removed);
+  check('its file is still there while it is reviewed', (await viewer.page.evaluate(async (url) => (await fetch(url, { cache: 'no-store' })).status, photoUrl)) === 200);
   await decide(admin, photoId, 'remove', 'Not allowed here');
   const removed = (await settle((s) => s.posts.find((p) => p.id === photoId)?.removed === true))?.posts.find((p) => p.id === photoId);
-  check('removed, with its reason', removed?.removed === true && removed?.removed_reason === 'Not allowed here');
-  check('the record of the post is kept', removed?.caption === photoCaption);
-  const fileStatus = await viewer.page.evaluate(async (url) => (await fetch(url)).status, photoUrl);
+  check('removed, with its reason, and the record of the post kept', removed?.removed === true && removed?.removed_reason === 'Not allowed here' && removed?.caption === photoCaption);
+  const fileStatus = await viewer.page.evaluate(async (url) => (await fetch(url, { cache: 'no-store' })).status, photoUrl);
   check('its file is gone', fileStatus === 404, `status ${fileStatus}`);
-  check('the API will not serve it', (await apiStatus(viewer, photoId)) === 404);
   await author.page.goto(`/post/${photoId}`, { waitUntil: 'domcontentloaded' });
   check('the author sees it was removed, and why', /removed by a moderator: Not allowed here/i.test(await author.page.locator('body').innerText()));
-  await openQueue(admin);
-  check('it has left the queue', (await card(admin, photoId).count()) === 0);
   check('its author was not suspended', store().users.find((u) => u.id === author.id)?.status === 'active');
-
-  /* ==================================================================== */
-  section('TWO REPORTS AT THE SAME MOMENT');
-  const raceId = await publish(author, `race ${stamp}`);
-  await Promise.all([report(r2, raceId), report(r3, raceId)]);
-  const raced = await settle((s) => s.reports.filter((r) => r.target_id === raceId).length === 2);
-  check('both reports are recorded', raced.reports.filter((r) => r.target_id === raceId).length === 2);
-  check('the post is hidden once', raced.moderation_events.filter((e) => e.target_id === raceId && e.action === 'report_hidden').length === 1);
-  check('in one consistent state', (await reviewOf(raceId, 'temporary_review')) === 'temporary_review');
-
-  /* ==================================================================== */
-  section(`AT MOST ${LIMIT} HIDDEN PER REPORTER`);
-  const many = [];
-  for (let i = 0; i < LIMIT + 1; i += 1) many.push(await publish(author, `limit ${i} ${stamp}`));
-  for (const id of many) await report(viewer, id);
-  const limited = await settle((s) => s.reports.filter((r) => r.reporter_id === viewer.id).length === LIMIT + 1);
-  const hiddenCount = many.filter((id) => limited.posts.find((p) => p.id === id)?.review_state === 'temporary_review').length;
-  check(`${LIMIT} hidden, the sixth recorded but visible`, hiddenCount === LIMIT && (await apiStatus(r1, many[LIMIT])) === 200, `${hiddenCount} hidden`);
-  check('the sixth is in the log as over the limit', limited.moderation_events.some((e) => e.target_id === many[LIMIT] && e.action === 'report_hold_limit'));
 
   /* ==================================================================== */
   section('WARN, SUSPEND, BAN, REVERSE');
@@ -399,8 +412,8 @@ async function run() {
   await actions.locator('[data-account-confirm="warn"]').click();
   // The warning lands as a notification row; wait for it rather than a clock.
   await settle((s) => s.notifications.some((n) => n.user_id === r3.id && /keep reports honest/.test(n.body)));
-  await r3.page.goto('/notifications', { waitUntil: 'domcontentloaded' });
-  check('the warning reaches them', /A warning from FayTarra moderation: Please keep reports honest\./.test(await r3.page.locator('body').innerText()));
+  await r3.page.goto('/notifications', { waitUntil: 'networkidle' });
+  check('the warning reaches them', await r3.page.getByText('A warning from FayTarra moderation: Please keep reports honest.').first().waitFor({ timeout: 10000 }).then(() => true, () => false));
 
   actions = await accountCard(r3.handle);
   await actions.locator('[data-account="suspend"]').click();
@@ -459,9 +472,11 @@ async function run() {
   const log = await admin.page.locator('[data-moderation-log]').innerText();
   await shot(admin.page, 'audit-log', false);
   for (const [action, words] of [
-    ['admin_held', 'Kept under review'],
+    ['admin_hidden', 'Removed from public viewing'],
+    ['auto_review_started', 'Hidden pending admin review'],
     ['admin_approved', 'Approved and restored'],
     ['admin_dismissed_report', 'Report dismissed'],
+    ['admin_denied', 'Denied — kept removed'],
     ['admin_removed_permanently', 'Removed permanently'],
     ['admin_warned', 'Warned'],
     ['admin_suspended', 'Suspended'],

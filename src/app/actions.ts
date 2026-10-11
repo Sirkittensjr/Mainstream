@@ -26,7 +26,9 @@ import { markAllRead } from '@/lib/services/notifications';
 import { REPORT_REASONS } from '@/lib/moderation-reasons';
 import {
   approvePost,
+  denyPost,
   dismissReport,
+  hideFromPublic,
   isUserStatus,
   keepUnderReview,
   removeComment,
@@ -640,6 +642,26 @@ function revalidateModeration(postId?: string) {
 export async function adminApprovePostAction(postId: string, note = ''): Promise<AdminResult> {
   const admin = await requireAdmin();
   const result = await approvePost(String(postId), admin.id, String(note ?? ''));
+  revalidateModeration(String(postId));
+  return result;
+}
+
+/**
+ * Remove from public viewing, pending review — the ••• menu's admin option.
+ * The menu item is only drawn for admins, but that is not the lock:
+ * `requireAdmin()` is, here, on every call, whoever sends it.
+ */
+export async function adminHidePostAction(postId: string, reason: string): Promise<AdminResult> {
+  const admin = await requireAdmin();
+  const result = await hideFromPublic(String(postId), admin.id, String(reason ?? ''));
+  revalidatePath('/', 'layout');
+  return result;
+}
+
+/** Deny — keep removed, with a reason the author is told. Not a permanent deletion. */
+export async function adminDenyPostAction(postId: string, reason: string): Promise<AdminResult> {
+  const admin = await requireAdmin();
+  const result = await denyPost(String(postId), admin.id, String(reason ?? ''));
   revalidateModeration(String(postId));
   return result;
 }
