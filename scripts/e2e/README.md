@@ -740,6 +740,45 @@ OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
   node scripts/e2e/desktop-layout-flow.mjs
 ```
 
+### 4i. The public landing page — `landing-flow.mjs`
+
+What a visitor sees at `/` before signing in. Every link in the bar goes to a
+page that answers or a section of the page (About and Features are anchors;
+Community is the public feed), with search, Sign in and a gradient Join
+FayTarra, and on a phone a menu that opens, closes on Escape and on a link, and
+holds the same links. The hero's words, its two buttons followed to where they
+go, and the carousel beside it: three cards showing at once with the middle one
+largest and clear of the words, arrows, dots, the arrow keys and Home, a click
+on a neighbour bringing it forward rather than opening it, only the front card
+in the tab order, no `<video>`, nothing moving on its own, and no slide with
+reduced motion. On a phone, real touches (CDP): a swipe either way changes card,
+a vertical drag scrolls the page instead, a tap opens the front card. With no
+posts the carousel is all preview cards — badged, example ratings, no usernames;
+after two accounts post three photos those come first, open their post, and
+load a resized thumbnail. Exactly three feature cards, one row of equal widths,
+no "Follow and get followed". The ratings section's profile card is an example
+on an empty store and the best rated person, with their real numbers and a
+working Follow, on the seeded one. No sideways scroll from 1440 down to 320.
+
+```bash
+OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
+  node scripts/e2e/landing-flow.mjs
+```
+
+### 4j. Several lines of text on a video — `text-overlays-flow.mjs`
+
+Three lines with their own windows on a two-clip project (0–3s, 2–5s, 6–9s,
+across the join), checked in the editor's preview at each moment, after
+dragging, after pinching with two real touches (outward, inward, a second
+finger on bare video) and the mouse resize handle, after deleting one, and after
+switching tools; then on the post page and in the Videos feed once posted, and
+again for two overlapping lines on a single clip.
+
+```bash
+OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
+  node scripts/e2e/text-overlays-flow.mjs
+```
+
 ### 4h. A profile's appearance — `profile-appearance-flow.mjs`
 
 The big profile header and what it is painted on. A colour, then a FayTarra
@@ -1287,8 +1326,9 @@ it:
 `auth-flow`, `features-flow`, `video-flow`, `videos-flow`, `video-upload-flow`,
 `video-cover-flow`, `mobile-record-flow`, `multi-clip-flow`, `editor-clip-sync-flow`,
 `desktop-layout-flow`, `profile-appearance-flow`, `messaging-flow`,
-`profile-colours-flow`, `top-creators-flow`, `auto-review-flow`, `admin-badge`
-and `social-navigation` create their own accounts and want an EMPTY store
+`profile-colours-flow`, `top-creators-flow`, `auto-review-flow`, `admin-badge`,
+`text-overlays-flow`, `landing-flow` and `social-navigation` create their own
+accounts and want an EMPTY store
 (`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and
 `social-flow` sign in as the seeded demo accounts and check against them —
 `signup-form-state` takes `tommy` as its already-taken username — so those need
@@ -1318,3 +1358,9 @@ ratings, usernames — so a second run on the same store starts from a different
 place and will report failures that are not failures. Re-seed between runs, and
 stop the previous server first: a server still holding the old store in memory
 will flush it back over the file you just seeded.
+
+The built server also keeps the community aggregates — rankings, the public
+posts — in Next's data cache on disk, under `.next/standalone/.next/cache`, for
+up to their revalidation time. Switching one server between an empty and a
+seeded store can therefore show the previous store's leaderboard for a while;
+`rm -rf .next/standalone/.next/cache/fetch-cache` before starting it again.
