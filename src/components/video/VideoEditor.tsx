@@ -23,8 +23,9 @@ import { useClipFrames } from './useClipFrames';
 import { ConfirmSheet } from './ConfirmSheet';
 import { projectFrames } from '@/lib/video/thumbnails';
 import {
-  clampOverlay,
   newOverlay,
+  placeOverlay,
+  seekToShow,
   trimOverlay,
   windowOf,
 } from '@/lib/video/overlays';
@@ -247,6 +248,22 @@ export function VideoEditor({
   }, [clip?.id, selectedStart, selectedEnd, playing]);
 
   /**
+   * Safari zooms the whole page on a two-finger pinch, whatever `touch-action`
+   * says, unless its own gesture events are cancelled. With the Text tool open a
+   * pinch on the video means "resize this line", never "zoom the editor".
+   */
+  useEffect(() => {
+    if (tool !== 'text') return;
+    const noZoom = (event: Event) => event.preventDefault();
+    document.addEventListener('gesturestart', noZoom);
+    document.addEventListener('gesturechange', noZoom);
+    return () => {
+      document.removeEventListener('gesturestart', noZoom);
+      document.removeEventListener('gesturechange', noZoom);
+    };
+  }, [tool]);
+
+  /**
    * Seeks in PROJECT time, and selects the clip that lands in — so a seek can
    * never leave the picture on one clip and the tools on another.
    */
@@ -261,15 +278,30 @@ export function VideoEditor({
   function addOverlay() {
     if (overlays.length >= MAX_TEXT_OVERLAYS) return;
     // The middle of the frame, and selected, so the next thing somebody does is
-    // type into it and drag it where they meant.
+    // type into it and drag it where they meant. Appended: every line already
+    // there keeps its words, place, size and timing.
     onOverlays([...overlays, newOverlay()]);
     setPickedText(overlays.length);
   }
 
-  /** Dragged on the video. The index is into `overlays`, not into what is drawn. */
-  function moveOverlay(position: number, x: number, y: number) {
+  /**
+   * Picks a line — from its number, or by tapping it on the video — and brings
+   * it on screen. A line is only drawn inside its own window, so picking one
+   * while the playhead was elsewhere selected something invisible that could
+   * not be seen, tapped or dragged.
+   */
+  function pickOverlay(position: number) {
+    setPickedText(position);
+    const entry = overlays[position];
+    if (!entry) return;
+    const to = seekToShow(entry, at, total);
+    if (to !== null) seekProject(Math.min(to + 0.02, windowOf(entry, total).to));
+  }
+
+  /** Dragged, pinched or resized on the video. Only that line changes. */
+  function placeOverlayAt(position: number, placement: { x: number; y: number; scale: number }) {
     onOverlays(
-      overlays.map((entry, i) => (i === position ? clampOverlay(entry, x, y) : entry)),
+      overlays.map((entry, i) => (i === position ? placeOverlay(entry, placement) : entry)),
     );
   }
 
@@ -354,9 +386,12 @@ export function VideoEditor({
     event.preventDefault();
     event.stopPropagation();
     const position = pickedText;
+    /** The line as this drag has left it — not as it was when the drag began. */
+    let latest = overlays[position];
 
     const move = (moveEvent: PointerEvent) => {
       const seconds = acrossStrip(moveEvent.clientX) * total;
+      if (latest) latest = trimOverlay(latest, edge, seconds, total);
       onOverlays(
         overlays.map((entry, i) =>
           i === position ? trimOverlay(entry, edge, seconds, total) : entry,
@@ -368,11 +403,13 @@ export function VideoEditor({
       window.removeEventListener('pointerup', release);
       window.removeEventListener('pointercancel', release);
       // Park the playhead inside the window that was just set, so the line being
-      // timed is the line on screen.
-      const entry = overlays[position];
-      if (entry) {
-        const span = windowOf(entry, total);
-        seekProject(edge === 'from' ? span.from : Math.max(span.from, span.to - 0.1));
+      // timed is the line on screen. The window as it is NOW: the overlays this
+      // closure was made with are from before the drag, and their old end —
+      // the end of the video, for a line not yet timed — is outside the new
+      // window, which is what made a freshly trimmed line vanish.
+      if (latest) {
+        const span = windowOf(latest, total);
+        seekProject(edge === 'from' ? span.from + 0.02 : Math.max(span.from, span.to - 0.1));
       }
     };
     window.addEventListener('pointermove', move);
@@ -663,6 +700,27 @@ export function VideoEditor({
             </>
           )}
 
+          {/* Every other line's window, faintly, along the bottom of the strip —
+              so where lines overlap, or leave gaps, can be seen while one of
+              them is being timed. Only the picked line has handles. */}
+          {tool === 'text' &&
+            overlays.map((overlay, position) => {
+              if (position === pickedText || !overlay.text.trim() || total <= 0) return null;
+              const span = windowOf(overlay, total);
+              return (
+                <span
+                  key={`lane-${position}`}
+                  aria-hidden="true"
+                  data-editor-text-lane={position}
+                  className="pointer-events-none absolute bottom-1 h-1 rounded-full bg-white/70 shadow-[0_0_0_1px_rgba(0,0,0,0.45)]"
+                  style={{
+                    left: `${(span.from / total) * 100}%`,
+                    right: `${(1 - span.to / total) * 100}%`,
+                  }}
+                />
+              );
+            })}
+
           {/* The playhead. */}
           {headShown && (
             <span
@@ -713,7 +771,11 @@ export function VideoEditor({
           allow. Nothing is drawn on top of it but the words being edited. */}
       <div
         data-editor-stage
-        className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-3 py-0.5"
+        // With the Text tool open the video is where lines are dragged and
+        // pinched, so the browser must not scroll or zoom the page from it.
+        className={`flex min-h-0 flex-1 items-center justify-center overflow-hidden px-3 py-0.5 ${
+          tool === 'text' ? 'touch-none select-none' : ''
+        }`}
       >
         <div className="relative h-full max-w-full overflow-hidden rounded-2xl bg-black [aspect-ratio:9/16]">
           <ClipPlayer
@@ -748,8 +810,8 @@ export function VideoEditor({
           <VideoText
             media={{ text: overlays, duration: total }}
             now={at}
-            onPick={tool === 'text' ? (position) => setPickedText(position) : undefined}
-            onMove={tool === 'text' ? moveOverlay : undefined}
+            onPick={tool === 'text' ? pickOverlay : undefined}
+            onPlace={tool === 'text' ? placeOverlayAt : undefined}
             selected={tool === 'text' ? pickedText : null}
           />
         </div>
@@ -913,10 +975,10 @@ export function VideoEditor({
                       <span className="tabular-nums">
                         {formatPreciseSeconds(textWindow.from)}–{formatPreciseSeconds(textWindow.to)}
                       </span>
-                      <span className="text-white/40"> · drag on video, time above</span>
+                      <span className="text-white/40"> · drag, pinch to resize</span>
                     </span>
                   ) : overlays.length > 0 ? (
-                    'Text · tap one to edit'
+                    'Text · tap one to edit it'
                   ) : (
                     'Text · starts in the middle, drag it anywhere'
                   )
@@ -927,12 +989,12 @@ export function VideoEditor({
                       <button
                         key={position}
                         type="button"
-                        onClick={() => setPickedText(position)}
+                        onClick={() => pickOverlay(position)}
                         aria-pressed={pickedText === position}
-                        aria-label={`Text ${position + 1}`}
+                        aria-label={`Text ${position + 1}${overlay.text.trim() ? `: ${overlay.text}` : ''}`}
                         data-editor-overlay={position}
                         data-editor-overlay-picked={pickedText === position}
-                        className={`h-5 min-w-[20px] rounded-md px-1 text-[10px] font-bold transition ${
+                        className={`h-5 min-w-[22px] rounded-md px-1 text-[10px] font-bold transition ${
                           pickedText === position ? 'bg-fay text-white' : 'bg-white/10 text-white/70'
                         }`}
                       >
@@ -985,26 +1047,34 @@ export function VideoEditor({
                     <button
                       type="button"
                       onClick={() => removeOverlay(pickedText)}
-                      aria-label={`Remove text ${pickedText + 1}`}
+                      aria-label={`Delete text ${pickedText + 1}`}
                       data-editor-text-remove
                       className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.05] text-white/70"
                     >
                       <TrashIcon width={15} height={15} />
                     </button>
                   </>
+                ) : overlays.length > 0 ? (
+                  <span className="min-w-0 flex-1 truncate text-[12px] text-white/50">
+                    Tap a text on the video, or its number, to edit it.
+                  </span>
                 ) : null}
                 {overlays.length < MAX_TEXT_OVERLAYS && (
+                  // Always labelled, and always the same control: adding another
+                  // line is never hidden behind an icon once one exists. Pink
+                  // outline rather than the filled pink of the clip strip's +,
+                  // which films a new clip — the two must not be mistaken.
                   <button
                     type="button"
                     onClick={addOverlay}
                     data-editor-add-text
-                    aria-label="Add text"
-                    className={`flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.05] text-[13px] font-semibold text-white ${
-                      picked ? 'w-9' : 'flex-1'
+                    aria-label={overlays.length > 0 ? 'Add another text' : 'Add text'}
+                    className={`flex h-9 shrink-0 items-center justify-center gap-1 rounded-xl border border-fay/70 bg-fay/10 px-2.5 text-[13px] font-semibold text-white ${
+                      overlays.length === 0 ? 'flex-1' : ''
                     }`}
                   >
-                    <PlusIcon width={15} height={15} />
-                    {!picked && 'Add text'}
+                    <PlusIcon width={14} height={14} />
+                    {overlays.length === 0 ? 'Add text' : 'Text'}
                   </button>
                 )}
               </div>
