@@ -34,7 +34,7 @@ export function VideoPlayer({
   autoPlayMuted?: boolean;
   /**
    * The post this video belongs to. Given, the player reports a watch once
-   * playback passes the threshold; left out — a preview, a draft, anything not
+   * playback starts; left out — a preview, a draft, anything not
    * yet a post — it counts nothing.
    */
   postId?: string;
@@ -100,6 +100,7 @@ export function VideoPlayer({
           }
         }}
         onPlay={watch.onPlay}
+        onPlaying={watch.onPlaying}
         onTimeUpdate={(event) => {
           watch.onTimeUpdate(event);
           // Drives timed text. `timeupdate` is about four a second, which is as

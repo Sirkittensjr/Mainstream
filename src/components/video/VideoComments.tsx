@@ -3,7 +3,7 @@ import { AdminBadge } from '@/components/AdminBadge';
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { commentAction } from '@/app/actions';
+import { commentAction, deleteCommentAction } from '@/app/actions';
 import { Avatar } from '@/components/Avatar';
 import { CloseIcon } from '@/components/Icons';
 import { Portal } from '@/components/Portal';
@@ -13,6 +13,10 @@ export interface VideoComment {
   id: string;
   body: string;
   createdAt: string;
+  /** The viewer wrote it, or owns the video. Decided by the server. */
+  canDelete?: boolean;
+  /** Replies to it, which go with it if it is deleted. */
+  replies?: number;
   author: { username: string; displayName: string; avatarUrl: string | null; isAdmin?: boolean };
 }
 
@@ -46,6 +50,7 @@ export function VideoComments({
   returnTo = '/videos',
   onClose,
   onPosted,
+  onDeleted,
 }: {
   postId: string;
   /** Null while the first load is in flight. */
@@ -58,10 +63,15 @@ export function VideoComments({
   returnTo?: string;
   onClose: () => void;
   onPosted: (comment: VideoComment) => void;
+  /** A comment was deleted, taking `removed` comments in all with it. */
+  onDeleted?: (commentId: string, removed: number) => void;
 }) {
   const [body, setBody] = useState('');
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  /** The comment whose Delete has been tapped once, waiting for the second. */
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [keyboard, setKeyboard] = useState(0);
   const input = useRef<HTMLTextAreaElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -98,6 +108,21 @@ export function VideoComments({
     };
   }, []);
 
+  /** Deletes a comment the server said this viewer may delete, once confirmed. */
+  async function remove(commentId: string) {
+    if (deleting) return;
+    setDeleting(true);
+    setProblem(null);
+    const result = await deleteCommentAction(commentId).catch(() => null);
+    setDeleting(false);
+    setConfirming(null);
+    if (!result || !result.ok) {
+      setProblem(result?.error ?? 'That comment could not be deleted. Try again.');
+      return;
+    }
+    onDeleted?.(commentId, result.removed);
+  }
+
   async function send() {
     const text = body.trim();
     if (!text || sending) return;
@@ -110,13 +135,14 @@ export function VideoComments({
       return;
     }
     setBody('');
-    // Shown straight away rather than after a round trip. The id is the
-    // server's next time the sheet loads; until then this is the same comment
-    // by the same person, which is what the person who wrote it needs to see.
+    // Shown straight away rather than after a round trip, under the id the
+    // server stored it as — so it can be deleted again at once.
     onPosted({
-      id: `pending-${Date.now()}`,
+      id: result.id,
       body: text,
       createdAt: new Date().toISOString(),
+      canDelete: true,
+      replies: 0,
       author: viewer ?? { username: 'you', displayName: 'You', avatarUrl: null },
     });
     requestAnimationFrame(() => {
@@ -165,7 +191,7 @@ export function VideoComments({
           ) : comments && comments.length > 0 ? (
             <ul className="space-y-4">
               {comments.map((comment) => (
-                <li key={comment.id} className="flex gap-3">
+                <li key={comment.id} className="flex gap-3" data-comment-id={comment.id}>
                   <Avatar
                     username={comment.author.username}
                     displayName={comment.author.displayName}
@@ -194,6 +220,43 @@ export function VideoComments({
                     <p className="whitespace-pre-wrap break-words text-sm leading-snug text-white/85">
                       {comment.body}
                     </p>
+                    {/* Its author, and whoever posted the video, may delete it. */}
+                    {comment.canDelete &&
+                      (confirming === comment.id ? (
+                        <span className="mt-1 flex flex-wrap items-center gap-1 text-xs" data-comment-confirm-delete>
+                          <span className="text-white/55">
+                            {comment.replies
+                              ? `Delete this comment and its ${comment.replies === 1 ? 'reply' : `${comment.replies} replies`}?`
+                              : 'Delete this comment?'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setConfirming(null)}
+                            className="px-2 py-1.5 font-semibold text-white/60"
+                          >
+                            No
+                          </button>
+                          <button
+                            type="button"
+                            disabled={deleting}
+                            onClick={() => void remove(comment.id)}
+                            data-comment-delete-confirm
+                            className="px-2 py-1.5 font-semibold text-fay"
+                          >
+                            {deleting ? 'Deleting…' : 'Yes, delete'}
+                          </button>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirming(comment.id)}
+                          data-comment-delete
+                          // A thumb's worth of target without moving the text.
+                          className="-mx-2 mt-0.5 px-2 py-1.5 text-xs text-white/35 transition hover:text-fay"
+                        >
+                          Delete
+                        </button>
+                      ))}
                   </div>
                 </li>
               ))}

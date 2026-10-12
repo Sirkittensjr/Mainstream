@@ -282,14 +282,17 @@ export function PostCard({
             questions, so never both at once, and a photo never gets a watch
             count it could not have earned. */}
         {isVideo
-          ? videoViews > 0 && (
+          ? (
+              // On every screen size, from the first view: a video's view count
+              // is part of what it is.
               <span
-                className="hidden items-center gap-1.5 px-2 text-xs text-white/30 sm:flex"
-                data-video-views
+                className="flex items-center gap-1.5 px-2 text-xs text-white/45"
+                data-video-views={videoViews}
                 title={`${videoViews.toLocaleString()} ${videoViews === 1 ? 'view' : 'views'}`}
               >
                 <EyeIcon width={15} height={15} />
                 {formatCount(videoViews)}
+                <span className="sr-only">{videoViews === 1 ? 'view' : 'views'}</span>
               </span>
             )
           : data.views > 0 && (

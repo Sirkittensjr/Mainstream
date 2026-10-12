@@ -18,6 +18,7 @@ psql -d faytarra_test -f scripts/e2e/rls-checks.sql
 psql -d faytarra_test -f scripts/e2e/dm-checks.sql
 psql -d faytarra_test -f scripts/e2e/admin-checks.sql
 psql -d faytarra_test -f scripts/e2e/auto-review-checks.sql
+psql -d faytarra_test -f scripts/e2e/comment-checks.sql
 ```
 
 The shim's `storage.buckets` carries `file_size_limit` and `allowed_mime_types`
@@ -53,6 +54,13 @@ re-run, and a signed-in person holding the anon key cannot make themselves an
 admin, demote the admin, promote anyone else, or read the admin's email — while
 still being able to edit their own bio in the same session. The lines marked
 "must fail" are expected to print an error; that is the check passing.
+
+`comment-checks.sql` proves comment deletion and video views are held by the
+DATABASE too: neither API role can delete, edit, write or read a comment
+directly — not even their own, because the app deletes server-side after
+checking who is asking — deleting a comment removes its replies with it, one
+playback session can only be stored once, a view total cannot go below zero,
+and no API role can read who watched what, write a view or set a total.
 
 `auto-review-checks.sql` proves the automatic ten-report review is enforced by
 the DATABASE and not only by the app: one account cannot report the same thing
@@ -346,6 +354,37 @@ of search.
 - **Phone and desktop, signed out**: links on screen and at least 24px tall,
   a tap opens the page, and no sideways scroll on the post, hashtag or search
   page.
+
+### 3g. Video views and deleting comments — `views-comments-flow.mjs`
+
+```bash
+npm start &
+OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
+FIXTURES=/tmp/fay-video-fixtures node scripts/e2e/views-comments-flow.mjs
+```
+
+Against an EMPTY store, with the fixtures from `make-video-fixtures.mjs`.
+
+**Views — one per playback session, counted when playback starts.** Autoplay in
+the Videos feed counts; pausing and resuming does not; the clip looping round
+counts again; scrolling to the next video counts that one and stops the first;
+scrolling back counts again; opening it again counts again. On the post page a
+player that only rendered counts nothing, pressing play counts, and playing it
+again after it ended counts again. A report whose answer is lost on the way
+back is retried and still counted exactly once. A signed-out visitor counts.
+The count shows on the post page and the profile, on a phone and a desktop,
+matching the server after a refresh.
+
+**Comments — deleted by their author or the post's owner.** On a text post a
+commenter is offered Delete on their own comment and reply and nobody else's;
+deleting asks first, and the reply leaves the page and the count at once. The
+real delete request, replayed with somebody else's comment id — or signed out —
+deletes nothing. The owner of a photo deletes another person's comment; it stays
+gone after a refresh and the card's count agrees. Deleting a comment with a
+reply says the reply goes too, and both go. In the Videos feed the owner deletes
+from the comment sheet and the video's comment count drops; a commenter, on a
+phone and a desktop, is offered Delete only on their own, as a tappable button.
+A delete that fails says so and leaves the comment; trying again works.
 
 ### 4c. Recording on a phone — `mobile-record-flow.mjs`
 
@@ -1383,7 +1422,7 @@ it:
 `video-cover-flow`, `mobile-record-flow`, `multi-clip-flow`, `editor-clip-sync-flow`,
 `desktop-layout-flow`, `profile-appearance-flow`, `messaging-flow`,
 `profile-colours-flow`, `top-creators-flow`, `moderation-flow`, `admin-badge`,
-`text-overlays-flow`, `landing-flow`, `photo-flow`, `hashtag-flow` and `social-navigation` create their own
+`text-overlays-flow`, `landing-flow`, `photo-flow`, `hashtag-flow`, `views-comments-flow` and `social-navigation` create their own
 accounts and want an EMPTY store
 (`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and
 `social-flow` sign in as the seeded demo accounts and check against them —
