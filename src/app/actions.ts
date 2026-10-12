@@ -18,6 +18,7 @@ import {
   addComment,
   createPost,
   deleteComment,
+  type DeleteCommentRefusal,
   deletePost,
   toggleLike,
   type DeleteRefusal,
@@ -188,13 +189,29 @@ export async function commentAction(
   const added = await addComment(postId, viewer.id, body, parentId);
   if (!added.ok) return { ok: false as const, error: added.error };
   revalidatePath(`/post/${postId}`);
-  return { ok: true as const };
+  return { ok: true as const, id: added.id };
 }
 
-export async function deleteCommentAction(commentId: string, postId: string) {
-  const viewer = await requireViewer();
-  await deleteComment(commentId, viewer.id);
-  revalidatePath(`/post/${postId}`);
+const DELETE_COMMENT_REFUSED: Record<DeleteCommentRefusal, string> = {
+  not_found: 'That comment is no longer here.',
+  not_allowed: 'You can only delete your own comments, or comments on your own posts.',
+  moderated: 'A moderator removed this comment, so it stays on record.',
+};
+
+/**
+ * Deletes a comment — the commenter's own, or any on the viewer's own post.
+ *
+ * Only the comment id is taken from the request. Which post it is on, and so
+ * whether this person owns that post, is read from the database; see
+ * `deleteComment`.
+ */
+export async function deleteCommentAction(commentId: string) {
+  const viewer = await getViewer();
+  if (!viewer) return { ok: false as const, error: 'Sign in to delete comments.' };
+  const result = await deleteComment(String(commentId ?? '').slice(0, 64), viewer.id);
+  if (!result.ok) return { ok: false as const, error: DELETE_COMMENT_REFUSED[result.reason] };
+  revalidatePath(`/post/${result.postId}`);
+  return { ok: true as const, removed: result.removed };
 }
 
 const DELETE_REFUSED: Record<DeleteRefusal, string> = {

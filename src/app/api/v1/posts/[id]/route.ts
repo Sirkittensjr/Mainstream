@@ -35,6 +35,10 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       id: entry.comment.id,
       body: entry.comment.body,
       createdAt: entry.comment.created_at,
+      // Whether THIS viewer may delete it — they wrote it, or the post is
+      // theirs. Only a hint for the interface; the server decides again.
+      canDelete: entry.canDelete,
+      replies: entry.replies.length,
       author: {
         username: entry.author.username,
         displayName: entry.author.display_name,

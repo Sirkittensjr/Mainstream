@@ -68,8 +68,34 @@ function namedColumn(message: string): string | null {
 }
 
 /**
- * Turns a PostgREST error into a `MissingRelationError` when that is what it
- * is, and a plain Error otherwise. Always throws.
+ * A write refused because a unique index already holds that value — Postgres
+ * 23505. Distinct so a caller relying on the index to settle a race (one view
+ * per playback session) can tell "somebody got there first" from a failure.
+ */
+export class DuplicateRowError extends Error {
+  readonly table: string;
+
+  constructor(table: string, message: string) {
+    super(message);
+    this.name = 'DuplicateRowError';
+    this.table = table;
+  }
+}
+
+/** By name as well as class, for the same reason as `isMissingRelation`. */
+export function isDuplicateRow(error: unknown): error is DuplicateRowError {
+  if (error instanceof DuplicateRowError) return true;
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { name?: unknown }).name === 'DuplicateRowError'
+  );
+}
+
+/**
+ * Turns a PostgREST error into a `MissingRelationError` or a
+ * `DuplicateRowError` when that is what it is, and a plain Error otherwise.
+ * Always throws.
  */
 export function throwQueryError(
   table: string,
@@ -81,5 +107,6 @@ export function throwQueryError(
   if (MISSING_COLUMN.has(code)) {
     throw new MissingRelationError(table, namedColumn(error.message), text);
   }
+  if (code === '23505') throw new DuplicateRowError(table, text);
   throw new Error(text);
 }

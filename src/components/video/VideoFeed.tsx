@@ -23,6 +23,7 @@ import { useViewerIsAdmin } from '@/components/ViewerRole';
 import { useVideoView } from './useVideoView';
 import { VideoComments, type CommenterInfo, type VideoComment } from './VideoComments';
 import { VideoText } from './VideoText';
+import { HashtagLinks } from '@/components/HashtagLinks';
 import {
   CommentIcon,
   EyeIcon,
@@ -55,11 +56,20 @@ export function VideoFeed({
   items,
   viewerId,
   viewer = null,
+  title = 'Videos',
+  end = { href: '/home', label: 'That is everything — back to the feed' },
+  returnTo = '/videos',
 }: {
   items: PostCardData[];
   viewerId: string | null;
   /** Who is watching, for the row their own comment appears as. */
   viewer?: CommenterInfo | null;
+  /** What this feed is: "Videos", or a hashtag on its own page. */
+  title?: string;
+  /** Where the last video points once there is nothing after it. */
+  end?: { href: string; label: string };
+  /** Where signing in from here comes back to. */
+  returnTo?: string;
 }) {
   const [active, setActive] = useState(0);
   /** Videos their author deleted from this feed: gone from it at once. */
@@ -157,7 +167,7 @@ export function VideoFeed({
   return (
     <div className="relative bg-black lg:rounded-3xl lg:overflow-hidden">
       <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center gap-3 bg-gradient-to-b from-black/70 to-transparent px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-8">
-        <h1 className="font-display text-lg font-extrabold tracking-tight drop-shadow">Videos</h1>
+        <h1 className="min-w-0 truncate font-display text-lg font-extrabold tracking-tight drop-shadow">{title}</h1>
         <button
           type="button"
           onClick={(event) => {
@@ -206,6 +216,8 @@ export function VideoFeed({
               onUnmute={handleUnmute}
               onDeleted={() => setDeleted((current) => new Set(current).add(data.id))}
               last={index === shown.length - 1}
+              end={end}
+              returnTo={returnTo}
             />
           );
         })}
@@ -218,7 +230,21 @@ export function VideoFeed({
           loading={loading}
           error={commentsError}
           viewer={viewer}
+          returnTo={returnTo}
           onClose={() => setOpenFor(null)}
+          onDeleted={(commentId, removed) => {
+            setComments((current) => ({
+              ...current,
+              [openFor]: (current[openFor] ?? []).filter((comment) => comment.id !== commentId),
+            }));
+            setCounts((current) => ({
+              ...current,
+              [openFor]: Math.max(
+                0,
+                (current[openFor] ?? items.find((item) => item.id === openFor)?.comments ?? 0) - removed,
+              ),
+            }));
+          }}
           onPosted={(comment) => {
             setComments((current) => ({
               ...current,
@@ -251,6 +277,8 @@ function Slide({
   onUnmute,
   onDeleted,
   last,
+  end,
+  returnTo,
 }: {
   attach: (node: HTMLElement | null) => void;
   index: number;
@@ -269,6 +297,8 @@ function Slide({
   /** Its author deleted it. */
   onDeleted: () => void;
   last: boolean;
+  end: { href: string; label: string };
+  returnTo: string;
 }) {
   const video = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -290,14 +320,14 @@ function Slide({
   const viewerIsAdmin = useViewerIsAdmin();
 
   /**
-   * The watch count, and the one thing in this slide that reports a view.
+   * The view count, and the one thing in this slide that reports a view.
    *
    * Not the IntersectionObserver, and not mounting: a slide becoming the
    * active one is the feed deciding to try playing it, which is not the same
-   * as somebody watching it — autoplay can be refused, a scroll can pass
-   * through four slides in a second, and a slide a few away from the current
-   * one mounts its player without ever playing. Only elapsed playback counts,
-   * which is why this hangs off the player's own events.
+   * as somebody watching it — autoplay can be refused, and a slide next to the
+   * current one mounts its player without ever playing. A view is the player
+   * actually starting, which is why this hangs off the player's own events.
+   * Leaving the slide ends that viewing; coming back to it is another.
    */
   const watch = useVideoView({
     postId: data.id,
@@ -305,17 +335,22 @@ function Slide({
     duration: media.duration,
     initialCount: data.videoViews,
   });
+  const { restart: endViewing } = watch;
 
   useEffect(() => {
     const element = video.current;
-    if (!element) return;
     if (!isActive || covered) {
+      // Scrolled away (or covered): this viewing is over, and playing it again
+      // when somebody comes back is a new one.
+      endViewing();
+      if (!element) return;
       element.pause();
       element.currentTime = 0;
       setProgress(0);
       setSeconds(0);
       return;
     }
+    if (!element) return;
 
     let cancelled = false;
     void (async () => {
@@ -340,7 +375,7 @@ function Slide({
     return () => {
       cancelled = true;
     };
-  }, [isActive, mounted, covered, muted, onBlocked]);
+  }, [isActive, mounted, covered, muted, onBlocked, endViewing]);
 
   // React will not re-mute a player that has already started, so the mute
   // state is applied to the element itself.
@@ -357,7 +392,7 @@ function Slide({
 
   function toggleLike() {
     if (!viewerId) {
-      router.push(`/login?next=${encodeURIComponent('/videos')}`);
+      router.push(`/login?next=${encodeURIComponent(returnTo)}`);
       return;
     }
     const next = !liked;
@@ -414,6 +449,8 @@ function Slide({
               setPlaying(true);
               watch.onPlay();
             }}
+            onPlaying={watch.onPlaying}
+            onEnded={watch.onEnded}
             onPause={() => setPlaying(false)}
             onSeeked={watch.onSeeked}
             onTimeUpdate={(event) => {
@@ -559,6 +596,8 @@ function Slide({
             </button>
           )}
 
+          <HashtagLinks tags={data.tags} caption={data.caption} tone="video" className="mt-1.5" />
+
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
             <Link
               href={`/discover?category=${encodeURIComponent(data.category)}`}
@@ -572,8 +611,8 @@ function Slide({
               </span>
             )}
             {last && (
-              <Link href="/home" className="chip bg-white/10 hover:bg-white/15">
-                That is everything — back to the feed
+              <Link href={end.href} className="chip bg-white/10 hover:bg-white/15">
+                {end.label}
               </Link>
             )}
           </div>
@@ -616,17 +655,16 @@ function Slide({
             {copied ? 'Copied' : 'Share'}
           </button>
           {/* How many times this has been watched. Not a button — there is
-              nothing to do with it — and silent until there is one. */}
-          {watch.count > 0 && (
-            <span
-              className="flex flex-col items-center gap-1 text-[11px] font-semibold text-white/75"
-              data-video-views
-              aria-label={`${watch.count.toLocaleString()} ${watch.count === 1 ? 'view' : 'views'}`}
-            >
-              <EyeIcon width={24} height={24} />
-              {formatCount(watch.count)}
-            </span>
-          )}
+              nothing to do with it. */}
+          <span
+            className="flex flex-col items-center gap-1 text-[11px] font-semibold text-white/75"
+            data-video-views={watch.count}
+            role="img"
+            aria-label={`${watch.count.toLocaleString()} ${watch.count === 1 ? 'view' : 'views'}`}
+          >
+            <EyeIcon width={24} height={24} />
+            {formatCount(watch.count)}
+          </span>
           <div className="flex flex-col items-center gap-1">
             <RateButton
               compact

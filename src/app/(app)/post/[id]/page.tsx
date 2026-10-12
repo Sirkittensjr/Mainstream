@@ -101,6 +101,7 @@ export default async function PostPage({ params }: { params: Promise<{ id: strin
     body: comment.comment.body,
     createdAt: comment.comment.created_at,
     mine: comment.mine,
+    canDelete: comment.canDelete,
     author: {
       username: comment.author.username,
       displayName: comment.author.display_name,

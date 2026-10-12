@@ -20,6 +20,7 @@ import { ReportDialog } from './ReportDialog';
 import { AdminRemovePost } from './AdminRemovePost';
 import { useViewerIsAdmin } from './ViewerRole';
 import { CommentIcon, EyeIcon, HeartIcon, ShareIcon } from './Icons';
+import { HashtagLinks } from './HashtagLinks';
 import { SpeechBubble } from './SpeechBubble';
 import { drawnAs } from '@/lib/text-posts';
 
@@ -230,6 +231,10 @@ export function PostCard({
         )
       )}
 
+      {/* Its hashtags, as links to their pages — the tags it was posted with,
+          and any written into the caption. */}
+      <HashtagLinks tags={data.tags} caption={data.caption} className="-mt-1 px-4 pb-3 lg:px-5 lg:pb-4" />
+
       {data.media.length > 0 && (
         <MediaStrip
           media={data.media}
@@ -277,14 +282,17 @@ export function PostCard({
             questions, so never both at once, and a photo never gets a watch
             count it could not have earned. */}
         {isVideo
-          ? videoViews > 0 && (
+          ? (
+              // On every screen size, from the first view: a video's view count
+              // is part of what it is.
               <span
-                className="hidden items-center gap-1.5 px-2 text-xs text-white/30 sm:flex"
-                data-video-views
+                className="flex items-center gap-1.5 px-2 text-xs text-white/45"
+                data-video-views={videoViews}
                 title={`${videoViews.toLocaleString()} ${videoViews === 1 ? 'view' : 'views'}`}
               >
                 <EyeIcon width={15} height={15} />
                 {formatCount(videoViews)}
+                <span className="sr-only">{videoViews === 1 ? 'view' : 'views'}</span>
               </span>
             )
           : data.views > 0 && (

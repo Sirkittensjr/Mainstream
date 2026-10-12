@@ -10,6 +10,7 @@ import { PostList } from '@/components/PostList';
 import { SearchIcon } from '@/components/Icons';
 import { SectionHeader } from '@/components/EmptyState';
 import { search } from '@/lib/services/search';
+import { tagHref } from '@/lib/hashtags';
 import { followingIds } from '@/lib/services/users';
 import { CATEGORIES } from '@/lib/types';
 import { getViewer } from '@/lib/session';
@@ -33,7 +34,8 @@ export default async function SearchPage({
     query &&
     results.people.length === 0 &&
     results.posts.length === 0 &&
-    results.categories.length === 0;
+    results.categories.length === 0 &&
+    results.hashtags.length === 0;
 
   return (
     <>
@@ -45,7 +47,7 @@ export default async function SearchPage({
             name="q"
             defaultValue={query}
             autoFocus={!query}
-            placeholder="People, posts, tags, categories"
+            placeholder="People, posts, #hashtags, categories"
             className="w-full py-4 pl-12"
             aria-label="Search FayTarra"
           />
@@ -72,6 +74,29 @@ export default async function SearchPage({
           <p className="mt-10 text-center text-sm text-white/40">
             Nothing matched &ldquo;{query}&rdquo;. Try a name, a tag or a category.
           </p>
+        )}
+
+        {results.hashtags.length > 0 && (
+          <section className="mt-8" data-search-hashtags>
+            <SectionHeader title="Hashtags" />
+            <ul className="flex flex-wrap gap-2">
+              {results.hashtags.map((tag) => (
+                <li key={tag.key} className="min-w-0 max-w-full">
+                  <Link
+                    href={tagHref(tag.key)}
+                    data-hashtag={tag.key}
+                    className="chip max-w-full hover:bg-white/10"
+                  >
+                    <span className="truncate font-semibold text-white">#{tag.label}</span>
+                    <span className="shrink-0 text-white/40">
+                      {tag.videos === 1 ? '1 video' : `${tag.videos} videos`}
+                      {tag.posts > tag.videos ? ` · ${tag.posts} posts` : ''}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
 
         {results.people.length > 0 && (

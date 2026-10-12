@@ -1,66 +1,53 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  MIN_VIEW_SECONDS,
-  VIEW_COOLDOWN_MS,
-  VIEW_THRESHOLD_SECONDS,
-  type ViewDecision,
+  MAX_VIEWS_PER_HOUR,
+  MIN_VIEW_GAP_MS,
   decideView,
   dedupeKey,
-  isFreshView,
+  isLoopRestart,
   newSessionKey,
-  playedSince,
   sanitiseSessionKey,
-  shouldReportView,
-  viewThreshold,
+  type ViewDecision,
 } from './views';
 
-describe('when a view is counted', () => {
-  it('needs real playback, not a render', () => {
-    assert.equal(shouldReportView({ playedSeconds: 0, reported: false }, 60), false);
-    assert.equal(shouldReportView({ playedSeconds: 1, reported: false }, 60), false);
-    assert.equal(
-      shouldReportView({ playedSeconds: VIEW_THRESHOLD_SECONDS, reported: false }, 60),
-      true,
-    );
+describe('a loop or a replay from the start is a new viewing', () => {
+  it('near the end, then back at the start: it looped', () => {
+    assert.equal(isLoopRestart(9.8, 0.05, 10), true);
+    assert.equal(isLoopRestart(9.1, 0, 10), true);
   });
 
-  it('never reports a playback session twice', () => {
-    // The whole defence against re-renders, remounts and scrolling: once the
-    // session has been reported, no amount of further playback reports again.
-    assert.equal(shouldReportView({ playedSeconds: 90, reported: true }, 120), false);
+  it('a short clip loops too', () => {
+    assert.equal(isLoopRestart(0.75, 0.02, 1), true);
   });
 
-  it('lets a video shorter than the threshold be viewed at all', () => {
-    assert.equal(viewThreshold(2), 1);
-    assert.equal(viewThreshold(60), VIEW_THRESHOLD_SECONDS);
-    // Nothing is below the floor, even for a video of almost no length.
-    assert.equal(viewThreshold(0.2), MIN_VIEW_SECONDS);
-    // An unknown duration is held to the full threshold.
-    assert.equal(viewThreshold(undefined), VIEW_THRESHOLD_SECONDS);
-    assert.equal(viewThreshold(null), VIEW_THRESHOLD_SECONDS);
-  });
-});
-
-describe('measuring played time', () => {
-  it('adds the step between two timeupdates', () => {
-    assert.equal(playedSince(1, 1.25), 0.25);
+  it('playing forwards is not a restart, however the events arrive', () => {
+    assert.equal(isLoopRestart(1, 1.25, 10), false);
+    assert.equal(isLoopRestart(5, 5, 10), false);
+    assert.equal(isLoopRestart(0.1, 0.3, 10), false);
   });
 
-  it('counts a seek as nothing watched', () => {
-    // Dragging the scrubber a minute forward is not a minute of watching.
-    assert.equal(playedSince(2, 62), 0);
-    // Backwards is not watching either.
-    assert.equal(playedSince(30, 2), 0);
-    assert.equal(playedSince(5, 5), 0);
+  it('scrubbing back a little, or to the middle, is not', () => {
+    assert.equal(isLoopRestart(5, 0.2, 10), false, 'from the middle of a known length');
+    assert.equal(isLoopRestart(9.8, 4, 10), false, 'not back to the start');
+  });
+
+  it('with no length known, any jump back to the start from over a second in', () => {
+    assert.equal(isLoopRestart(6, 0.1, Number.POSITIVE_INFINITY), true);
+    assert.equal(isLoopRestart(6, 0.1, null), true);
+    assert.equal(isLoopRestart(0.8, 0.1, null), false);
+  });
+
+  it('nonsense is not a restart', () => {
+    assert.equal(isLoopRestart(Number.NaN, 0, 10), false);
+    assert.equal(isLoopRestart(9.9, Number.NaN, 10), false);
   });
 });
 
 describe('playback session keys', () => {
   it('accepts a key of the right shape and refuses anything else', () => {
-    const key = newSessionKey();
-    assert.equal(sanitiseSessionKey(key), key);
-    assert.equal(sanitiseSessionKey('  ' + key + '  '), key);
+    assert.equal(sanitiseSessionKey('abc12345'), 'abc12345');
+    assert.equal(sanitiseSessionKey('  abc12345  '), 'abc12345');
     assert.equal(sanitiseSessionKey('short'), null);
     assert.equal(sanitiseSessionKey('has spaces in it'), null);
     assert.equal(sanitiseSessionKey('x'.repeat(65)), null);
@@ -68,133 +55,73 @@ describe('playback session keys', () => {
     assert.equal(sanitiseSessionKey(null), null);
   });
 
+  it('makes a new, valid key every time', () => {
+    const a = newSessionKey();
+    const b = newSessionKey();
+    assert.notEqual(a, b);
+    assert.equal(sanitiseSessionKey(a), a);
+  });
+
   it('keys a view on who watched as well as which session', () => {
-    assert.notEqual(dedupeKey('p1', 'u1', 's1'), dedupeKey('p1', 'u2', 's1'));
-    assert.notEqual(dedupeKey('p1', 'u1', 's1'), dedupeKey('p2', 'u1', 's1'));
-    assert.notEqual(dedupeKey('p1', 'u1', 's1'), dedupeKey('p1', 'u1', 's2'));
-    assert.equal(dedupeKey('p1', 'u1', 's1'), dedupeKey('p1', 'u1', 's1'));
-  });
-});
-
-describe('the cooldown', () => {
-  const now = Date.UTC(2026, 9, 1, 12, 0, 0);
-
-  it('treats a first view as fresh', () => {
-    assert.equal(isFreshView(null, now), true);
-    assert.equal(isFreshView(undefined, now), true);
-  });
-
-  it('refuses a second view of the same video moments later', () => {
-    assert.equal(isFreshView(new Date(now - 1_000).toISOString(), now), false);
-  });
-
-  it('allows one once the cooldown has passed', () => {
-    assert.equal(isFreshView(new Date(now - VIEW_COOLDOWN_MS).toISOString(), now), true);
-  });
-
-  it('treats an unreadable timestamp as fresh rather than as a block', () => {
-    assert.equal(isFreshView('not a date', now), true);
+    assert.notEqual(dedupeKey('p', 'u1', 'session1'), dedupeKey('p', 'u2', 'session1'));
+    assert.notEqual(dedupeKey('p', 'u1', 'session1'), dedupeKey('p', 'u1', 'session2'));
+    assert.equal(dedupeKey('p', 'u1', null), 'p:u1:no-session');
   });
 });
 
 describe('the server-side decision', () => {
-  const base = (over: Partial<ViewDecision> = {}): ViewDecision => ({
-    post: { authorId: 'author', removed: false, hasVideo: true },
-    viewerId: 'watcher',
-    identity: 'watcher',
-    dedupeKey: dedupeKey('post', 'watcher', 'session-one'),
+  const now = Date.parse('2026-10-12T12:00:00Z');
+  const ago = (ms: number) => ({ created_at: new Date(now - ms).toISOString() });
+  const base: ViewDecision = {
+    post: { removed: false, hasVideo: true },
+    identity: 'viewer',
+    sessionCounted: false,
     recent: [],
-    now: Date.UTC(2026, 9, 1, 12, 0, 0),
-    ...over,
-  });
+    now,
+  };
 
-  it('counts a genuine watch', () => {
-    assert.equal(decideView(base()), 'count');
+  it('counts a playback, however brief', () => {
+    assert.equal(decideView(base), 'count');
   });
 
   it('counts a visitor nobody has signed in, by their browser', () => {
-    assert.equal(
-      decideView(base({ viewerId: null, identity: 'anon:browser-1' })),
-      'count',
-    );
+    assert.equal(decideView({ ...base, identity: 'anon:browser' }), 'count');
   });
 
   it('counts nothing for a post with no video on it', () => {
-    assert.equal(
-      decideView(base({ post: { authorId: 'author', removed: false, hasVideo: false } })),
-      'not-a-video',
-    );
+    assert.equal(decideView({ ...base, post: { removed: false, hasVideo: false } }), 'not-a-video');
   });
 
   it('counts nothing for a missing or removed post', () => {
-    assert.equal(decideView(base({ post: null })), 'no-post');
-    assert.equal(
-      decideView(base({ post: { authorId: 'author', removed: true, hasVideo: true } })),
-      'no-post',
-    );
-  });
-
-  it('does not count the author watching their own video back', () => {
-    assert.equal(decideView(base({ viewerId: 'author', identity: 'author' })), 'own-video');
+    assert.equal(decideView({ ...base, post: null }), 'no-post');
+    assert.equal(decideView({ ...base, post: { removed: true, hasVideo: true } }), 'no-post');
   });
 
   it('counts one playback session once, however many times it is reported', () => {
-    const key = dedupeKey('post', 'watcher', 'session-one');
-    const decision = base({
-      dedupeKey: key,
-      recent: [{ dedupe_key: key, created_at: new Date(Date.UTC(2026, 9, 1, 11, 0, 0)).toISOString() }],
-    });
-    // Long past the cooldown, and still not a second view: it is the same
-    // playback session, which is what a remount or a scroll back produces.
-    assert.equal(decideView(decision), 'duplicate-session');
+    assert.equal(decideView({ ...base, sessionCounted: true }), 'duplicate-session');
   });
 
-  it('refuses a fresh session key invented inside the cooldown', () => {
-    const now = Date.UTC(2026, 9, 1, 12, 0, 0);
-    assert.equal(
-      decideView(
-        base({
-          now,
-          dedupeKey: dedupeKey('post', 'watcher', 'session-two'),
-          recent: [
-            {
-              dedupe_key: dedupeKey('post', 'watcher', 'session-one'),
-              created_at: new Date(now - 5_000).toISOString(),
-            },
-          ],
-        }),
-      ),
-      'cooldown',
-    );
+  it('counts the same person watching again — scrolled back, replayed, refreshed', () => {
+    assert.equal(decideView({ ...base, recent: [ago(MIN_VIEW_GAP_MS)] }), 'count');
+    assert.equal(decideView({ ...base, recent: [ago(5_000), ago(60_000)] }), 'count');
   });
 
-  it('counts watching the same video again later', () => {
-    const now = Date.UTC(2026, 9, 1, 12, 0, 0);
-    assert.equal(
-      decideView(
-        base({
-          now,
-          dedupeKey: dedupeKey('post', 'watcher', 'session-two'),
-          recent: [
-            {
-              dedupe_key: dedupeKey('post', 'watcher', 'session-one'),
-              created_at: new Date(now - VIEW_COOLDOWN_MS - 1).toISOString(),
-            },
-          ],
-        }),
-      ),
-      'count',
-    );
+  it('a second session inside the gap is a burst, not a re-watch', () => {
+    assert.equal(decideView({ ...base, recent: [ago(200)] }), 'too-soon');
   });
 
-  it('counts two different people watching the same video', () => {
-    const now = Date.UTC(2026, 9, 1, 12, 0, 0);
-    // Somebody else's view a second ago is not this person's cooldown: the
-    // recent rows handed in are this identity's own.
-    assert.equal(decideView(base({ now, identity: 'someone-else', viewerId: 'someone-else' })), 'count');
+  it('no one person adds more than the hourly cap, whatever keys they invent', () => {
+    const full = Array.from({ length: MAX_VIEWS_PER_HOUR }, (_, i) => ago(2_000 + i * 10_000));
+    assert.equal(decideView({ ...base, recent: full }), 'hourly-limit');
+    const older = full.map((_, i) => ago(3_600_000 + i * 1_000));
+    assert.equal(decideView({ ...base, recent: older }), 'count', 'views over an hour old do not count against it');
   });
 
   it('counts nothing when there is no way to tell who watched', () => {
-    assert.equal(decideView(base({ viewerId: null, identity: null })), 'unknown-viewer');
+    assert.equal(decideView({ ...base, identity: null }), 'unknown-viewer');
+  });
+
+  it('an unreadable timestamp is not a reason to refuse', () => {
+    assert.equal(decideView({ ...base, recent: [{ created_at: 'not a date' }] }), 'count');
   });
 });
