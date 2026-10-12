@@ -20,6 +20,7 @@ import { ReportDialog } from './ReportDialog';
 import { AdminRemovePost } from './AdminRemovePost';
 import { useViewerIsAdmin } from './ViewerRole';
 import { CommentIcon, EyeIcon, HeartIcon, ShareIcon } from './Icons';
+import { HashtagLinks } from './HashtagLinks';
 import { SpeechBubble } from './SpeechBubble';
 import { drawnAs } from '@/lib/text-posts';
 
@@ -229,6 +230,10 @@ export function PostCard({
           </Link>
         )
       )}
+
+      {/* Its hashtags, as links to their pages — the tags it was posted with,
+          and any written into the caption. */}
+      <HashtagLinks tags={data.tags} caption={data.caption} className="-mt-1 px-4 pb-3 lg:px-5 lg:pb-4" />
 
       {data.media.length > 0 && (
         <MediaStrip

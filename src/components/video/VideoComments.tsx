@@ -43,6 +43,7 @@ export function VideoComments({
   loading,
   error,
   viewer,
+  returnTo = '/videos',
   onClose,
   onPosted,
 }: {
@@ -53,6 +54,8 @@ export function VideoComments({
   error: string | null;
   /** Who is writing, for the optimistic row. Null when signed out. */
   viewer: CommenterInfo | null;
+  /** Where signing in from here comes back to. */
+  returnTo?: string;
   onClose: () => void;
   onPosted: (comment: VideoComment) => void;
 }) {
@@ -232,7 +235,7 @@ export function VideoComments({
               </button>
             </div>
           ) : (
-            <Link href="/login?next=/videos" className="btn-ghost w-full py-3 text-sm">
+            <Link href={`/login?next=${encodeURIComponent(returnTo)}`} className="btn-ghost w-full py-3 text-sm">
               Sign in to comment
             </Link>
           )}

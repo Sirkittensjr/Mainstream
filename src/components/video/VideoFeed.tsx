@@ -23,6 +23,7 @@ import { useViewerIsAdmin } from '@/components/ViewerRole';
 import { useVideoView } from './useVideoView';
 import { VideoComments, type CommenterInfo, type VideoComment } from './VideoComments';
 import { VideoText } from './VideoText';
+import { HashtagLinks } from '@/components/HashtagLinks';
 import {
   CommentIcon,
   EyeIcon,
@@ -55,11 +56,20 @@ export function VideoFeed({
   items,
   viewerId,
   viewer = null,
+  title = 'Videos',
+  end = { href: '/home', label: 'That is everything — back to the feed' },
+  returnTo = '/videos',
 }: {
   items: PostCardData[];
   viewerId: string | null;
   /** Who is watching, for the row their own comment appears as. */
   viewer?: CommenterInfo | null;
+  /** What this feed is: "Videos", or a hashtag on its own page. */
+  title?: string;
+  /** Where the last video points once there is nothing after it. */
+  end?: { href: string; label: string };
+  /** Where signing in from here comes back to. */
+  returnTo?: string;
 }) {
   const [active, setActive] = useState(0);
   /** Videos their author deleted from this feed: gone from it at once. */
@@ -157,7 +167,7 @@ export function VideoFeed({
   return (
     <div className="relative bg-black lg:rounded-3xl lg:overflow-hidden">
       <div className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center gap-3 bg-gradient-to-b from-black/70 to-transparent px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-8">
-        <h1 className="font-display text-lg font-extrabold tracking-tight drop-shadow">Videos</h1>
+        <h1 className="min-w-0 truncate font-display text-lg font-extrabold tracking-tight drop-shadow">{title}</h1>
         <button
           type="button"
           onClick={(event) => {
@@ -206,6 +216,8 @@ export function VideoFeed({
               onUnmute={handleUnmute}
               onDeleted={() => setDeleted((current) => new Set(current).add(data.id))}
               last={index === shown.length - 1}
+              end={end}
+              returnTo={returnTo}
             />
           );
         })}
@@ -218,6 +230,7 @@ export function VideoFeed({
           loading={loading}
           error={commentsError}
           viewer={viewer}
+          returnTo={returnTo}
           onClose={() => setOpenFor(null)}
           onPosted={(comment) => {
             setComments((current) => ({
@@ -251,6 +264,8 @@ function Slide({
   onUnmute,
   onDeleted,
   last,
+  end,
+  returnTo,
 }: {
   attach: (node: HTMLElement | null) => void;
   index: number;
@@ -269,6 +284,8 @@ function Slide({
   /** Its author deleted it. */
   onDeleted: () => void;
   last: boolean;
+  end: { href: string; label: string };
+  returnTo: string;
 }) {
   const video = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -357,7 +374,7 @@ function Slide({
 
   function toggleLike() {
     if (!viewerId) {
-      router.push(`/login?next=${encodeURIComponent('/videos')}`);
+      router.push(`/login?next=${encodeURIComponent(returnTo)}`);
       return;
     }
     const next = !liked;
@@ -559,6 +576,8 @@ function Slide({
             </button>
           )}
 
+          <HashtagLinks tags={data.tags} caption={data.caption} tone="video" className="mt-1.5" />
+
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
             <Link
               href={`/discover?category=${encodeURIComponent(data.category)}`}
@@ -572,8 +591,8 @@ function Slide({
               </span>
             )}
             {last && (
-              <Link href="/home" className="chip bg-white/10 hover:bg-white/15">
-                That is everything — back to the feed
+              <Link href={end.href} className="chip bg-white/10 hover:bg-white/15">
+                {end.label}
               </Link>
             )}
           </div>

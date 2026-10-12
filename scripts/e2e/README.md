@@ -313,6 +313,40 @@ sideways with an EXIF rotation, a 300×200 JPEG and a 600×2400 PNG screenshot.
   tapping it opens that file. Tapping a photo in a list opens the post.
 - **Older posts**: a post with no recorded size still shows its photo whole.
 
+### 3f. Hashtags — `hashtag-flow.mjs`
+
+Hashtags shown on what was published, each one a link, and a page per hashtag
+that plays its videos in the Videos feed.
+
+```bash
+npm start &
+OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
+FIXTURES=/tmp/fay-video-fixtures node scripts/e2e/hashtag-flow.mjs
+```
+
+Against an EMPTY store, with the fixtures from `make-video-fixtures.mjs`.
+`SHOTS_DIR=<folder>` keeps phone and desktop screenshots of a hashtag page and
+of search.
+
+- **Shown as posted**: hashtags typed in the video composer (one at a time,
+  Enter after each) and in the photo composer are stored as typed and shown on
+  the post page, the feed card and the Videos feed slide. A hashtag written in
+  a caption is linked too; the caption itself is unchanged.
+- **One page per hashtag, whatever the case**: every link goes to
+  `/tag/<lower-case>`; `/tag/GAMING…` and `/tag/%23Gaming…` land there too.
+- **The page is the Videos feed**: titled with the hashtag, every public video
+  using it — as a tag in any case or in a caption — newest first, no photos;
+  one video playing, and scrolling moves playback on. A video with two
+  hashtags is on both pages. A hashtag only photos use says so and links to
+  them; an unused one is an empty page; punctuation is "Nothing here".
+- **Search** finds the hashtag with or without `#` and in any case, with its
+  video and post counts, opens its page, and lists the posts using it.
+- **Kept current**: a video its author deletes is gone from the page and from
+  the counts at once.
+- **Phone and desktop, signed out**: links on screen and at least 24px tall,
+  a tap opens the page, and no sideways scroll on the post, hashtag or search
+  page.
+
 ### 4c. Recording on a phone — `mobile-record-flow.mjs`
 
 The camera flow at phone size, from the + in the bottom navigation to the video
@@ -1349,7 +1383,7 @@ it:
 `video-cover-flow`, `mobile-record-flow`, `multi-clip-flow`, `editor-clip-sync-flow`,
 `desktop-layout-flow`, `profile-appearance-flow`, `messaging-flow`,
 `profile-colours-flow`, `top-creators-flow`, `moderation-flow`, `admin-badge`,
-`text-overlays-flow`, `landing-flow`, `photo-flow` and `social-navigation` create their own
+`text-overlays-flow`, `landing-flow`, `photo-flow`, `hashtag-flow` and `social-navigation` create their own
 accounts and want an EMPTY store
 (`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and
 `social-flow` sign in as the seeded demo accounts and check against them —

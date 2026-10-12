@@ -1,6 +1,8 @@
 import 'server-only';
 import { db } from '@/lib/db';
+import { postHashtags, tagKey } from '@/lib/hashtags';
 import { CATEGORIES, type Category, type ID, type PublicUser } from '@/lib/types';
+import { matchHashtags, type HashtagSummary } from './hashtags';
 import { hydratePosts, visiblePosts, type PostView } from './posts';
 import { ratingsIndex } from './ratings';
 import { followerCounts, hiddenUserIds, toPublicUser } from './users';
@@ -9,11 +11,14 @@ export interface SearchResults {
   people: { user: PublicUser; followers: number; rating: number | null; votes: number }[];
   posts: PostView[];
   categories: Category[];
+  hashtags: HashtagSummary[];
 }
 
 export async function search(query: string, viewerId: ID | null): Promise<SearchResults> {
   const needle = query.trim().toLowerCase();
-  if (!needle) return { people: [], posts: [], categories: [] };
+  if (!needle) return { people: [], posts: [], categories: [], hashtags: [] };
+  // The same search as a hashtag: "#Gaming", "gaming" and "GAMING" are one.
+  const tagNeedle = tagKey(needle);
   const store = db();
   const [users, hidden, posts, index] = await Promise.all([
     store.query('users', { where: { status: 'active' } }),
@@ -42,6 +47,7 @@ export async function search(query: string, viewerId: ID | null): Promise<Search
         // somebody remembers it by.
         (post.text_title ?? '').toLowerCase().includes(needle) ||
         post.tags.some((tag) => tag.toLowerCase().includes(needle)) ||
+        (tagNeedle !== null && postHashtags(post).some((tag) => tag.key?.includes(tagNeedle))) ||
         post.category.toLowerCase() === needle,
     )
     .slice(0, 24);
@@ -58,5 +64,6 @@ export async function search(query: string, viewerId: ID | null): Promise<Search
     }),
     posts: await hydratePosts(matchedPosts, viewerId),
     categories: CATEGORIES.filter((category) => category.toLowerCase().includes(needle)),
+    hashtags: matchHashtags(posts, needle),
   };
 }
