@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  MIN_VIEW_SECONDS,
   VIEW_COOLDOWN_MS,
-  VIEW_THRESHOLD_SECONDS,
+  VIEW_HOURLY_LIMIT,
   type ViewDecision,
+  createViewTracker,
   decideView,
   dedupeKey,
   isFreshView,
@@ -12,33 +12,165 @@ import {
   playedSince,
   sanitiseSessionKey,
   shouldReportView,
-  viewThreshold,
 } from './views';
 
 describe('when a view is counted', () => {
-  it('needs real playback, not a render', () => {
-    assert.equal(shouldReportView({ playedSeconds: 0, reported: false }, 60), false);
-    assert.equal(shouldReportView({ playedSeconds: 1, reported: false }, 60), false);
-    assert.equal(
-      shouldReportView({ playedSeconds: VIEW_THRESHOLD_SECONDS, reported: false }, 60),
-      true,
-    );
+  it('needs playback to have begun, not a render or a play() call', () => {
+    assert.equal(shouldReportView({ playedSeconds: 0, reported: false }), false);
+    // The first sliver of real playback is the view: opening a video, or a
+    // feed autoplaying it, counts as soon as it is actually playing.
+    assert.equal(shouldReportView({ playedSeconds: 0.25, reported: false }), true);
   });
 
   it('never reports a playback session twice', () => {
     // The whole defence against re-renders, remounts and scrolling: once the
     // session has been reported, no amount of further playback reports again.
-    assert.equal(shouldReportView({ playedSeconds: 90, reported: true }, 120), false);
+    assert.equal(shouldReportView({ playedSeconds: 90, reported: true }), false);
+  });
+});
+
+/**
+ * A fake <video>: the events a real player fires, in the order it fires them,
+ * fed to the tracker the hook wraps. `reports` is every session key the player
+ * would have sent to the server.
+ */
+function player(duration = 10) {
+  let n = 0;
+  const tracker = createViewTracker({ duration, mint: () => `session-${++n}` });
+  const reports: string[] = [];
+  let at = 0;
+  const tick = (to: number, paused = false) => {
+    at = to;
+    if (tracker.timeUpdate(at, paused)) reports.push(tracker.sessionKey);
+  };
+  return {
+    reports,
+    tracker,
+    /** play() from wherever the playhead is, then `seconds` of timeupdates. */
+    play(seconds = 1, from = at) {
+      at = from;
+      tracker.play(at);
+      const end = at + seconds;
+      while (at < end - 1e-9) tick(Math.min(end, at + 0.25));
+    },
+    pause() {
+      tick(at, true);
+    },
+    /** Only a timeupdate, as a player that is already playing fires. */
+    tick,
+    seek(to: number) {
+      at = to;
+      tracker.seeked(to);
+    },
+    /** A non-looping video reaching its end. */
+    end() {
+      tracker.ended();
+      at = duration;
+    },
+    /** A `loop` video coming round: back to 0, and playing on. */
+    loop() {
+      at = 0;
+      tracker.seeked(0);
+    },
+    rerender() {
+      // A React re-render calls nothing on the tracker. Stated so the test
+      // reads as the scenario it is.
+    },
+  };
+}
+
+describe('a player counting its own viewings', () => {
+  it('reports once when an autoplaying video starts', () => {
+    const video = player();
+    video.play(3);
+    assert.deepEqual(video.reports, ['session-1']);
   });
 
-  it('lets a video shorter than the threshold be viewed at all', () => {
-    assert.equal(viewThreshold(2), 1);
-    assert.equal(viewThreshold(60), VIEW_THRESHOLD_SECONDS);
-    // Nothing is below the floor, even for a video of almost no length.
-    assert.equal(viewThreshold(0.2), MIN_VIEW_SECONDS);
-    // An unknown duration is held to the full threshold.
-    assert.equal(viewThreshold(undefined), VIEW_THRESHOLD_SECONDS);
-    assert.equal(viewThreshold(null), VIEW_THRESHOLD_SECONDS);
+  it('reports nothing when autoplay is refused and nothing plays', () => {
+    const video = player();
+    // The feed asked; the browser said no. No play event, no timeupdates.
+    assert.deepEqual(video.reports, []);
+  });
+
+  it('ignores re-renders, a burst of timeupdates, and pause and play', () => {
+    const video = player();
+    video.play(1);
+    video.rerender();
+    video.rerender();
+    video.pause();
+    video.play(2);
+    video.seek(6);
+    video.play(1);
+    assert.deepEqual(video.reports, ['session-1']);
+  });
+
+  it('counts a replay after the video ended', () => {
+    const video = player(4);
+    video.play(4);
+    video.end();
+    video.play(2, 0);
+    assert.deepEqual(video.reports, ['session-1', 'session-2']);
+  });
+
+  it('counts each time a looping video comes round', () => {
+    const video = player(4);
+    video.play(4);
+    video.loop();
+    video.play(4);
+    video.loop();
+    video.play(1);
+    assert.deepEqual(video.reports, ['session-1', 'session-2', 'session-3']);
+  });
+
+  it('counts a loop that wraps without a seek event', () => {
+    const video = player(4);
+    video.play(4);
+    // Some browsers only show the wrap as the next timeupdate being back at the
+    // start — no play event, no seek event, the video simply carries on.
+    video.tick(0.1);
+    video.tick(0.35);
+    assert.deepEqual(video.reports, ['session-1', 'session-2']);
+  });
+
+  it('counts scrolling away and back as watching again', () => {
+    const video = player();
+    video.play(0.5);
+    // The feed moves off the clip: it ends that viewing and rewinds the player.
+    video.tracker.restart();
+    video.seek(0);
+    video.play(2, 0);
+    assert.deepEqual(video.reports, ['session-1', 'session-2']);
+  });
+
+  it('counts somebody taking it back to the start to watch again', () => {
+    const video = player(30);
+    video.play(8);
+    video.seek(0);
+    video.play(1);
+    assert.deepEqual(video.reports, ['session-1', 'session-2']);
+  });
+
+  it('does not count a nudge of the scrubber in the first second', () => {
+    const video = player(30);
+    video.play(0.5);
+    video.seek(0);
+    video.play(1);
+    assert.deepEqual(video.reports, ['session-1']);
+  });
+
+  it('lets a very short clip be watched again too', () => {
+    const video = player(0.8);
+    video.play(0.75);
+    video.loop();
+    video.play(0.5);
+    assert.deepEqual(video.reports, ['session-1', 'session-2']);
+  });
+
+  it('keeps one session key for one viewing', () => {
+    const video = player();
+    const before = video.tracker.sessionKey;
+    video.play(3);
+    assert.equal(video.tracker.sessionKey, before);
   });
 });
 
@@ -85,7 +217,11 @@ describe('the cooldown', () => {
   });
 
   it('refuses a second view of the same video moments later', () => {
-    assert.equal(isFreshView(new Date(now - 1_000).toISOString(), now), false);
+    assert.equal(isFreshView(new Date(now - VIEW_COOLDOWN_MS + 500).toISOString(), now), false);
+  });
+
+  it('is a matter of seconds, so watching again soon after still counts', () => {
+    assert.ok(VIEW_COOLDOWN_MS <= 5_000);
   });
 
   it('allows one once the cooldown has passed', () => {
@@ -159,7 +295,7 @@ describe('the server-side decision', () => {
           recent: [
             {
               dedupe_key: dedupeKey('post', 'watcher', 'session-one'),
-              created_at: new Date(now - 5_000).toISOString(),
+              created_at: new Date(now - VIEW_COOLDOWN_MS + 500).toISOString(),
             },
           ],
         }),
@@ -192,6 +328,37 @@ describe('the server-side decision', () => {
     // Somebody else's view a second ago is not this person's cooldown: the
     // recent rows handed in are this identity's own.
     assert.equal(decideView(base({ now, identity: 'someone-else', viewerId: 'someone-else' })), 'count');
+  });
+
+  it('counts nothing on a post hidden while it is reviewed', () => {
+    assert.equal(
+      decideView(base({ post: { authorId: 'author', removed: false, hasVideo: true, hidden: true } })),
+      'no-post',
+    );
+  });
+
+  it('refuses a session already stored, however long ago', () => {
+    // `recent` only reaches back so far; the exact lookup does not.
+    assert.equal(decideView(base({ sessionCounted: true })), 'duplicate-session');
+  });
+
+  it('caps how many views one person can add to one video in an hour', () => {
+    const now = Date.UTC(2026, 9, 1, 12, 0, 0);
+    const recent = Array.from({ length: VIEW_HOURLY_LIMIT }, (_, i) => ({
+      dedupe_key: dedupeKey('post', 'watcher', `old-${i}`),
+      created_at: new Date(now - VIEW_COOLDOWN_MS - i * 30_000).toISOString(),
+    }));
+    assert.equal(
+      decideView(base({ now, dedupeKey: dedupeKey('post', 'watcher', 'new'), recent })),
+      'hourly-limit',
+    );
+    // An hour on, the oldest have aged out and watching counts again.
+    assert.equal(
+      decideView(
+        base({ now: now + 60 * 60 * 1000, dedupeKey: dedupeKey('post', 'watcher', 'new'), recent }),
+      ),
+      'count',
+    );
   });
 
   it('counts nothing when there is no way to tell who watched', () => {

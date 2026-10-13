@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { HashtagText } from './HashtagText';
 import { bigStyleOf, previewOf, type BigStyle, type TextKind } from '@/lib/text-posts';
 
 /**
@@ -67,6 +68,7 @@ export function SpeechBubble({
   preview = false,
   postId,
   className = '',
+  linkHashtags = true,
 }: {
   kind: TextKind;
   title?: string | null;
@@ -75,6 +77,12 @@ export function SpeechBubble({
   preview?: boolean;
   postId?: string;
   className?: string;
+  /**
+   * Whether #hashtags are links. A published post's are; the composer's live
+   * preview of a draft is not — a hashtag only exists once it is published,
+   * and following a link from the preview would throw the draft away.
+   */
+  linkHashtags?: boolean;
 }) {
   const story = kind === 'story';
   const clipped = story && preview ? previewOf(body) : { text: body, clipped: false };
@@ -113,7 +121,7 @@ export function SpeechBubble({
               data-text-title
               className="font-display text-[19px] font-extrabold leading-tight text-ink-950"
             >
-              {title}
+              {linkHashtags ? <HashtagText text={title} tone="light" /> : title}
             </p>
             {/* The rule under the title, as in the reference: it separates the
                 two without a second colour or a heavier weight. */}
@@ -122,7 +130,7 @@ export function SpeechBubble({
         )}
 
         {kind === 'big' ? (
-          <BigWords text={body} look={look!} />
+          <BigWords text={body} look={look!} linkHashtags={linkHashtags} />
         ) : (
           <p
             data-text-body
@@ -130,7 +138,7 @@ export function SpeechBubble({
               story ? 'text-ink-900/80' : 'text-ink-950'
             }`}
           >
-            {clipped.text}
+            {linkHashtags ? <HashtagText text={clipped.text} tone="light" /> : clipped.text}
             {clipped.clipped && '…'}
           </p>
         )}
@@ -162,7 +170,15 @@ export function SpeechBubble({
  * `break-words` and the steps together are what keep it inside: the bubble has
  * no fixed width to overflow, and the longest word can always wrap.
  */
-function BigWords({ text, look }: { text: string; look: { text: string } }) {
+function BigWords({
+  text,
+  look,
+  linkHashtags,
+}: {
+  text: string;
+  look: { text: string };
+  linkHashtags: boolean;
+}) {
   const longest = text.split(/\s+/).reduce((most, word) => Math.max(most, word.length), 0);
   const step =
     text.length <= 10 && longest <= 10 ? 'l' : text.length <= 18 && longest <= 12 ? 'm' : 's';
@@ -178,7 +194,9 @@ function BigWords({ text, look }: { text: string; look: { text: string } }) {
       data-big-step={step}
       className={`break-words text-center font-statement uppercase leading-[0.92] tracking-[0.01em] ${look.text} ${size}`}
     >
-      {text}
+      {/* In the message's own colour: a link in a second colour would break
+          the one-colour look these are built on. */}
+      {linkHashtags ? <HashtagText text={text} tone="inherit" /> : text}
     </p>
   );
 }

@@ -1,8 +1,15 @@
 import 'server-only';
-import { db, isMissingColumn, isMissingRelation } from '@/lib/db';
+import { db, isDuplicateRow, isMissingColumn, isMissingRelation } from '@/lib/db';
+import { underReview } from '@/lib/auto-review-rules';
 import { newId } from '@/lib/ids';
 import type { ID, Media, Post } from '@/lib/types';
-import { VIEW_COOLDOWN_MS, decideView, dedupeKey } from '@/lib/video/views';
+import {
+  VIEW_COOLDOWN_MS,
+  VIEW_HOURLY_LIMIT,
+  decideView,
+  dedupeKey,
+} from '@/lib/video/views';
+import { serially } from './serial';
 
 /**
  * Counting video views, server-side.
@@ -86,6 +93,9 @@ export async function recordVideoView(request: ViewRequest): Promise<ViewResult>
   if (!hasVideo(post.media)) return { count: 0, counted: false };
   // Watching your own video back while editing the caption is not an audience.
   if (viewerId && post.author_id === viewerId) return { count, counted: false };
+  // Hidden while it is reviewed: only its author and moderators can see it,
+  // and a moderator looking at it is not an audience either.
+  if (underReview(post)) return { count, counted: false };
   if (storable === false) return { count, counted: false };
 
   // Who watched. The account when there is one; otherwise the browser, which is
@@ -94,61 +104,72 @@ export async function recordVideoView(request: ViewRequest): Promise<ViewResult>
   if (!identity) return { count, counted: false };
   const key = dedupeKey(postId, identity, sessionKey);
 
-  try {
-    const mine = await store.query('video_views', {
-      where: { post_id: postId, identity },
-      orderBy: 'created_at',
-      desc: true,
-      limit: 25,
-    });
-    storable ??= true;
+  // One person's reports of one video are decided one at a time, so two copies
+  // of the same report — a retry, a handler that fired twice — cannot both read
+  // "not counted yet" and both count. Across server processes the unique index
+  // on `dedupe_key` does the same job; see the DuplicateRowError below.
+  return serially(`video-view:${postId}:${identity}`, async () => {
+    try {
+      const [already, mine] = await Promise.all([
+        // Exact, and indexed: has THIS playback session been counted, ever.
+        store.query('video_views', { where: { dedupe_key: key }, limit: 1 }),
+        // This person's latest views of this video, for the cooldown and the
+        // hourly ceiling.
+        store.query('video_views', {
+          where: { post_id: postId, identity },
+          orderBy: 'created_at',
+          desc: true,
+          limit: VIEW_HOURLY_LIMIT,
+        }),
+      ]);
+      storable ??= true;
 
-    // Every rule about what a view is lives in decideView, which is pure and
-    // tested. The two that matter here: this playback session may only be
-    // counted once — the player remounted, the feed scrolled back, the tab was
-    // refocused — and no identity may count twice inside the cooldown, whatever
-    // session key arrived, which is the half of the defence that does not trust
-    // the client.
-    const verdict = decideView({
-      post: { authorId: post.author_id, removed: post.removed, hasVideo: true },
-      viewerId,
-      identity,
-      dedupeKey: key,
-      recent: mine,
-      now,
-      cooldownMs: VIEW_COOLDOWN_MS,
-    });
-    if (verdict !== 'count') return { count, counted: false };
+      // Every rule about what a view is lives in decideView, which is pure and
+      // tested: this playback session counts once, and no identity counts twice
+      // inside the cooldown or past the hourly ceiling, whatever session key
+      // arrived — the half of the defence that does not trust the client.
+      const verdict = decideView({
+        post: { authorId: post.author_id, removed: post.removed, hasVideo: true },
+        viewerId,
+        identity,
+        dedupeKey: key,
+        sessionCounted: already.length > 0,
+        recent: mine,
+        now,
+        cooldownMs: VIEW_COOLDOWN_MS,
+      });
+      if (verdict !== 'count') return { count, counted: false };
 
-    await store.insert('video_views', {
-      id: newId(),
-      post_id: postId,
-      viewer_id: viewerId,
-      identity,
-      dedupe_key: key,
-      created_at: new Date(now).toISOString(),
-    });
-  } catch (error) {
-    if (isMissingRelation(error)) {
-      switchOff(error);
-      return { count, counted: false };
+      await store.insert('video_views', {
+        id: newId(),
+        post_id: postId,
+        viewer_id: viewerId,
+        identity,
+        dedupe_key: key,
+        created_at: new Date(now).toISOString(),
+      });
+    } catch (error) {
+      if (isMissingRelation(error)) {
+        switchOff(error);
+        return { count, counted: false };
+      }
+      // Another server process stored this same playback session a moment
+      // ago. It has been counted — once, by that request.
+      if (isDuplicateRow(error)) return { count, counted: false };
+      throw error;
     }
-    throw error;
-  }
 
-  // Read-then-write rather than an atomic increment, because that is the whole
-  // of the Driver contract. Two watches landing in the same millisecond can
-  // therefore cost one of them, which is the right way to be wrong for a
-  // counter nobody is paid by: an undercount, never an invented view.
-  const next = count + 1;
-  try {
-    await store.update('posts', postId, { video_views: next });
-  } catch (error) {
-    if (isMissingColumn(error, 'posts', 'video_views')) {
-      switchOff(error);
-      return { count, counted: false };
+    // The database adds the one, so two people watching at the same moment
+    // are two views. The row above is the record; this is the total.
+    try {
+      const next = await store.increment('posts', postId, 'video_views', 1);
+      return { count: next ?? count + 1, counted: true };
+    } catch (error) {
+      if (isMissingColumn(error, 'posts', 'video_views')) {
+        switchOff(error);
+        return { count, counted: false };
+      }
+      throw error;
     }
-    throw error;
-  }
-  return { count: next, counted: true };
+  });
 }

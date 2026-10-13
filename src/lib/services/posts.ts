@@ -9,6 +9,7 @@ import { releasePostMedia, type MediaRelease } from '@/lib/media/cleanup';
 import { isMissingRelation } from '@/lib/db/errors';
 import type { Row } from '@/lib/db/types';
 import { insertPost, type InsertMemo } from './insert-post';
+import { indexPost } from './hashtag-index';
 import { communityCache, refreshCommunity } from './community-cache';
 import { newId } from '@/lib/ids';
 import type { Category, ID, Media, Post, PublicUser, User } from '@/lib/types';
@@ -53,7 +54,7 @@ export async function hydratePosts(posts: Post[], viewerId: ID | null): Promise<
   const postIds = posts.map((p) => p.id);
   const authorIds = [...new Set(posts.map((p) => p.author_id))];
 
-  const [authors, likes, comments, followerCount, viewerFollowing, index, mine] =
+  const [authors, likes, comments, followerCount, viewerFollowing, index, mine, current] =
     await Promise.all([
       store.query('users', { in: { id: authorIds } }),
       store.query('likes', { in: { post_id: postIds } }),
@@ -64,9 +65,15 @@ export async function hydratePosts(posts: Post[], viewerId: ID | null): Promise<
       viewerId ? followingIds(viewerId) : new Set<ID>(),
       ratingsIndex(),
       myRatingsForPosts(viewerId, postIds),
+      // The rows themselves, read now. The posts handed in usually come from
+      // the shared community cache, which is up to a minute old — fine for what
+      // a post IS, wrong for its counters: a video watched a moment ago would
+      // come back after a refresh showing the count from before it was watched.
+      store.query('posts', { in: { id: postIds } }),
     ]);
 
   const authorById = new Map(authors.map((a) => [a.id, a]));
+  const counters = new Map(current.map((row) => [row.id, row]));
 
   const likeCount = new Map<ID, number>(postIds.map((id) => [id, 0]));
   const likedByViewer = new Set<ID>();
@@ -86,8 +93,11 @@ export async function hydratePosts(posts: Post[], viewerId: ID | null): Promise<
     .map((post) => {
       const author = authorById.get(post.author_id);
       if (!author) return null;
+      const now = counters.get(post.id);
       return {
-        post,
+        post: now
+          ? { ...post, views: now.views, video_views: now.video_views ?? post.video_views }
+          : post,
         author: toPublicUser(author),
         authorFollowers: followerCount.get(author.id) ?? 0,
         authorRating: index.users.get(author.id)?.overallVotes
@@ -129,21 +139,69 @@ const publicPosts = communityCache('public-posts', async () => {
   };
 });
 
+/**
+ * Whether a post belongs in a public list, given whose posts are not shown.
+ *
+ * The one rule every list applies — the feeds, search, hashtag pages: not
+ * removed, not hidden while it is reviewed, not by an account that is not
+ * active, and not by anybody the viewer has blocked or been blocked by.
+ */
+export function shownIn(hidden: ReadonlySet<ID>, inactive: ReadonlySet<ID>) {
+  return (post: Post): boolean =>
+    !post.removed &&
+    !hidden.has(post.author_id) &&
+    !inactive.has(post.author_id) &&
+    // Temporarily hidden while it is reviewed. Not removed — it comes back
+    // on its own if nobody looks at it within 24 hours.
+    !underReview(post);
+}
+
 /** All visible posts, with blocked and suspended accounts filtered out. */
 export async function visiblePosts(viewerId: ID | null): Promise<Post[]> {
   const [{ posts, inactive }, hidden] = await Promise.all([
     publicPosts(),
     hiddenUserIds(viewerId),
   ]);
-  const notShown = new Set(inactive);
-  return posts.filter(
-    (post) =>
-      !hidden.has(post.author_id) &&
-      !notShown.has(post.author_id) &&
-      // Temporarily hidden while it is reviewed. Not removed — it comes back
-      // on its own if nobody looks at it within 24 hours.
-      !underReview(post),
+  return posts.filter(shownIn(hidden, new Set(inactive)));
+}
+
+/** How many ids go into one `in (…)`, so the request stays a sensible size. */
+const ID_CHUNK = 100;
+
+/**
+ * The posts among these ids that `viewerId` would see in a list, newest first.
+ *
+ * The same rule as `visiblePosts`, read for a known set of posts — a page of a
+ * hashtag's index, say — rather than for everything.
+ */
+export async function visibleAmong(ids: readonly ID[], viewerId: ID | null): Promise<Post[]> {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return [];
+  const store = db();
+  const chunks: ID[][] = [];
+  for (let i = 0; i < unique.length; i += ID_CHUNK) chunks.push(unique.slice(i, i + ID_CHUNK));
+  const [rows, hidden] = await Promise.all([
+    Promise.all(
+      chunks.map((chunk) => store.query('posts', { where: { removed: false }, in: { id: chunk } })),
+    ).then((pages) => pages.flat()),
+    hiddenUserIds(viewerId),
+  ]);
+  const authorIds = [...new Set(rows.map((post) => post.author_id))];
+  const authors = (
+    await Promise.all(
+      Array.from({ length: Math.ceil(authorIds.length / ID_CHUNK) }, (_, i) =>
+        store.query('users', { in: { id: authorIds.slice(i * ID_CHUNK, (i + 1) * ID_CHUNK) } }),
+      ),
+    )
+  ).flat();
+  const inactive = new Set(
+    authors.filter((user) => effectiveStatus(user) !== 'active').map((user) => user.id),
   );
+  const known = new Set(authors.map((user) => user.id));
+  return rows
+    .filter((post) => known.has(post.author_id))
+    .filter(shownIn(hidden, inactive))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
 export interface CreatePostInput {
@@ -203,6 +261,12 @@ async function finish(
   store: ReturnType<typeof db>,
   input: CreatePostInput,
 ): Promise<Post> {
+  // Published, so its hashtags exist now — and not a moment before: nothing
+  // is filed under a hashtag while it is still being typed. A failure here
+  // costs the hashtag pages this post, never the post itself.
+  await indexPost(post).catch((error) => {
+    console.error('[faytarra] a post could not be filed under its hashtags', error);
+  });
   const author = await store.get('users', input.authorId);
   await notifyMentions(
     post.caption,
@@ -243,7 +307,8 @@ export type DeletePostResult =
  * erase it. Moderators keep their own tools exactly as they were.
  *
  * Then what hung off the post:
- *   likes, comments (replies too), notifications and video views — deleted.
+ *   likes, comments (replies too), notifications, video views and its place
+ *     on every hashtag page — deleted.
  *     Supabase also cascades these from the foreign keys; deleting them here
  *     as well is what makes the local store, which has no foreign keys, agree.
  *   ratings of the post — deleted. They point at the post by id with no
@@ -291,6 +356,8 @@ export async function deletePost(postId: ID, userId: ID): Promise<DeletePostResu
     dropWhere('comments', { post_id: postId }),
     dropWhere('notifications', { post_id: postId }),
     dropWhere('video_views', { post_id: postId }),
+    // Off every hashtag page. Supabase cascades this from the foreign key too.
+    dropWhere('post_hashtags', { post_id: postId }),
     dropWhere('ratings', { target_type: 'post', target_id: postId }),
   ]);
 
@@ -320,7 +387,9 @@ export async function deletePost(postId: ID, userId: ID): Promise<DeletePostResu
 }
 
 /** Deletes rows hanging off a deleted post, tolerating a table this database does not have. */
-async function dropWhere<T extends 'likes' | 'comments' | 'notifications' | 'video_views' | 'ratings'>(
+async function dropWhere<
+  T extends 'likes' | 'comments' | 'notifications' | 'video_views' | 'ratings' | 'post_hashtags',
+>(
   table: T,
   where: Partial<Row<T>>,
 ): Promise<void> {

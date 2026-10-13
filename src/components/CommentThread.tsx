@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { commentAction, deleteCommentAction } from '@/app/actions';
 import { timeAgo } from '@/lib/time';
 import { AdminBadge } from './AdminBadge';
+import { HashtagText } from './HashtagText';
 import { Avatar } from './Avatar';
 
 export interface CommentItem {
@@ -125,7 +126,7 @@ function CommentRow({
           <span className="text-xs text-white/30">{timeAgo(comment.createdAt)}</span>
         </p>
         <p className="mt-0.5 whitespace-pre-wrap text-[15px] leading-relaxed text-white/80">
-          {comment.body}
+          <HashtagText text={comment.body} />
         </p>
 
         <div className="mt-1 flex items-center gap-3">

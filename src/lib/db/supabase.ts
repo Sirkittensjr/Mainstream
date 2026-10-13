@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { isMissingRelation, throwQueryError } from './errors';
-import type { Driver, QueryOptions, Row, TableName } from './types';
+import type { CounterColumn, Driver, QueryOptions, Row, TableName } from './types';
 
 const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'faytarra-media';
 
@@ -31,6 +31,18 @@ export interface Filterable {
   eq(column: string, value: never): Filterable;
   is(column: string, value: null): Filterable;
   in(column: string, values: never[]): Filterable;
+  like(column: string, pattern: string): Filterable;
+}
+
+/**
+ * A LIKE pattern matching text that starts with `prefix`, and nothing else.
+ *
+ * `%` and `_` are LIKE's wildcards and `\` its escape, and all three can be in
+ * what somebody typed — `_` is in hashtags — so each is escaped rather than left
+ * to widen the match.
+ */
+export function prefixPattern(prefix: string): string {
+  return `${prefix.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
 }
 
 /**
@@ -51,6 +63,7 @@ export function applyFilters(
   builder: Filterable,
   where: Record<string, unknown> | undefined,
   inFilters: Record<string, unknown[] | undefined> | undefined,
+  startsWith?: Record<string, string | undefined>,
 ): Filterable {
   let next = builder;
   for (const [key, value] of Object.entries(where ?? {})) {
@@ -59,8 +72,17 @@ export function applyFilters(
   for (const [key, values] of Object.entries(inFilters ?? {})) {
     if (values) next = next.in(key, values as never[]);
   }
+  for (const [key, prefix] of Object.entries(startsWith ?? {})) {
+    if (prefix !== undefined) next = next.like(key, prefixPattern(prefix));
+  }
   return next;
 }
+
+/**
+ * PostgREST's "no such function", and Postgres's. A database that has not run
+ * migration 0015 has no `increment_counter`.
+ */
+const MISSING_FUNCTION = new Set(['PGRST202', '42883']);
 
 /**
  * Supabase driver. Uses the service role key on the server so that the app can
@@ -70,6 +92,8 @@ export function applyFilters(
 class SupabaseDriver implements Driver {
   readonly name = 'supabase' as const;
   private client: SupabaseClient;
+  /** False once the database has said it has no `increment_counter`. */
+  private atomicIncrement = true;
 
   constructor() {
     this.client = createClient(
@@ -97,6 +121,7 @@ class SupabaseDriver implements Driver {
         base as unknown as Filterable,
         options.where as Record<string, unknown> | undefined,
         options.in as Record<string, unknown[] | undefined> | undefined,
+        options.startsWith as Record<string, string | undefined> | undefined,
       ) as unknown as typeof base;
       if (options.orderBy) {
         builder = builder.order(String(options.orderBy), { ascending: !options.desc });
@@ -187,8 +212,43 @@ class SupabaseDriver implements Driver {
     return (data ?? []).length;
   }
 
+  async increment<T extends TableName>(
+    table: T,
+    id: string,
+    column: CounterColumn<Row<T>>,
+    by = 1,
+  ) {
+    if (this.atomicIncrement) {
+      // `update … set n = n + by … returning n`, in the database, under the
+      // row's lock. See increment_counter in migration 0015.
+      const { data, error } = await this.client.rpc('increment_counter', {
+        target_table: table,
+        target_id: id,
+        target_column: column,
+        amount: by,
+      });
+      if (!error) return typeof data === 'number' ? data : data == null ? null : Number(data);
+      if (!MISSING_FUNCTION.has(error.code ?? '')) throwQueryError(table, error);
+      this.atomicIncrement = false;
+      console.warn(
+        '[faytarra] This database has no increment_counter function, so counters are ' +
+          'updated by read-then-write, which can lose one of two simultaneous updates. ' +
+          'Run supabase/migrations/0015_hashtags_and_counters.sql to fix that.',
+      );
+    }
+    // The fallback until the migration is run: read, add, write.
+    const row = await this.get(table, id);
+    if (!row) return null;
+    const current = Number((row as unknown as Record<string, unknown>)[column] ?? 0);
+    const next = (Number.isFinite(current) ? current : 0) + by;
+    await this.update(table, id, { [column]: next } as Partial<Row<T>>);
+    return next;
+  }
+
   async clear() {
     const tables: TableName[] = [
+      'post_hashtags',
+      'hashtags',
       'messages',
       'ratings',
       'notifications',

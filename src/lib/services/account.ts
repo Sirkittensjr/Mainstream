@@ -1,5 +1,6 @@
 import 'server-only';
 import { db, isMissingColumn, storageIsDurable } from '@/lib/db';
+import { unindexPost } from './hashtag-index';
 import { refreshCommunity } from './community-cache';
 import { DAY } from '@/lib/time';
 import { AUTH_NOT_CONFIGURED, authConfigured } from '@/lib/supabase/config';
@@ -625,6 +626,8 @@ export async function deleteAccount(userId: string): Promise<void> {
   ]);
   await Promise.all([
     ...posts.map((row) => store.remove('posts', row.id)),
+    // Off every hashtag page. Supabase cascades this from the foreign key too.
+    ...posts.map((row) => unindexPost(row.id)),
     ...likes.map((row) => store.remove('likes', row.id)),
     ...comments.map((row) => store.remove('comments', row.id)),
     ...follows.map((row) => store.remove('follows', row.id)),

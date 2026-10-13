@@ -12,6 +12,7 @@
  */
 import { createClient } from '@supabase/supabase-js';
 import { buildSeedStore, SEED_PASSWORD } from '../src/lib/seed/data';
+import { isMissingRelation } from '../src/lib/db/errors';
 import type { Schema, TableName } from '../src/lib/db/types';
 
 // Node's own env-file loader (20.12+), so this script needs no dependency of
@@ -25,6 +26,9 @@ for (const file of ['.env.local', '.env']) {
 }
 
 type Store = { [K in TableName]: Schema[K][] };
+
+/** Tables a database may not have yet, which the seed then leaves out. */
+const OPTIONAL = new Set<TableName>(['hashtags', 'post_hashtags']);
 
 /**
  * Creates one Supabase Auth user per seeded profile and rewrites the store so
@@ -130,6 +134,8 @@ async function main() {
   const order: TableName[] = [
     'users',
     'posts',
+    'hashtags',
+    'post_hashtags',
     'ratings',
     'likes',
     'comments',
@@ -143,8 +149,16 @@ async function main() {
     const rows = store[table];
     if (rows.length === 0) continue;
     // Chunked so a large seed does not blow past request size limits.
-    for (let i = 0; i < rows.length; i += 500) {
-      await driver.insertMany(table, rows.slice(i, i + 500) as never[]);
+    try {
+      for (let i = 0; i < rows.length; i += 500) {
+        await driver.insertMany(table, rows.slice(i, i + 500) as never[]);
+      }
+    } catch (error) {
+      // The hashtag index arrives with migration 0015. A database without it
+      // still seeds; its hashtag pages read the posts directly instead.
+      if (!OPTIONAL.has(table) || !isMissingRelation(error)) throw error;
+      console.log(`  ${table}: skipped — run migration 0015 to index hashtags`);
+      continue;
     }
     console.log(`  ${table}: ${rows.length}`);
   }

@@ -11,6 +11,7 @@ import type {
   Report,
   User,
 } from '@/lib/types';
+import { hashtagIndexFor } from '@/lib/hashtags';
 import { FILLER_BIOS, FILLER_CAPTIONS, FIRST_NAMES, HANDLE_SUFFIXES, SEED_CREATORS } from './content';
 
 type Store = { [K in TableName]: Schema[K][] };
@@ -493,6 +494,8 @@ export function seedInto(store: Store): Store {
 
   store.users = users;
   store.posts = posts;
+  // Every seeded post filed under its hashtags, as publishing one would.
+  Object.assign(store, hashtagIndexFor(posts, uuid));
   store.likes = likes;
   store.comments = comments;
   store.follows = follows;
@@ -517,6 +520,8 @@ export function buildSeedStore(): Store {
     messages: [],
     moderation_events: [],
     video_views: [],
+    hashtags: [],
+    post_hashtags: [],
   };
   return seedInto(empty);
 }

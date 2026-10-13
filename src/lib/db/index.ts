@@ -40,6 +40,12 @@ export function storageIsDurable(): boolean {
   return !(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 }
 
-export type { Driver, QueryOptions, Row, Schema, TableName } from './types';
-export { MissingRelationError, isMissingColumn, isMissingRelation } from './errors';
+export type { CounterColumn, Driver, QueryOptions, Row, Schema, TableName } from './types';
+export {
+  DuplicateRowError,
+  MissingRelationError,
+  isDuplicateRow,
+  isMissingColumn,
+  isMissingRelation,
+} from './errors';
 export { supabaseConfigured };

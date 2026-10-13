@@ -18,6 +18,7 @@ psql -d faytarra_test -f scripts/e2e/rls-checks.sql
 psql -d faytarra_test -f scripts/e2e/dm-checks.sql
 psql -d faytarra_test -f scripts/e2e/admin-checks.sql
 psql -d faytarra_test -f scripts/e2e/auto-review-checks.sql
+psql -d faytarra_test -f scripts/e2e/hashtag-checks.sql
 ```
 
 The shim's `storage.buckets` carries `file_size_limit` and `allowed_mime_types`
@@ -68,6 +69,19 @@ itself, so it is re-runnable.
 
 ```bash
 psql -d faytarra_test -f scripts/e2e/auto-review-checks.sql
+```
+
+`hashtag-checks.sql` proves migration 0015's rules hold in the DATABASE: the
+SQL hashtag finder agrees with `src/lib/hashtags.ts` (`#Gaming` and `#GAMING`
+are one hashtag, `#31`, `C#` and `page#x` are none, `#Café` works on a
+`C`-locale database), publishing files a post, editing its caption re-files it,
+deleting it unfiles it, `increment_counter` adds up and refuses anything that
+is not a counter, and neither API role can read the index or move a counter.
+Each check raises when it fails; the errors under the lines marked "must fail"
+are the check passing. It cleans up after itself.
+
+```bash
+psql -d faytarra_test -f scripts/e2e/hashtag-checks.sql
 ```
 
 ## 2. The app side — `gotrue-stub.mjs` + `auth-flow.mjs` + `social-flow.mjs`

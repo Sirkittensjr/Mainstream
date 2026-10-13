@@ -42,7 +42,7 @@ async function probeDatabase(): Promise<{ reachable: boolean; error?: string }> 
 const TABLES: TableName[] = [
   'users', 'posts', 'likes', 'comments', 'follows',
   'blocks', 'ratings', 'notifications', 'reports', 'messages',
-  'moderation_events', 'video_views',
+  'moderation_events', 'video_views', 'hashtags', 'post_hashtags',
 ];
 
 /** Columns a migration adds to an existing table, and the migration that adds them. */
@@ -68,6 +68,8 @@ const MIGRATION_FOR_TABLE: Partial<Record<TableName, string>> = {
   messages: '0003',
   moderation_events: '0009',
   video_views: '0010',
+  hashtags: '0015',
+  post_hashtags: '0015',
 };
 
 async function probeSchema(): Promise<{

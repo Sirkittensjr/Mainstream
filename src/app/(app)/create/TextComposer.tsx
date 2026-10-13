@@ -137,7 +137,7 @@ export function TextComposer({ kind }: { kind: TextKind }) {
         <div data-text-preview>
           <p className="label mb-2">Preview</p>
           <div className="card overflow-hidden py-3">
-            <SpeechBubble kind={kind} title={title} body={body} style={style} />
+            <SpeechBubble kind={kind} title={title} body={body} style={style} linkHashtags={false} />
           </div>
         </div>
       )}

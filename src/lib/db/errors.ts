@@ -53,6 +53,38 @@ export function isMissingColumn(error: unknown, table: string, column: string): 
 }
 
 /**
+ * "A row with that key is already there."
+ *
+ * A unique index refusing an insert is the database enforcing a rule the app
+ * relies on — one counted view per playback session, one hashtag per word —
+ * and is the expected outcome when two identical requests race. It is told
+ * apart from a genuine failure so a caller can treat it as "already done".
+ */
+export class DuplicateRowError extends Error {
+  readonly table: string;
+
+  constructor(table: string, message: string) {
+    super(message);
+    this.name = 'DuplicateRowError';
+    this.table = table;
+  }
+}
+
+/** By name as well as by class, for the reason given at `isMissingRelation`. */
+export function isDuplicateRow(error: unknown): error is DuplicateRowError {
+  if (error instanceof DuplicateRowError) return true;
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { name?: unknown }).name === 'DuplicateRowError' &&
+    typeof (error as { table?: unknown }).table === 'string'
+  );
+}
+
+/** Postgres's unique_violation. */
+const UNIQUE_VIOLATION = '23505';
+
+/**
  * PostgREST's codes for the two cases, plus the underlying Postgres ones for
  * anything that reaches us straight from the database (a trigger, a function).
  *
@@ -62,9 +94,17 @@ export function isMissingColumn(error: unknown, table: string, column: string): 
 const MISSING_TABLE = new Set(['PGRST205', '42P01']);
 const MISSING_COLUMN = new Set(['PGRST204', '42703']);
 
-/** The column PostgREST names in `Could not find the 'x' column of 'y' …`. */
+/**
+ * The column named in PostgREST's `Could not find the 'x' column of 'y' …`, or
+ * in Postgres's own `column "x" does not exist`, which is what a database
+ * function reports.
+ */
 function namedColumn(message: string): string | null {
-  return /could not find the '([^']+)' column/i.exec(message)?.[1] ?? null;
+  return (
+    /could not find the '([^']+)' column/i.exec(message)?.[1] ??
+    /column "(?:[^"]+\.)?([^".]+)"(?: of relation "[^"]+")? does not exist/i.exec(message)?.[1] ??
+    null
+  );
 }
 
 /**
@@ -77,6 +117,7 @@ export function throwQueryError(
 ): never {
   const code = error.code ?? '';
   const text = `[supabase:${table}] ${error.message}`;
+  if (code === UNIQUE_VIOLATION) throw new DuplicateRowError(table, text);
   if (MISSING_TABLE.has(code)) throw new MissingRelationError(table, null, text);
   if (MISSING_COLUMN.has(code)) {
     throw new MissingRelationError(table, namedColumn(error.message), text);
