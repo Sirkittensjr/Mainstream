@@ -21,7 +21,8 @@ const RETRY_DELAYS_MS = [1_000, 4_000];
  * (lib/video/views.ts), which is fed the player's own media events and answers
  * "report now" once per viewing:
  *
- *   playback begins           reported — autoplay included
+ *   playback begins           reported — on `playing`, or the first timeupdate
+ *                             that moves — autoplay included
  *   a re-render               nothing here runs on render
  *   pause and play            the same viewing, already reported
  *   seeking mid-video         the same viewing
@@ -92,6 +93,16 @@ export function useVideoView({
     tracker.current?.play(event.currentTarget.currentTime);
   }, []);
 
+  /** Playback has actually begun: the moment a view is. */
+  const onPlaying = useCallback(
+    (event: { currentTarget: { currentTime: number } }) => {
+      if (!enabled) return;
+      const watch = tracker.current;
+      if (watch?.playing(event.currentTarget.currentTime)) report(watch.sessionKey);
+    },
+    [enabled, report],
+  );
+
   const onTimeUpdate = useCallback(
     (event: { currentTarget: { currentTime: number; paused: boolean } }) => {
       if (!enabled) return;
@@ -112,5 +123,5 @@ export function useVideoView({
   /** Starts a new viewing. Called when a feed moves off this video. */
   const restart = useCallback(() => tracker.current?.restart(), []);
 
-  return { count, onPlay, onTimeUpdate, onEnded, onSeeked, restart };
+  return { count, onPlay, onPlaying, onTimeUpdate, onEnded, onSeeked, restart };
 }

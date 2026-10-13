@@ -235,8 +235,8 @@ describe('watching again is another view', () => {
   });
 });
 
-describe('what is never a view', () => {
-  it('the author watching their own video', async () => {
+describe("the author's own plays", () => {
+  it('count, like anybody else watching', async () => {
     const post = await video();
     const result = await views.recordVideoView({
       postId: post.id,
@@ -245,9 +245,12 @@ describe('what is never a view', () => {
       sessionKey: 'session-iiiiiiii',
       now: T0,
     });
-    assert.equal(result.counted, false);
-    assert.equal(await stored(post.id), 0);
+    assert.deepEqual(result, { count: 1, counted: true });
+    assert.equal(await stored(post.id), 1);
   });
+});
+
+describe('what is never a view', () => {
 
   it('a photo post', async () => {
     const post = await posts.createPost({

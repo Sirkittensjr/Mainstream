@@ -119,3 +119,24 @@ describe('searching for a hashtag', () => {
     assert.equal(hashtagQuery(''), null);
   });
 });
+
+describe('running in every browser FayTarra supports', () => {
+  it('uses no lookbehind, which older iPhones cannot parse', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('./hashtags.ts', import.meta.url), 'utf8');
+    assert.doesNotMatch(source, /\(\?<[=!]/);
+  });
+
+  it('finds hashtags back to back and at the very start', () => {
+    assert.deepEqual(
+      extractHashtags('#one #two,#three\n#four').map((hashtag) => hashtag.tag),
+      ['one', 'two', 'three', 'four'],
+    );
+    const text = '#one #two,#three';
+    assert.equal(splitHashtags(text).map((part) => part.text).join(''), text);
+    assert.deepEqual(
+      splitHashtags(text).filter((part) => part.hashtag).map((part) => part.text),
+      ['#one', '#two', '#three'],
+    );
+  });
+});

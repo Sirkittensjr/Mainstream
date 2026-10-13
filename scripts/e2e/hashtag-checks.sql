@@ -9,8 +9,8 @@
 \set ON_ERROR_STOP 0
 
 insert into auth.users (id, email, raw_user_meta_data) values
-  ('cccccccc-0000-0000-0000-000000000001', 'tags1@example.com', '{"username":"tagcheckone"}'),
-  ('cccccccc-0000-0000-0000-000000000002', 'tags2@example.com', '{"username":"tagchecktwo"}');
+  ('7a990000-0000-0000-0000-000000000001', 'tags1@example.com', '{"username":"tagcheckone"}'),
+  ('7a990000-0000-0000-0000-000000000002', 'tags2@example.com', '{"username":"tagchecktwo"}');
 
 \echo '--- 1. what a hashtag is: the same rules as src/lib/hashtags.ts ---'
 do $$
@@ -39,8 +39,8 @@ end $$;
 
 \echo '--- 2. publishing files a post; editing re-files it; deleting unfiles it ---'
 insert into public.posts (id, author_id, caption, tags) values
-  ('dddddddd-0000-0000-0000-000000000001', 'cccccccc-0000-0000-0000-000000000001', 'first #Gaming #Art', '{}'),
-  ('dddddddd-0000-0000-0000-000000000002', 'cccccccc-0000-0000-0000-000000000002', 'second', '{GAMING}');
+  ('7a99b000-0000-0000-0000-000000000001', '7a990000-0000-0000-0000-000000000001', 'first #Gaming #Art', '{}'),
+  ('7a99b000-0000-0000-0000-000000000002', '7a990000-0000-0000-0000-000000000002', 'second', '{GAMING}');
 
 do $$
 declare
@@ -48,8 +48,8 @@ declare
 begin
   select string_agg(post_id::text, ' ' order by post_id) into got
     from public.post_hashtags
-   where tag = 'gaming' and post_id::text like 'dddddddd-%';
-  if got is distinct from 'dddddddd-0000-0000-0000-000000000001 dddddddd-0000-0000-0000-000000000002' then
+   where tag = 'gaming' and post_id::text like '7a99b000-%';
+  if got is distinct from '7a99b000-0000-0000-0000-000000000001 7a99b000-0000-0000-0000-000000000002' then
     raise exception 'two people, one hashtag page: got %', got;
   end if;
   if (select count(*) from public.hashtags where tag = 'gaming') <> 1 then
@@ -57,13 +57,13 @@ begin
   end if;
 
   update public.posts set caption = 'first #gaming #Music'
-   where id = 'dddddddd-0000-0000-0000-000000000001';
+   where id = '7a99b000-0000-0000-0000-000000000001';
   select string_agg(tag, ' ' order by tag) into got
-    from public.post_hashtags where post_id = 'dddddddd-0000-0000-0000-000000000001';
+    from public.post_hashtags where post_id = '7a99b000-0000-0000-0000-000000000001';
   if got is distinct from 'gaming music' then raise exception 'edit: got %', got; end if;
 
-  delete from public.posts where id = 'dddddddd-0000-0000-0000-000000000002';
-  if exists (select 1 from public.post_hashtags where post_id = 'dddddddd-0000-0000-0000-000000000002') then
+  delete from public.posts where id = '7a99b000-0000-0000-0000-000000000002';
+  if exists (select 1 from public.post_hashtags where post_id = '7a99b000-0000-0000-0000-000000000002') then
     raise exception 'a deleted post is still filed under a hashtag';
   end if;
 end $$;
@@ -71,14 +71,14 @@ end $$;
 \echo '--- 3. counters move in the database, and only counters ---'
 do $$
 begin
-  perform public.increment_counter('posts', 'dddddddd-0000-0000-0000-000000000001', 'video_views', 1);
-  perform public.increment_counter('posts', 'dddddddd-0000-0000-0000-000000000001', 'video_views', 1);
-  if (select video_views from public.posts where id = 'dddddddd-0000-0000-0000-000000000001') <> 2 then
+  perform public.increment_counter('posts', '7a99b000-0000-0000-0000-000000000001', 'video_views', 1);
+  perform public.increment_counter('posts', '7a99b000-0000-0000-0000-000000000001', 'video_views', 1);
+  if (select video_views from public.posts where id = '7a99b000-0000-0000-0000-000000000001') <> 2 then
     raise exception 'increment_counter did not add up';
   end if;
 end $$;
 \echo 'must fail: not a counter'
-select public.increment_counter('users', 'cccccccc-0000-0000-0000-000000000001', 'role', 1);
+select public.increment_counter('users', '7a990000-0000-0000-0000-000000000001', 'role', 1);
 \echo 'must fail: a second row for the same hashtag'
 insert into public.hashtags (tag, display) values ('gaming', 'GAMING');
 
@@ -87,28 +87,28 @@ set role anon;
 \echo 'must fail (x3)'
 select count(*) from public.hashtags;
 select count(*) from public.post_hashtags;
-select public.increment_counter('posts', 'dddddddd-0000-0000-0000-000000000001', 'video_views', 100);
+select public.increment_counter('posts', '7a99b000-0000-0000-0000-000000000001', 'video_views', 100);
 reset role;
 set role authenticated;
 \echo 'must fail (x3)'
 select count(*) from public.hashtags;
 insert into public.post_hashtags (post_id, tag, post_created_at)
-  values ('dddddddd-0000-0000-0000-000000000001', 'gaming', now());
-select public.increment_counter('posts', 'dddddddd-0000-0000-0000-000000000001', 'video_views', 100);
+  values ('7a99b000-0000-0000-0000-000000000001', 'gaming', now());
+select public.increment_counter('posts', '7a99b000-0000-0000-0000-000000000001', 'video_views', 100);
 reset role;
 
 do $$
 begin
-  if (select video_views from public.posts where id = 'dddddddd-0000-0000-0000-000000000001') <> 2 then
+  if (select video_views from public.posts where id = '7a99b000-0000-0000-0000-000000000001') <> 2 then
     raise exception 'an API role moved a counter';
   end if;
 end $$;
 
 -- Clean up.
 delete from public.posts where author_id in (
-  'cccccccc-0000-0000-0000-000000000001', 'cccccccc-0000-0000-0000-000000000002');
+  '7a990000-0000-0000-0000-000000000001', '7a990000-0000-0000-0000-000000000002');
 delete from auth.users where id in (
-  'cccccccc-0000-0000-0000-000000000001', 'cccccccc-0000-0000-0000-000000000002');
+  '7a990000-0000-0000-0000-000000000001', '7a990000-0000-0000-0000-000000000002');
 delete from public.hashtags h
  where not exists (select 1 from public.post_hashtags p where p.tag = h.tag)
    and h.tag in ('gaming', 'art', 'music');

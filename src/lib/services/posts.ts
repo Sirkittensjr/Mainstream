@@ -448,7 +448,7 @@ export async function addComment(
   userId: ID,
   body: string,
   parentId: ID | null = null,
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<{ ok: true; id: ID } | { ok: false; error: string }> {
   const trimmed = body.trim();
   if (!trimmed) return { ok: false, error: 'Write something first.' };
   const store = db();
@@ -470,8 +470,9 @@ export async function addComment(
     return { ok: false, error: 'You cannot reply to this comment.' };
   }
 
+  const id = newId();
   await store.insert('comments', {
-    id: newId(),
+    id,
     post_id: postId,
     user_id: userId,
     parent_id: resolvedParent?.id ?? null,
@@ -513,31 +514,80 @@ export async function addComment(
   }
 
   await notifyMentions(trimmed, userId, `${who} mentioned you in a comment`, postId);
-  return { ok: true };
+  return { ok: true, id };
 }
 
-export async function deleteComment(commentId: ID, userId: ID): Promise<void> {
+/**
+ * Who may delete a comment: whoever wrote it, and whoever owns the post it is
+ * on — their photo, their video, their words. Nobody else, however visible the
+ * post is to them. The one rule both the comment lists (to decide whether to
+ * offer Delete) and `deleteComment` (to decide whether to do it) read.
+ */
+export function canDeleteComment(
+  comment: { user_id: ID },
+  post: { author_id: ID } | null | undefined,
+  userId: ID | null | undefined,
+): boolean {
+  if (!userId) return false;
+  return comment.user_id === userId || post?.author_id === userId;
+}
+
+export type DeleteCommentRefusal = 'not_found' | 'not_allowed' | 'moderated';
+
+export type DeleteCommentResult =
+  | { ok: true; postId: ID; removed: number }
+  | { ok: false; reason: DeleteCommentRefusal };
+
+/**
+ * Deletes a comment, if this person may.
+ *
+ * Decided here from the stored comment and post, never from anything a
+ * request says about them: the comment id is the only input, the post is the
+ * one the comment really belongs to, and a forged post id changes nothing.
+ *
+ * A comment with replies takes them with it. That is what the database's
+ * `parent_id … on delete cascade` does in production; doing it here as well
+ * means every driver agrees and nothing is left replying to a comment that is
+ * gone. A comment a moderator removed stays on record, like a moderated post.
+ */
+export async function deleteComment(commentId: ID, userId: ID): Promise<DeleteCommentResult> {
+  if (typeof commentId !== 'string' || !commentId || typeof userId !== 'string' || !userId) {
+    return { ok: false, reason: 'not_found' };
+  }
   const store = db();
   const comment = await store.get('comments', commentId);
-  if (!comment) return;
+  if (!comment) return { ok: false, reason: 'not_found' };
   const post = await store.get('posts', comment.post_id);
-  if (comment.user_id !== userId && post?.author_id !== userId) return;
-  await store.remove('comments', commentId);
+  if (!canDeleteComment(comment, post, userId)) return { ok: false, reason: 'not_allowed' };
+  if (comment.removed) return { ok: false, reason: 'moderated' };
+
+  const replies = await store.query('comments', { where: { parent_id: comment.id } });
+  for (const reply of replies) await store.remove('comments', reply.id);
+  await store.remove('comments', comment.id);
+  return {
+    ok: true,
+    postId: comment.post_id,
+    // What disappears from view: the comment and its replies still showing.
+    removed: 1 + replies.filter((reply) => !reply.removed).length,
+  };
 }
 
 export interface CommentView {
   comment: { id: ID; body: string; created_at: string; parent_id: ID | null };
   author: PublicUser;
   mine: boolean;
+  /** The viewer wrote it, or owns the post it is on. */
+  canDelete: boolean;
   /** Replies to this comment, oldest first. Only top-level comments carry them. */
   replies: CommentView[];
 }
 
 export async function listComments(postId: ID, viewerId: ID | null): Promise<CommentView[]> {
   const store = db();
-  const [comments, hidden] = await Promise.all([
+  const [comments, hidden, post] = await Promise.all([
     store.query('comments', { where: { post_id: postId, removed: false }, orderBy: 'created_at' }),
     hiddenUserIds(viewerId),
+    store.get('posts', postId),
   ]);
   const visible = comments.filter((c) => !hidden.has(c.user_id));
   if (visible.length === 0) return [];
@@ -556,6 +606,7 @@ export async function listComments(postId: ID, viewerId: ID | null): Promise<Com
       },
       author: toPublicUser(author),
       mine: viewerId === comment.user_id,
+      canDelete: canDeleteComment(comment, post, viewerId),
       replies: [],
     };
   };

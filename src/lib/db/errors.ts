@@ -108,8 +108,9 @@ function namedColumn(message: string): string | null {
 }
 
 /**
- * Turns a PostgREST error into a `MissingRelationError` when that is what it
- * is, and a plain Error otherwise. Always throws.
+ * Turns a PostgREST error into a `MissingRelationError` or a
+ * `DuplicateRowError` when that is what it is, and a plain Error otherwise.
+ * Always throws.
  */
 export function throwQueryError(
   table: string,

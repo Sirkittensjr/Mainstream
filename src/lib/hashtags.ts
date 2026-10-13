@@ -32,8 +32,14 @@ export const MAX_HASHTAGS_PER_POST = 30;
  * Not after a letter, a digit, `_`, `/`, `&` or another `#`: that is the middle
  * of a word (`C#`), a link (`example.com/page#section`), an HTML entity
  * (`&#39;`) or a run of hashes, none of which anybody meant as a tag.
+ *
+ * The character before the `#` is captured (group 1) rather than looked behind
+ * at: this runs in the browser, and older iPhones cannot parse a lookbehind at
+ * all — a pattern they cannot parse breaks every page that ships it. Group 2
+ * is the word. Neither group can contain the other's characters, so matches
+ * never overlap and the result is the same as a lookbehind's.
  */
-const HASHTAG = /(?<![\p{L}\p{N}\p{M}_/&#])#([\p{L}\p{N}\p{M}_]+)/gu;
+const HASHTAG = /(^|[^\p{L}\p{N}\p{M}_/&#])#([\p{L}\p{N}\p{M}_]+)/gu;
 
 /** At least one letter. `#1` and `#31` are numbers, not tags. */
 const HAS_LETTER = /\p{L}/u;
@@ -71,7 +77,7 @@ export function extractHashtags(text: string | null | undefined): Hashtag[] {
   if (!text) return [];
   const found = new Map<string, Hashtag>();
   for (const match of text.normalize('NFKC').matchAll(HASHTAG)) {
-    const hashtag = asHashtag(match[1]);
+    const hashtag = asHashtag(match[2]);
     if (hashtag && !found.has(hashtag.tag)) found.set(hashtag.tag, hashtag);
   }
   return [...found.values()];
@@ -141,11 +147,13 @@ export function splitHashtags(text: string): TextPart[] {
   const parts: TextPart[] = [];
   let last = 0;
   for (const match of text.matchAll(HASHTAG)) {
-    const hashtag = asHashtag(match[1]);
+    const hashtag = asHashtag(match[2]);
     if (!hashtag || match.index === undefined) continue;
-    if (match.index > last) parts.push({ text: text.slice(last, match.index) });
-    parts.push({ text: match[0], hashtag });
-    last = match.index + match[0].length;
+    // The match starts at the character before the `#`, which is not the link.
+    const start = match.index + match[1].length;
+    if (start > last) parts.push({ text: text.slice(last, start) });
+    parts.push({ text: `#${match[2]}`, hashtag });
+    last = start + 1 + match[2].length;
   }
   if (last < text.length) parts.push({ text: text.slice(last) });
   return parts;

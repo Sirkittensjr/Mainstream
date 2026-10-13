@@ -100,6 +100,7 @@ export function VideoPlayer({
           }
         }}
         onPlay={watch.onPlay}
+        onPlaying={watch.onPlaying}
         onTimeUpdate={(event) => {
           watch.onTimeUpdate(event);
           // Drives timed text. `timeupdate` is about four a second, which is as

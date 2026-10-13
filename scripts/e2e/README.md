@@ -18,6 +18,7 @@ psql -d faytarra_test -f scripts/e2e/rls-checks.sql
 psql -d faytarra_test -f scripts/e2e/dm-checks.sql
 psql -d faytarra_test -f scripts/e2e/admin-checks.sql
 psql -d faytarra_test -f scripts/e2e/auto-review-checks.sql
+psql -d faytarra_test -f scripts/e2e/comment-checks.sql
 psql -d faytarra_test -f scripts/e2e/hashtag-checks.sql
 ```
 
@@ -54,6 +55,13 @@ re-run, and a signed-in person holding the anon key cannot make themselves an
 admin, demote the admin, promote anyone else, or read the admin's email — while
 still being able to edit their own bio in the same session. The lines marked
 "must fail" are expected to print an error; that is the check passing.
+
+`comment-checks.sql` proves comment deletion and video views are held by the
+DATABASE too: neither API role can delete, edit, write or read a comment
+directly — not even their own, because the app deletes server-side after
+checking who is asking — deleting a comment removes its replies with it, one
+playback session can only be stored once, a view total cannot go below zero,
+and no API role can read who watched what, write a view or set a total.
 
 `auto-review-checks.sql` proves the automatic ten-report review is enforced by
 the DATABASE and not only by the app: one account cannot report the same thing
@@ -326,6 +334,99 @@ sideways with an EXIF rotation, a 300×200 JPEG and a 600×2400 PNG screenshot.
   quality 90; the post page shows the original file at its full pixel size, and
   tapping it opens that file. Tapping a photo in a list opens the post.
 - **Older posts**: a post with no recorded size still shows its photo whole.
+
+### 3f. Hashtags — `hashtag-flow.mjs`
+
+Hashtags shown on what was published, each one a link, and a page per hashtag
+holding every public post that uses it.
+
+```bash
+npm start &
+OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
+FIXTURES=/tmp/fay-video-fixtures node scripts/e2e/hashtag-flow.mjs
+```
+
+Against an EMPTY store, with the fixtures from `make-video-fixtures.mjs`.
+`SHOTS_DIR=<folder>` keeps phone and desktop screenshots of a hashtag page and
+of search.
+
+- **Shown as posted**: hashtags typed in the video composer (one at a time,
+  Enter after each) and in the photo composer are stored as typed and shown,
+  as links, on the post page, the feed card and the Videos feed slide. A
+  hashtag written in a caption is linked where it is written; the caption
+  itself is unchanged.
+- **One page per hashtag, whatever the case**: every link goes to
+  `/tag/<lower-case>`; `/tag/GAMING…` and `/tag/%23Gaming…` land there too.
+- **The page holds every post using it**: titled with the hashtag as first
+  written, every public video, photo and text post using it — as a tag in any
+  case or in a caption — newest first, videos in the FayTarra player. A video
+  with two hashtags is on both pages; a hashtag only a photo uses is that
+  photo's page; an unused one is an empty page; punctuation is "Nothing here".
+- **Search** finds the hashtag with or without `#` and in any case, with how
+  many public posts use it, opens its page, and lists the posts using it.
+- **Kept current**: a video its author deletes is gone from the page and from
+  the count in search at once.
+- **Phone and desktop, signed out**: links on screen and at least 24px tall,
+  a tap opens the page, and no sideways scroll on the post, hashtag or search
+  page.
+
+### 3f-2. Video views and hashtag pages, read back from the server — `views-hashtags-flow.mjs`
+
+```bash
+npm start &
+OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
+FIXTURES=/tmp/fay-video-fixtures node scripts/e2e/views-hashtags-flow.mjs
+```
+
+Needs `landscape.webm` (four seconds) and `photo.jpg` in the fixtures folder;
+the file's header has the two ffmpeg lines that make them. Works against an
+empty store or the seeded community.
+
+Every view check reads the count back from the server — the API, and the HTML
+each page is rendered with — rather than trusting the number on screen:
+autoplay counts once; scrolling away and back counts again; the loop coming
+round counts again; a refreshed feed, the post page and the creator's profile
+are all rendered with the stored count; pressing play counts, one playback is
+one view however long, playing again after it ended counts, pause and play
+does not; a signed-out visitor counts, and so does the author. Then hashtags:
+one page for every spelling, holding a video, a photo and a text post from two
+people; hashtags in a text post, a photo caption, a video description and a
+video's tags each open their page and never the post; on a card whose caption
+opens the post, the rest of the caption still does; hashtags in comments are
+links; search finds the page for `Gaming`, `#Gaming` and `GAMING` with its
+count; a deleted post leaves the page; a hashtag only typed in an unposted
+draft does not exist; and no page logs an error.
+
+### 3g. Video views and deleting comments — `views-comments-flow.mjs`
+
+```bash
+npm start &
+OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
+FIXTURES=/tmp/fay-video-fixtures node scripts/e2e/views-comments-flow.mjs
+```
+
+Against an EMPTY store, with the fixtures from `make-video-fixtures.mjs`.
+
+**Views — one per playback session, counted when playback starts.** Autoplay in
+the Videos feed counts; pausing and resuming does not; the clip looping round
+counts again; scrolling to the next video counts that one and stops the first;
+scrolling back counts again; opening it again counts again. On the post page a
+player that only rendered counts nothing, pressing play counts, and playing it
+again after it ended counts again. A report whose answer is lost on the way
+back is retried and still counted exactly once. A signed-out visitor counts.
+The count shows on the post page and the profile, on a phone and a desktop,
+matching the server after a refresh.
+
+**Comments — deleted by their author or the post's owner.** On a text post a
+commenter is offered Delete on their own comment and reply and nobody else's;
+deleting asks first, and the reply leaves the page and the count at once. The
+real delete request, replayed with somebody else's comment id — or signed out —
+deletes nothing. The owner of a photo deletes another person's comment; it stays
+gone after a refresh and the card's count agrees. Deleting a comment with a
+reply says the reply goes too, and both go. In the Videos feed the owner deletes
+from the comment sheet and the video's comment count drops; a commenter, on a
+phone and a desktop, is offered Delete only on their own, as a tappable button.
+A delete that fails says so and leaves the comment; trying again works.
 
 ### 4c. Recording on a phone — `mobile-record-flow.mjs`
 
@@ -1363,7 +1464,7 @@ it:
 `video-cover-flow`, `mobile-record-flow`, `multi-clip-flow`, `editor-clip-sync-flow`,
 `desktop-layout-flow`, `profile-appearance-flow`, `messaging-flow`,
 `profile-colours-flow`, `top-creators-flow`, `moderation-flow`, `admin-badge`,
-`text-overlays-flow`, `landing-flow`, `photo-flow` and `social-navigation` create their own
+`text-overlays-flow`, `landing-flow`, `photo-flow`, `hashtag-flow`, `views-comments-flow` and `social-navigation` create their own
 accounts and want an EMPTY store
 (`echo '{}' > .data/faytarra.json`). `signup-form-state`, `logout-flow` and
 `social-flow` sign in as the seeded demo accounts and check against them —

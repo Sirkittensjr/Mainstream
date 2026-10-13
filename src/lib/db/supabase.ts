@@ -232,17 +232,29 @@ class SupabaseDriver implements Driver {
       this.atomicIncrement = false;
       console.warn(
         '[faytarra] This database has no increment_counter function, so counters are ' +
-          'updated by read-then-write, which can lose one of two simultaneous updates. ' +
-          'Run supabase/migrations/0015_hashtags_and_counters.sql to fix that.',
+          'raised by compare-and-set from the app instead. ' +
+          'Run supabase/migrations/0015_hashtags_and_counters.sql to do it in one statement.',
       );
     }
-    // The fallback until the migration is run: read, add, write.
-    const row = await this.get(table, id);
-    if (!row) return null;
-    const current = Number((row as unknown as Record<string, unknown>)[column] ?? 0);
-    const next = (Number.isFinite(current) ? current : 0) + by;
-    await this.update(table, id, { [column]: next } as Partial<Row<T>>);
-    return next;
+    // The fallback until the migration is run: compare-and-set. The write only
+    // lands if the number is still what was read, so of two increments racing,
+    // one wins and the other reads the new number and goes again — nothing is
+    // lost, and nothing is written that a read did not see.
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const row = await this.get(table, id);
+      if (!row) return null;
+      const stored = (row as unknown as Record<string, unknown>)[column];
+      const current = typeof stored === 'number' ? stored : null;
+      const changed = await this.updateWhere(
+        table,
+        { id, [column]: current } as Partial<Row<T>>,
+        { [column]: (current ?? 0) + by } as Partial<Row<T>>,
+      );
+      if (changed > 0) return (current ?? 0) + by;
+      // A short, uneven pause, so a crowd of these does not retry in step.
+      await new Promise((resolve) => setTimeout(resolve, 2 + Math.floor(Math.random() * 8)));
+    }
+    throw new Error(`[supabase:${table}] ${column} on ${id} could not be raised: too much contention`);
   }
 
   async clear() {

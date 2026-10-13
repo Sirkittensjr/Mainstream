@@ -166,6 +166,27 @@ describe('a player counting its own viewings', () => {
     assert.deepEqual(video.reports, ['session-1', 'session-2']);
   });
 
+  it('reports on `playing`, before any timeupdate, and only once', () => {
+    const video = player();
+    video.tracker.play(0);
+    assert.equal(video.tracker.playing(0), true, 'the moment playback starts');
+    const key = video.tracker.sessionKey;
+    // A stall and resume, or a pause and play, fires `playing` again.
+    assert.equal(video.tracker.playing(1.2), false);
+    video.play(2, 1.2);
+    assert.deepEqual(video.reports, [], 'the timeupdates after it add nothing');
+    assert.equal(video.tracker.sessionKey, key);
+  });
+
+  it('reports on `playing` again for a new viewing', () => {
+    const video = player(4);
+    video.tracker.play(0);
+    assert.equal(video.tracker.playing(0), true);
+    video.end();
+    video.tracker.play(0);
+    assert.equal(video.tracker.playing(0), true, 'played again after it ended');
+  });
+
   it('keeps one session key for one viewing', () => {
     const video = player();
     const before = video.tracker.sessionKey;
@@ -235,8 +256,7 @@ describe('the cooldown', () => {
 
 describe('the server-side decision', () => {
   const base = (over: Partial<ViewDecision> = {}): ViewDecision => ({
-    post: { authorId: 'author', removed: false, hasVideo: true },
-    viewerId: 'watcher',
+    post: { removed: false, hasVideo: true },
     identity: 'watcher',
     dedupeKey: dedupeKey('post', 'watcher', 'session-one'),
     recent: [],
@@ -250,14 +270,14 @@ describe('the server-side decision', () => {
 
   it('counts a visitor nobody has signed in, by their browser', () => {
     assert.equal(
-      decideView(base({ viewerId: null, identity: 'anon:browser-1' })),
+      decideView(base({ identity: 'anon:browser-1' })),
       'count',
     );
   });
 
   it('counts nothing for a post with no video on it', () => {
     assert.equal(
-      decideView(base({ post: { authorId: 'author', removed: false, hasVideo: false } })),
+      decideView(base({ post: { removed: false, hasVideo: false } })),
       'not-a-video',
     );
   });
@@ -265,13 +285,13 @@ describe('the server-side decision', () => {
   it('counts nothing for a missing or removed post', () => {
     assert.equal(decideView(base({ post: null })), 'no-post');
     assert.equal(
-      decideView(base({ post: { authorId: 'author', removed: true, hasVideo: true } })),
+      decideView(base({ post: { removed: true, hasVideo: true } })),
       'no-post',
     );
   });
 
-  it('does not count the author watching their own video back', () => {
-    assert.equal(decideView(base({ viewerId: 'author', identity: 'author' })), 'own-video');
+  it("counts the author's own plays, like anybody else's", () => {
+    assert.equal(decideView(base({ identity: 'author' })), 'count');
   });
 
   it('counts one playback session once, however many times it is reported', () => {
@@ -327,12 +347,12 @@ describe('the server-side decision', () => {
     const now = Date.UTC(2026, 9, 1, 12, 0, 0);
     // Somebody else's view a second ago is not this person's cooldown: the
     // recent rows handed in are this identity's own.
-    assert.equal(decideView(base({ now, identity: 'someone-else', viewerId: 'someone-else' })), 'count');
+    assert.equal(decideView(base({ now, identity: 'someone-else' })), 'count');
   });
 
   it('counts nothing on a post hidden while it is reviewed', () => {
     assert.equal(
-      decideView(base({ post: { authorId: 'author', removed: false, hasVideo: true, hidden: true } })),
+      decideView(base({ post: { removed: false, hasVideo: true, hidden: true } })),
       'no-post',
     );
   });
@@ -362,6 +382,6 @@ describe('the server-side decision', () => {
   });
 
   it('counts nothing when there is no way to tell who watched', () => {
-    assert.equal(decideView(base({ viewerId: null, identity: null })), 'unknown-viewer');
+    assert.equal(decideView(base({ identity: null })), 'unknown-viewer');
   });
 });

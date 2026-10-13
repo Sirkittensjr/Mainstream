@@ -104,7 +104,9 @@ export function playedSince(previous: number, current: number): number {
  * The rules for when a viewing starts and when it has been watched, kept out
  * of React so they can be tested as the events a real player fires:
  *
- *   playback begins           the viewing is reported, once
+ *   playback begins           the viewing is reported, once — on `playing`,
+ *                             or the first timeupdate that moves, whichever
+ *                             comes first
  *   pause and play            the same viewing, nothing new
  *   a re-render               nothing here runs on render
  *   a burst of timeupdates    reported once; every one after is ignored
@@ -120,8 +122,14 @@ export function playedSince(previous: number, current: number): number {
 export interface ViewTracker {
   /** The key of the viewing in progress. One per viewing, made on demand. */
   readonly sessionKey: string;
-  /** Playback started, or resumed, at this playhead. */
+  /** Playback was asked for, or resumed, at this playhead. */
   play(at: number): void;
+  /**
+   * The browser says playback has actually begun (`playing`). True when this
+   * viewing should be reported now — the earliest honest moment a view is.
+   * After a stall, or a pause and play, it is the same viewing: false.
+   */
+  playing(at: number): boolean;
   /** A timeupdate. True when this viewing should be reported now. */
   timeUpdate(at: number, paused: boolean): boolean;
   /** A seek finished at this playhead. */
@@ -170,6 +178,13 @@ export function createViewTracker({
     play(at) {
       key();
       lastAt = at;
+    },
+    playing(at) {
+      key();
+      lastAt = at;
+      if (reported) return false;
+      reported = true;
+      return true;
     },
     timeUpdate(at, paused) {
       // A loop that wraps without a seek event still lands back at the start.
@@ -263,8 +278,6 @@ export type ViewVerdict =
   | 'no-post'
   /** A photo or a text post. There is nothing to play, so there is nothing to count. */
   | 'not-a-video'
-  /** The author watching their own video back. */
-  | 'own-video'
   /** Nothing to deduplicate on: no account, and nowhere to keep a browser id. */
   | 'unknown-viewer'
   /** This playback session has already been counted. */
@@ -275,8 +288,7 @@ export type ViewVerdict =
   | 'hourly-limit';
 
 export interface ViewDecision {
-  post: { authorId: string; removed: boolean; hasVideo: boolean; hidden?: boolean } | null;
-  viewerId: string | null;
+  post: { removed: boolean; hasVideo: boolean; hidden?: boolean } | null;
   /** Account id, or `anon:<browser id>`. Null when neither is known. */
   identity: string | null;
   /** The key this request would be stored under. */
@@ -298,16 +310,16 @@ export interface ViewDecision {
  *
  * Every rule that decides a view lives here, in one pure function, so the ones
  * that matter most can be stated as tests rather than as comments: a photo
- * never gets a video view, an author is not their own audience, one playback
- * session counts once however many times it is reported, and no identity can
- * count twice inside the cooldown however many session keys it invents.
+ * never gets a video view, one playback session counts once however many
+ * times it is reported, and no identity can count twice inside the cooldown
+ * however many session keys it invents. Every playback counts, the author's
+ * own included.
  */
 export function decideView(input: ViewDecision): ViewVerdict {
-  const { post, viewerId, identity, dedupeKey: key, recent } = input;
+  const { post, identity, dedupeKey: key, recent } = input;
   const now = input.now ?? Date.now();
   if (!post || post.removed || post.hidden) return 'no-post';
   if (!post.hasVideo) return 'not-a-video';
-  if (viewerId && post.authorId === viewerId) return 'own-video';
   if (!identity) return 'unknown-viewer';
   if (input.sessionCounted || recent.some((row) => row.dedupe_key === key)) {
     return 'duplicate-session';

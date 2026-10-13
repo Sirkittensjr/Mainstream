@@ -14,6 +14,8 @@ export interface CommentItem {
   body: string;
   createdAt: string;
   mine: boolean;
+  /** The viewer wrote it, or owns the post it is on. Decided by the server. */
+  canDelete: boolean;
   author: { username: string; displayName: string; avatarUrl: string | null; isAdmin?: boolean };
   replies: CommentItem[];
 }
@@ -38,11 +40,20 @@ export function CommentThread({
   viewer: CommentViewer | null;
 }) {
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Comments deleted from this page, gone from it at once — before the page
+   * comes back from the server without them.
+   */
+  const [gone, setGone] = useState<ReadonlySet<string>>(() => new Set());
+  const shown = comments
+    .filter((comment) => !gone.has(comment.id))
+    .map((comment) => ({ ...comment, replies: comment.replies.filter((reply) => !gone.has(reply.id)) }));
+  const onRemoved = (id: string) => setGone((current) => new Set(current).add(id));
 
   return (
     <section id="comments" className="card p-5">
       <h2 className="font-display text-lg font-bold">
-        Comments <span className="text-white/30">{countAll(comments)}</span>
+        Comments <span className="text-white/30" data-comment-count>{countAll(shown)}</span>
       </h2>
 
       {viewer ? (
@@ -69,16 +80,17 @@ export function CommentThread({
       )}
 
       <ul className="mt-6 space-y-5">
-        {comments.map((comment) => (
+        {shown.map((comment) => (
           <CommentRow
             key={comment.id}
             comment={comment}
             postId={postId}
             viewer={viewer}
             onError={setError}
+            onRemoved={onRemoved}
           />
         ))}
-        {comments.length === 0 && (
+        {shown.length === 0 && (
           <li className="py-4 text-sm text-white/35">
             No comments yet. First one always means the most.
           </li>
@@ -93,11 +105,13 @@ function CommentRow({
   postId,
   viewer,
   onError,
+  onRemoved,
 }: {
   comment: CommentItem;
   postId: string;
   viewer: CommentViewer | null;
   onError: (message: string | null) => void;
+  onRemoved: (id: string) => void;
 }) {
   const [replying, setReplying] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -105,7 +119,7 @@ function CommentRow({
   const router = useRouter();
 
   return (
-    <li className="flex gap-3">
+    <li className="flex gap-3" data-comment-id={comment.id}>
       <Avatar
         username={comment.author.username}
         displayName={comment.author.displayName}
@@ -140,12 +154,18 @@ function CommentRow({
               {replying ? 'Cancel' : 'Reply'}
             </button>
           )}
-          {comment.mine &&
+          {/* Its author, and the owner of the post, may delete it. The server
+              decides both, here and again when it is asked to. */}
+          {comment.canDelete &&
             (confirmingDelete ? (
               // A comment cannot be brought back, and Delete sat a few pixels
               // from Reply — so the first tap asks.
-              <span className="flex items-center gap-1 text-xs" data-comment-confirm-delete>
-                <span className="text-white/55">Delete this comment?</span>
+              <span className="flex flex-wrap items-center gap-1 text-xs" data-comment-confirm-delete>
+                <span className="text-white/55">
+                  {comment.replies.length > 0
+                    ? `Delete this comment and its ${comment.replies.length === 1 ? 'reply' : `${comment.replies.length} replies`}?`
+                    : 'Delete this comment?'}
+                </span>
                 <button
                   type="button"
                   onClick={() => setConfirmingDelete(false)}
@@ -156,10 +176,17 @@ function CommentRow({
                 <button
                   type="button"
                   disabled={pending}
+                  data-comment-delete-confirm
                   onClick={() =>
                     startTransition(async () => {
-                      await deleteCommentAction(comment.id, postId);
+                      onError(null);
+                      const result = await deleteCommentAction(comment.id).catch(() => null);
                       setConfirmingDelete(false);
+                      if (!result || !result.ok) {
+                        onError(result?.error ?? 'That comment could not be deleted. Try again.');
+                        return;
+                      }
+                      onRemoved(comment.id);
                       router.refresh();
                     })
                   }
@@ -201,6 +228,7 @@ function CommentRow({
                 postId={postId}
                 viewer={viewer}
                 onError={onError}
+                onRemoved={onRemoved}
               />
             ))}
           </ul>

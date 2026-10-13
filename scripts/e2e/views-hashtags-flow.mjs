@@ -113,10 +113,8 @@ async function serverViews(context, postId) {
 /** The view count a page was RENDERED with, before any script ran. */
 async function renderedViews(context, url) {
   const html = await (await context.request.get(url)).text();
-  const match =
-    /data-video-views[^>]*?(?:aria-label|title)="([\d,]+) views?"/.exec(html) ??
-    /(?:aria-label|title)="([\d,]+) views?"[^>]*?data-video-views/.exec(html);
-  return match ? Number(match[1].replace(/,/g, '')) : null;
+  const match = /data-video-views="(\d+)"/.exec(html);
+  return match ? Number(match[1]) : null;
 }
 
 /** Waits until the server's count reaches `want`, or gives up and returns what it is. */
@@ -172,15 +170,15 @@ const run = async () => {
   let now = await viewsReach(C.context, video, 1);
   check('autoplay counts one view, in the database', now === 1, String(now));
   await C.page.waitForFunction(
-    () => document.querySelector('section[data-index="0"] [data-video-views]')?.textContent?.trim() === '1',
+    () => document.querySelector('section[data-index="0"] [data-video-views]')?.getAttribute('data-video-views') === '1',
     undefined,
     { timeout: 8000 },
   ).catch(() => undefined);
   const shown = await C.page
     .locator('section[data-index="0"] [data-video-views]')
-    .innerText()
+    .getAttribute('data-video-views')
     .catch(() => '');
-  check('the feed shows it straight away', shown.trim() === '1', shown);
+  check('the feed shows it straight away', shown === '1', String(shown));
 
   section('VIEWS — scrolling away and back');
   const slides = await C.page.locator('section[data-index]').count();
@@ -237,13 +235,13 @@ const run = async () => {
   now = await viewsReach(C.context, video, saved + 1);
   check('pressing play is a view', now === saved + 1, String(now));
   await C.page.waitForFunction(
-    (want) => document.querySelector('article [data-video-views]')?.textContent?.trim() === String(want),
+    (want) => document.querySelector('article [data-video-views]')?.getAttribute('data-video-views') === String(want),
     saved + 1,
     { timeout: 8000 },
   ).catch(() => undefined);
   check(
     'and the card shows it straight away',
-    (await C.page.locator('article [data-video-views]').innerText()).trim() === String(saved + 1),
+    (await C.page.locator('article [data-video-views]').getAttribute('data-video-views')) === String(saved + 1),
   );
   // Let it play to the end: one playback, however long, is one view.
   await player.evaluate((element) => new Promise((resolve) => {
@@ -274,8 +272,8 @@ const run = async () => {
     element.muted = true;
     return element.play();
   });
-  await sleep(2500);
-  check('is not a view', (await serverViews(A.context, video)) === before);
+  now = await viewsReach(A.context, video, before + 1);
+  check('counts, like anybody watching', now === before + 1, `${before} → ${now}`);
 
   /* =============================== hashtags ============================= */
   section('HASHTAGS — one page per hashtag');

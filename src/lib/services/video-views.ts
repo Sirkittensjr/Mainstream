@@ -17,9 +17,8 @@ import { serially } from './serial';
  * The authoritative number lives in `posts.video_views` and is written here and
  * nowhere else. A browser's part in this is one sentence — "this playback
  * session watched post X, and here is its session key" — and even that is
- * checked rather than believed: the post has to exist, carry a video, and not
- * belong to the person watching it; the session key has to be one that has not
- * been counted; and the same person cannot count twice on the same video
+ * checked rather than believed: the post has to exist and carry a video; the
+ * session key has to be one that has not been counted; and the same person cannot count twice on the same video
  * inside the cooldown however many session keys they invent.
  *
  * No count ever comes from the client, and the client is never told anything
@@ -91,8 +90,6 @@ export async function recordVideoView(request: ViewRequest): Promise<ViewResult>
   // A photo or a text post has nothing to play, so it has no video views. The
   // `views` counter it has always had is a different number and is untouched.
   if (!hasVideo(post.media)) return { count: 0, counted: false };
-  // Watching your own video back while editing the caption is not an audience.
-  if (viewerId && post.author_id === viewerId) return { count, counted: false };
   // Hidden while it is reviewed: only its author and moderators can see it,
   // and a moderator looking at it is not an audience either.
   if (underReview(post)) return { count, counted: false };
@@ -129,8 +126,7 @@ export async function recordVideoView(request: ViewRequest): Promise<ViewResult>
       // inside the cooldown or past the hourly ceiling, whatever session key
       // arrived — the half of the defence that does not trust the client.
       const verdict = decideView({
-        post: { authorId: post.author_id, removed: post.removed, hasVideo: true },
-        viewerId,
+        post: { removed: post.removed, hasVideo: true },
         identity,
         dedupeKey: key,
         sessionCounted: already.length > 0,
