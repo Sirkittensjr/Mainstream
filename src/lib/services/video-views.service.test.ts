@@ -178,7 +178,7 @@ describe('one playback session is one view', () => {
       now: T0 + 10 * 60_000,
     });
     assert.equal(first.counted, true);
-    assert.deepEqual(again, { count: 1, counted: false });
+    assert.deepEqual(again, { count: 1, counted: false, reason: 'duplicate-session' });
     assert.equal(await stored(post.id), 1);
   });
 });
@@ -209,7 +209,9 @@ describe('watching again is another view', () => {
           viewerId: watcher.id,
           browserId: null,
           sessionKey: `burst-key-${i}-xxxxxx`,
-          now: T0 + i * 100,
+          // All inside the gap between two views: no person starts the same
+          // video five times in a fifth of a second.
+          now: T0 + i * 40,
         }),
       );
     }
@@ -267,7 +269,7 @@ describe('what is never a view', () => {
       sessionKey: 'session-jjjjjjjj',
       now: T0,
     });
-    assert.deepEqual(result, { count: 0, counted: false });
+    assert.deepEqual(result, { count: 0, counted: false, reason: 'not-a-video' });
   });
 
   it('a removed post, or one hidden while it is reviewed', async () => {
@@ -287,7 +289,85 @@ describe('what is never a view', () => {
         now: T0,
       });
       assert.equal(result.counted, false);
+      assert.equal(result.reason, 'no-post');
       assert.equal(await stored(post.id), 0);
     }
+  });
+});
+
+describe('the views that used to be lost', () => {
+  it('counts a glance, a swipe on and a swipe straight back: two views under a second apart', async () => {
+    const post = await video();
+    const glance = await views.recordVideoView({
+      postId: post.id,
+      viewerId: watcher.id,
+      browserId: null,
+      sessionKey: 'session-glance-1',
+      now: T0,
+    });
+    const back = await views.recordVideoView({
+      postId: post.id,
+      viewerId: watcher.id,
+      browserId: null,
+      sessionKey: 'session-back-22',
+      now: T0 + 700,
+    });
+    assert.equal(glance.counted, true);
+    assert.deepEqual(back, { count: 2, counted: true });
+    assert.equal(await stored(post.id), 2);
+  });
+
+  it('stores nothing when the write fails, so the retry of the same report counts it', async () => {
+    const post = await video();
+    const report = () =>
+      views.recordVideoView({
+        postId: post.id,
+        viewerId: watcher.id,
+        browserId: null,
+        sessionKey: 'session-retry-1',
+        now: T0,
+      });
+    const refuse = mock.method(store, 'recordView', async () => {
+      throw new Error('[supabase:video_views] canceling statement due to statement timeout');
+    });
+    const quiet = mock.method(console, 'error', () => undefined);
+    await assert.rejects(report(), /statement timeout/);
+    refuse.mock.restore();
+    quiet.mock.restore();
+
+    assert.equal((await store.query('video_views', { where: { post_id: post.id } })).length, 0);
+    // The player's retry: the same playback session, so the same key.
+    assert.deepEqual(await report(), { count: 1, counted: true });
+    assert.deepEqual(await report(), { count: 1, counted: false, reason: 'duplicate-session' });
+    assert.equal(await stored(post.id), 1);
+  });
+
+  it('switches off loudly without its storage, and back on once it is there — no restart', async () => {
+    const post = await video();
+    const { MissingRelationError } = await import('@/lib/db');
+    const original = store.query.bind(store);
+    const missing = mock.method(store, 'query', async (table: string, options?: object) => {
+      if (table === 'video_views') {
+        throw new MissingRelationError('video_views', null, 'relation "public.video_views" does not exist');
+      }
+      return original(table as never, options as never);
+    });
+    const logged = mock.method(console, 'error', () => undefined);
+    const report = (key: string, now: number) =>
+      views.recordVideoView({ postId: post.id, viewerId: watcher.id, browserId: null, sessionKey: key, now });
+
+    assert.deepEqual(await report('session-off-0001', T0), { count: 0, counted: false, reason: 'unavailable' });
+    assert.equal(logged.mock.callCount(), 1, 'said so, in the server log');
+    assert.match(String(logged.mock.calls[0].arguments[0]), /NOT being counted.*0010/);
+
+    // The migration is applied. Within the recheck window this server still
+    // waits, rather than asking the database on every play…
+    missing.mock.restore();
+    logged.mock.restore();
+    assert.equal((await report('session-off-0002', T0 + 1_000)).reason, 'unavailable');
+    // …and once it is up, counts again. Nothing was restarted.
+    const back = await report('session-off-0003', T0 + views.STORAGE_RECHECK_MS + 1);
+    assert.deepEqual(back, { count: 1, counted: true });
+    assert.equal(await stored(post.id), 1);
   });
 });

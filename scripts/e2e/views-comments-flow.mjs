@@ -203,7 +203,8 @@ async function run() {
   let attempts = 0;
   await page.route('**/*', async (route) => {
     const request = route.request();
-    if (request.method() === 'POST' && request.headers()['next-action'] && (request.postData() ?? '').includes(x2)) {
+    // A view report: POST /api/v1/posts/<id>/views (see lib/video/view-reports.ts).
+    if (request.method() === 'POST' && request.url().endsWith(`/api/v1/posts/${x2}/views`)) {
       attempts += 1;
       if (attempts === 1) {
         // The server counts it, and the answer is lost on the way back.

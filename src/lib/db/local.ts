@@ -268,6 +268,25 @@ class LocalDriver implements Driver {
     return next;
   }
 
+  async recordView(view: Row<'video_views'>) {
+    const store = await this.load();
+    const index = store.posts.findIndex((post) => post.id === view.post_id);
+    if (index === -1) return { counted: false, total: null };
+    const stored = Number(store.posts[index].video_views ?? 0);
+    const current = Number.isFinite(stored) ? stored : 0;
+    // The unique index on dedupe_key, as the database has it: one row per
+    // playback session, and a second copy of the same report counts nothing.
+    if (store.video_views.some((row) => row.dedupe_key === view.dedupe_key)) {
+      return { counted: false, total: current };
+    }
+    // Synchronous from the check to both writes, so nothing else in this
+    // process lands in between: the row and the total move together.
+    store.video_views.push(structuredClone(view));
+    store.posts[index] = { ...store.posts[index], video_views: current + 1 };
+    await this.flush();
+    return { counted: true, total: current + 1 };
+  }
+
   async clear() {
     this.store = structuredClone(EMPTY);
     await this.flush();

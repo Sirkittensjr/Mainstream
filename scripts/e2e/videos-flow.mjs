@@ -108,6 +108,17 @@ async function scrollToSlide(page, index) {
   await page.waitForTimeout(1500);
 }
 
+/**
+ * What each slide says: its label — the author and caption, which every slide
+ * carries — and whatever text it draws. Slides away from the one on screen are
+ * only their poster, so their words are in the label, not on the page.
+ */
+async function slideTexts(page) {
+  return page
+    .locator('section[data-index]')
+    .evaluateAll((sections) => sections.map((section) => `${section.getAttribute('aria-label') ?? ''}\n${section.innerText}`));
+}
+
 const run = async () => {
   const browser = await chromium.launch({
     ...(CHROMIUM ? { executablePath: CHROMIUM } : {}),
@@ -152,10 +163,21 @@ const run = async () => {
   let found = false;
   for (let attempt = 0; attempt < 12 && !found; attempt += 1) {
     await A.page.goto(`/search?q=vertical${stamp}`, { waitUntil: 'domcontentloaded' });
-    found = (await A.page.locator('body').innerText()).includes(`tall clip ${stamp}`);
+    // The results stream in behind the page's loading skeleton, and can be
+    // revealed a moment after DOMContentLoaded: wait for them, briefly.
+    found = await A.page
+      .waitForFunction((text) => document.body.innerText.includes(text), `tall clip ${stamp}`, {
+        timeout: 3000,
+      })
+      .then(() => true)
+      .catch(() => false);
     if (!found) await A.page.waitForTimeout(5000);
   }
-  check('T. the tag is stored and searchable', found);
+  check(
+    'T. the tag is stored and searchable',
+    found,
+    found ? '' : (await A.page.locator('body').innerText()).replace(/\s+/g, ' ').slice(0, 300),
+  );
 
   await A.page.goto('/create/video?upload=1', { waitUntil: 'domcontentloaded' });
   // The video route, which replaced the Create page's Post/Video toggle.
@@ -201,7 +223,7 @@ const run = async () => {
   await C.page.waitForSelector('section[data-index]', { timeout: 20000 });
   const slides = await C.page.locator('section[data-index]').count();
   check('1. the Videos feed shows every video post', slides === 4, `${slides} slides`);
-  const allText = await C.page.locator('section[data-index]').allInnerTexts();
+  const allText = await slideTexts(C.page);
   check('2. and nothing that is not a video', !allText.join(' ').includes(textCaption));
 
   const first = await players(C.page);
@@ -427,7 +449,11 @@ const run = async () => {
   await C.page.waitForSelector('section[data-index]');
   const commentRequests = [];
   C.page.on('request', (request) => {
-    if (/\/api\/v1\/posts\//.test(request.url())) commentRequests.push(request.url());
+    // A comment fetch is a GET of the post itself; the view reports the
+    // player sends (POST …/views) are not comments.
+    if (request.method() === 'GET' && /\/api\/v1\/posts\/[^/?]+(\?|$)/.test(request.url())) {
+      commentRequests.push(request.url());
+    }
   });
   await C.page.waitForTimeout(1500);
   check('14. no comments are fetched until somebody asks', commentRequests.length === 0);
@@ -460,7 +486,7 @@ const run = async () => {
 
   await C.page.goto('/videos', { waitUntil: 'domcontentloaded' });
   await C.page.waitForSelector('section[data-index]');
-  const orderNow = await C.page.locator('section[data-index]').allInnerTexts();
+  const orderNow = await slideTexts(C.page);
   check(
     '14. the video with engagement leads, though it is not the newest',
     orderNow[0].includes(topCaption.split('\n').find((line) => line.includes(stamp)) ?? topCaption),
@@ -475,7 +501,7 @@ const run = async () => {
   const brandNew = await postVideo(D.page, 'tiny.webm', `nobody has seen this ${stamp}`, 'Comedy');
   await C.page.goto('/videos', { waitUntil: 'domcontentloaded' });
   await C.page.waitForSelector('section[data-index]');
-  const withNew = await C.page.locator('section[data-index]').allInnerTexts();
+  const withNew = await slideTexts(C.page);
   check(
     '15. a video with no likes, no ratings and no followers still gets shown',
     withNew.join(' ').includes(`nobody has seen this ${stamp}`),
@@ -509,7 +535,7 @@ const run = async () => {
   await C.page.waitForTimeout(2000);
   await C.page.goto('/videos', { waitUntil: 'domcontentloaded' });
   await C.page.waitForTimeout(800);
-  const afterBlock = (await C.page.locator('section[data-index]').allInnerTexts()).join(' ');
+  const afterBlock = (await slideTexts(C.page)).join(' ');
   check('17. a blocked account’s videos are gone from the feed', !afterBlock.includes(`wide clip ${stamp}`));
   check('17. and everybody else is still there', afterBlock.includes(`tall clip ${stamp}`));
 

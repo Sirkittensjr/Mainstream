@@ -15,8 +15,8 @@ has never been installed.
 
 | Row 1 says | Run |
 | --- | --- |
-| `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including every migration — `0015` included. |
-| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`, `0006`, `0007`, `0008`, `0009`, `0010`, `0011`, `0012`, `0013`, `0014` and `0015`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
+| `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including every migration — `0016` included. |
+| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`, `0006`, `0007`, `0008`, `0009`, `0010`, `0011`, `0012`, `0013`, `0014`, `0015` and `0016`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
 | anything between | Stop and ask. A half-installed schema needs looking at, not a migration. |
 
 If the storage bucket row shows `none`, create it in the dashboard
@@ -544,3 +544,52 @@ search all work, reading every visible post instead of the index, and video
 views are still counted, by read-then-write. `/api/health` lists `hashtags`
 and `post_hashtags` under `schema.missingTables` until it has been run, and the
 server log says once that the index and the atomic counter are off.
+
+## 0016_record_video_view.sql
+
+A counted video view and its post's total, stored in one step — and the views
+that were lost before it, added back. Needs `0010` and `0015`; stops before
+changing anything if either is missing. Safe to run twice.
+
+**Why.** A view is two writes: a row in `video_views` (the record that this
+playback session has been counted, which is what stops a retry or a scroll back
+counting twice) and `+1` on `posts.video_views` (the number on the eye). The app
+made them as two separate requests. When the second failed — a permission, a
+timeout — the first had already happened, so the player's retry of the same
+report found the row and was told "already counted": that view was never added
+to the total, and nothing could ever repair it. A video could be watched and
+stay at 0.
+
+| Step | Statement | What it touches | Risk |
+| --- | --- | --- | --- |
+| 0 | Checks `video_views`, `posts.video_views` and `increment_counter` exist, and stops if not | Nothing — read only | **None** |
+| 1 | `create or replace function record_video_view(…)` | Adds a function | None. Inserts the view row (`on conflict (dedupe_key) do nothing`) and raises the total in the same transaction: both, or neither |
+| 2 | `revoke` from `public`, `anon`, `authenticated`; `grant execute … to service_role` on it and on `increment_counter` | Permissions only | None. The app's role is granted by name rather than through the project's default privileges; the API roles can call neither |
+| 3 | Repair: `update posts set video_views = <number of view rows>` where a post has more view rows than its total | **Raises** `posts.video_views` on posts that lost views | Low. Only ever raises a total, to the number of views actually stored for that post; a total already higher (seeded data) is left alone. Running it again changes nothing |
+
+Before running it, see what step 3 would change (read only):
+
+```sql
+select count(*) as posts, coalesce(sum(c.n - p.video_views), 0) as views_to_add
+  from public.posts p
+  join (select post_id, count(*) as n from public.video_views group by post_id) c on c.post_id = p.id
+ where p.video_views < c.n;
+```
+
+[`../inspect-views.sql`](../inspect-views.sql) is the read-only check for the
+whole view counter: whether the storage is there, whether the app's role may
+call both functions, whether reports are reaching the database, and how many
+views are stored but missing from their totals.
+
+**Not running it** loses no more views: until the app finds the function, it
+stores the row, raises the total, and takes the row back out if raising the
+total fails, so a retry still counts. `record_video_view` is looked for again
+every five minutes; no restart is needed once it is applied.
+
+Rollback, if ever wanted (the repaired totals stay — they are views that
+happened):
+
+```sql
+drop function if exists public.record_video_view(uuid, uuid, uuid, text, text, timestamptz);
+```
+
