@@ -84,9 +84,9 @@ async function postVideo(page, file, title, category, { description = '', tags =
 }
 
 /** What every player on the page is doing right now. */
-// The players with something to play. Every slide keeps one <video> element for
-// as long as the feed is open (Safari readies each for sound once), but only the
-// slide on screen and its neighbours give it a source; the rest hold nothing.
+// The players with something to play: the slide on screen and its neighbours.
+// After a tap for sound every slide keeps a <video> element (Safari readies each
+// for sound once), but only those nearby give it a source; the rest hold nothing.
 const players = (page) =>
   page.evaluate(() =>
     [...document.querySelectorAll('section[data-index] video[src]')].map((video) => ({

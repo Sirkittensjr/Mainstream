@@ -223,34 +223,80 @@ function chromeMediaRules() {
 }
 
 /**
- * What actually happened in the page, per post: every real playback start
- * (`playing` on an element that is playing), and every time a looping clip
- * came round (its seek back to the start while playing).
+ * What actually happened in the page, per post, from the raw media events —
+ * worked out here, independently of the app's own tracker:
+ *
+ *   a start  playback beginning on an element that was fresh: never played,
+ *            rewound to the start while stopped (what the feed does to a
+ *            slide it leaves), played to the end, or emptied of its source.
+ *            Not a resume after a pause, and not recovering from a stall.
+ *   a loop   a looping clip coming round: back to the start while playing,
+ *            after getting at least a second in. Not the late `seeked` of a
+ *            rewind that lands once the slide is playing again.
  */
 function countStarts() {
   window.__starts = {};
   window.__loops = {};
+  const state = new WeakMap();
+  const of = (video) => {
+    let entry = state.get(video);
+    if (!entry) state.set(video, (entry = { fresh: true, furthest: 0 }));
+    return entry;
+  };
   const postOf = (video) => video.closest('[data-post-id]')?.getAttribute('data-post-id');
-  document.addEventListener(
-    'playing',
-    (event) => {
-      const video = event.target;
-      if (!(video instanceof HTMLVideoElement) || video.paused) return;
-      const id = postOf(video);
-      if (id) window.__starts[id] = (window.__starts[id] ?? 0) + 1;
-    },
-    true,
-  );
-  document.addEventListener(
-    'seeked',
-    (event) => {
-      const video = event.target;
-      if (!(video instanceof HTMLVideoElement) || !video.loop || video.paused || video.currentTime > 0.5) return;
-      const id = postOf(video);
-      if (id) window.__loops[id] = (window.__loops[id] ?? 0) + 1;
-    },
-    true,
-  );
+  const count = (kind, video) => {
+    const id = postOf(video);
+    if (id) window[kind][id] = (window[kind][id] ?? 0) + 1;
+  };
+  const on = (type, handle) =>
+    document.addEventListener(
+      type,
+      (event) => {
+        if (event.target instanceof HTMLVideoElement) handle(event.target, of(event.target));
+      },
+      true,
+    );
+  on('playing', (video, entry) => {
+    if (video.paused || !entry.fresh) return;
+    entry.fresh = false;
+    entry.furthest = video.currentTime;
+    count('__starts', video);
+  });
+  on('timeupdate', (video, entry) => {
+    if (!video.paused && video.currentTime > entry.furthest) entry.furthest = video.currentTime;
+  });
+  on('seeked', (video, entry) => {
+    if (video.paused) {
+      if (video.currentTime <= 0.5) entry.fresh = true;
+      return;
+    }
+    if (video.loop && video.currentTime <= 0.5 && entry.furthest >= 1) {
+      entry.furthest = video.currentTime;
+      count('__loops', video);
+    }
+  });
+  on('ended', (_video, entry) => {
+    entry.fresh = true;
+  });
+  on('emptied', (_video, entry) => {
+    entry.fresh = true;
+    entry.furthest = 0;
+  });
+}
+
+/** Waits until the feed has stopped moving: the same slide, and the same scroll, for half a second. */
+async function settled(page, index) {
+  let last = '';
+  for (let i = 0; i < 80; i += 1) {
+    const now = await page.evaluate(() => {
+      const scroller = document.querySelector('section[data-index]')?.parentElement;
+      return `${scroller?.scrollTop}`;
+    });
+    if (now === last && (await activeIndex(page)) === index) return true;
+    last = now;
+    await sleep(500);
+  }
+  return false;
 }
 
 /** The page's own record of starts and loops, for "exactly what happened". */
@@ -523,7 +569,8 @@ const run = async () => {
   await sleep(250);
   await swipe(p, cdp, 'previous', false);
   for (let i = 0; i < 60 && (await activeIndex(p)) !== 0; i += 1) await sleep(50);
-  await sleep(2500);
+  check('  the feed settles back on the first clip', await settled(p, 0));
+  await sleep(1500);
   const now = await happened(p);
   let deltaOk = true;
   const deltas = [];
@@ -558,6 +605,8 @@ const run = async () => {
   check('  and count nothing', total - steady === loops, `${steady} → ${total}, ${loops} loop(s)`);
 
   // Pause and resume the same play: not a new view.
+  await settled(p, 0);
+  await startsWithin(p, 0);
   mark = await happened(p);
   steady = await totalOf(id0);
   await p.locator('section[data-index="0"] button[aria-label="Pause video"]').click();
@@ -853,19 +902,33 @@ const run = async () => {
   check('a failed attempt is retried and counted once', total === was + 1 && (await totalSettles(ids[2], 1500)) === was + 1, `${was} → ${total}`);
   await w.locator(`${cardFor(ids[2])} video`).first().evaluate((el) => el.pause());
 
-  // The page was closed before the report could be answered.
+  // The page was closed before the report could be answered. `keepalive` may
+  // still finish it after the page has gone — that is what it is for — or it
+  // may not; either way the next page sends it again from localStorage, under
+  // the same key, and it is counted exactly once.
   const closing = await W.context.newPage();
-  await closing.goto(`/post/${tagged}`, { waitUntil: 'domcontentloaded' });
+  await closing.goto(`/post/${tagged}`, { waitUntil: 'networkidle' });
   was = await totalOf(tagged);
   await closing.route(reportRoute, () => undefined); // never answered
   await play(closing, tagged);
   await sleep(500);
+  const owedKey = await closing.evaluate(() => JSON.parse(localStorage.getItem('fay:view-reports') ?? '[]').at(-1)?.k);
+  check('  a play on a page whose report goes unanswered is kept for later', Boolean(owedKey), String(owedKey));
   await closing.close();
-  check('  (the page closed with the report unanswered)', (await totalOf(tagged)) === was);
   const next = await W.context.newPage();
+  const resent = next.waitForRequest(
+    (request) => request.method() === 'POST' && /\/views$/.test(request.url()) && request.postData()?.includes(owedKey),
+    { timeout: 15000 },
+  );
   await next.goto('/home', { waitUntil: 'domcontentloaded' });
+  check('  the next page sends it again, under the same key', await resent.then(() => true, () => false));
   total = await totalReaches(tagged, was + 1, 12000);
-  check('a report from a page that closed is sent by the next one, and counted once', total === was + 1 && (await totalSettles(tagged, 1500)) === was + 1, `${was} → ${total}`);
+  check(
+    'a report from a page that closed is counted exactly once',
+    total === was + 1 && (await totalSettles(tagged, 1500)) === was + 1,
+    `${was} → ${total}`,
+  );
+  check('  and is no longer owed', (await next.evaluate(() => localStorage.getItem('fay:view-reports'))) === null);
   await next.close();
 
   // Concurrent copies of one report, and many plays.

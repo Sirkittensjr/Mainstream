@@ -4,6 +4,7 @@ import { AdminBadge } from '@/components/AdminBadge';
 import Image from 'next/image';
 import Link from 'next/link';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { likeAction } from '@/app/actions';
 import { formatCount } from '@/lib/format';
@@ -113,18 +114,26 @@ export function VideoFeed({
    * in the feed for sound so the clips after it keep it.
    *
    * The choice is the viewer's and is remembered (localStorage): turning the
-   * sound off is never undone by the feed, on this page or the next. Until the
-   * stored choice has been read, nothing starts — so a viewer who muted
-   * yesterday does not hear the first second of today's first clip.
+   * sound off is never undone by the feed, on this page or the next. The page
+   * is rendered before that can be read, so `choice` catches up after
+   * hydration; a slide starting playback reads the stored choice itself, so a
+   * viewer who muted yesterday does not hear the first second of today's first
+   * clip, and nothing waits for a re-render before it starts.
    */
   const [choice, setChoice] = useState<SoundChoice>('on');
-  const [ready, setReady] = useState(false);
   const [blocked, setBlocked] = useState(false);
   useEffect(() => {
     setChoice(readSoundChoice());
-    setReady(true);
   }, []);
   const muted = choice === 'off' || blocked;
+  /**
+   * Whether every slide keeps a player element, rather than only the slide on
+   * screen and its neighbours. Off until somebody taps for sound — the page
+   * starts exactly as light as it always has — and then on for good: Safari
+   * readies an element for sound once, inside a tap, and the clips further
+   * down need theirs to exist in that tap to be readied with it.
+   */
+  const [keepPlayers, setKeepPlayers] = useState(false);
   /** Every slide's player, by post, and whether its creator posted it silent. */
   const players = useRef(new Map<string, { element: HTMLVideoElement; silent: boolean }>());
   /** Players already readied for sound inside a tap (see readyForSound). */
@@ -213,6 +222,9 @@ export function VideoFeed({
       player.element.muted = false;
       if (player.element.paused) void player.element.play().catch(() => undefined);
     }
+    // Every slide's player, created now — synchronously, still inside the tap
+    // — so that all of them can be readied for sound by it.
+    flushSync(() => setKeepPlayers(true));
     readyForSound(
       [...players.current.values()].map((entry) => entry.element),
       readied.current,
@@ -282,10 +294,8 @@ export function VideoFeed({
               // to read its start so it plays the moment it is swiped to;
               // nothing else on the queue touches the network.
               preload={index === active ? 'auto' : index === active + 1 ? 'metadata' : 'none'}
+              keepPlayer={keepPlayers}
               muted={muted}
-              // Only the slide on screen starts anything, so only it waits for
-              // the sound choice — the other slides do not re-render for it.
-              ready={ready && index === active}
               soundBlocked={blocked && choice === 'on'}
               commentCount={counts[data.id] ?? data.comments}
               onOpenComments={openComments}
@@ -348,8 +358,8 @@ const Slide = memo(function Slide({
   mounted,
   isActive,
   preload,
+  keepPlayer,
   muted,
-  ready,
   soundBlocked,
   commentCount,
   onOpenComments,
@@ -369,9 +379,9 @@ const Slide = memo(function Slide({
   mounted: boolean;
   isActive: boolean;
   preload: 'auto' | 'metadata' | 'none';
+  /** Keep a player element even while far away (see `keepPlayers`). */
+  keepPlayer: boolean;
   muted: boolean;
-  /** The viewer's sound choice has been read: playback may start. */
-  ready: boolean;
   /** Sound is wanted but the browser refused it: "Tap for sound" is shown. */
   soundBlocked: boolean;
   commentCount: number;
@@ -391,6 +401,13 @@ const Slide = memo(function Slide({
   const video = useRef<HTMLVideoElement | null>(null);
   /** The creator posted it without sound: no viewer choice turns it on. */
   const silent = media.muted === true;
+  /**
+   * Whether this player should be muted. The stored choice as well as the
+   * feed's: just after the page loads, the feed has not caught up with what
+   * the viewer chose last time (see VideoFeed), and a viewer who turned the
+   * sound off must not hear a moment of the first clip.
+   */
+  const quiet = useCallback(() => muted || silent || readSoundChoice() === 'off', [muted, silent]);
   const attachHere = useCallback((node: HTMLElement | null) => attach(index, node), [attach, index]);
   const attachPlayer = useCallback(
     (node: HTMLVideoElement | null) => {
@@ -449,12 +466,11 @@ const Slide = memo(function Slide({
       setSeconds(0);
       return;
     }
-    // Not before the viewer's sound choice is known: see VideoFeed.
-    if (!element || !ready) return;
+    if (!element) return;
 
     let cancelled = false;
     void (async () => {
-      element.muted = muted || silent;
+      element.muted = quiet();
       try {
         await element.play();
       } catch (error) {
@@ -474,13 +490,13 @@ const Slide = memo(function Slide({
     return () => {
       cancelled = true;
     };
-  }, [isActive, mounted, covered, muted, ready, silent, onBlocked, endViewing]);
+  }, [isActive, mounted, covered, quiet, onBlocked, endViewing]);
 
   // React will not re-mute a player that has already started, so the mute
   // state is applied to the element itself.
   useEffect(() => {
-    if (video.current) video.current.muted = muted || silent;
-  }, [muted, silent]);
+    if (video.current) video.current.muted = quiet();
+  }, [muted, silent, quiet]);
 
   // Out of reach of the screen: let go of the video it was holding. The element
   // itself stays — on Safari it may already have been readied for sound, and a
@@ -549,46 +565,48 @@ const Slide = memo(function Slide({
       className="relative h-full w-full snap-start snap-always overflow-hidden bg-black"
     >
       <div className="video-picture-stage absolute inset-0 flex items-center justify-center">
-        {/* Every slide keeps one player element for as long as the feed is
-            open, so a player readied for sound (Safari asks for that per
-            element) is still the one used when its clip comes round. Only the
-            slide on screen and its neighbours give it something to play;
-            further away it has no source, fetches nothing and is hidden. */}
-        <video
-          ref={attachPlayer}
-          src={mounted ? media.url : undefined}
-          poster={mounted ? media.poster : undefined}
-          preload={mounted ? preload : 'none'}
-          playsInline
-          loop
-          // The feed's own mute toggle, or the creator's — whichever silences it.
-          // A video posted with the sound off does not start making noise
-          // because a viewer unmuted the feed.
-          muted={muted || silent}
-          onPlay={(event) => {
-            setPlaying(true);
-            // One video heard at a time, page-wide.
-            claimAudio(event.currentTarget);
-            watch.onPlay(event);
-          }}
-          onPlaying={watch.onPlaying}
-          onPause={() => setPlaying(false)}
-          onVolumeChange={(event) => claimAudio(event.currentTarget)}
-          // `loop` means `ended` never fires here; the loop coming round is
-          // a seek back to the start, which is where a replay is noticed.
-          onSeeked={watch.onSeeked}
-          onEnded={watch.onEnded}
-          onTimeUpdate={(event) => {
-            const element = event.currentTarget;
-            const length = Number.isFinite(element.duration) && element.duration > 0
-              ? element.duration
-              : (media.duration ?? 0);
-            if (length > 0) setProgress(element.currentTime / length);
-            setSeconds(element.currentTime);
-            watch.onTimeUpdate(event);
-          }}
-          className={mounted ? 'h-full w-full object-contain' : 'hidden'}
-        />
+        {/* The slide on screen and its neighbours have a player. Once somebody
+            has tapped for sound every slide keeps one, so a player readied for
+            sound (Safari asks for that per element) is still the one used when
+            its clip comes round; further away it has no source, fetches
+            nothing and is hidden. */}
+        {mounted || keepPlayer ? (
+          <video
+            ref={attachPlayer}
+            src={mounted ? media.url : undefined}
+            poster={mounted ? media.poster : undefined}
+            preload={mounted ? preload : 'none'}
+            playsInline
+            loop
+            // The feed's own mute toggle, or the creator's — whichever silences it.
+            // A video posted with the sound off does not start making noise
+            // because a viewer unmuted the feed.
+            muted={muted || silent}
+            onPlay={(event) => {
+              setPlaying(true);
+              // One video heard at a time, page-wide.
+              claimAudio(event.currentTarget);
+              watch.onPlay(event);
+            }}
+            onPlaying={watch.onPlaying}
+            onPause={() => setPlaying(false)}
+            onVolumeChange={(event) => claimAudio(event.currentTarget)}
+            // `loop` means `ended` never fires here; the loop coming round is
+            // a seek back to the start, which is where a replay is noticed.
+            onSeeked={watch.onSeeked}
+            onEnded={watch.onEnded}
+            onTimeUpdate={(event) => {
+              const element = event.currentTarget;
+              const length = Number.isFinite(element.duration) && element.duration > 0
+                ? element.duration
+                : (media.duration ?? 0);
+              if (length > 0) setProgress(element.currentTime / length);
+              setSeconds(element.currentTime);
+              watch.onTimeUpdate(event);
+            }}
+            className={mounted ? 'h-full w-full object-contain' : 'hidden'}
+          />
+        ) : null}
         {!mounted && media.poster ? (
           <Image
             src={media.poster}

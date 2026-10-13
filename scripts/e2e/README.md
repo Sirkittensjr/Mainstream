@@ -1514,8 +1514,9 @@ reads the count from the DATABASE and checks the eye shows that number:
 autoplay, a swipe on, a clip left after 0.7 s, a swipe back to a clip whose
 player was taken down, a refresh, the post page and the profile, the creator
 watching their own, a visitor, and every stored view row being in its total.
-A slide two away keeps its player element (Safari readies each for sound once)
-but lets go of the video: no source, nothing loaded, no network.
+A slide two away has no player — or, once somebody has tapped for sound, keeps
+one (Safari readies each element once) that has let go of the video: no
+source, nothing loaded, no network.
 
 ```bash
 DATABASE_URL=postgres://…/faytarra_sb BASE_URL=http://localhost:3000 \
