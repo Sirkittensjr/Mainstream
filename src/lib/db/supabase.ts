@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { isDuplicateRow, isMissingRelation, throwQueryError } from './errors';
-import type { CounterColumn, Driver, QueryOptions, Row, TableName } from './types';
+import type { CounterColumn, Driver, PlayOutcome, QueryOptions, Row, TableName } from './types';
 
 const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'faytarra-media';
 
@@ -81,7 +81,7 @@ export function applyFilters(
 /**
  * PostgREST's "no such function", and Postgres's. A database that has not run
  * migration 0015 has no `increment_counter`; one that has not run 0016 has no
- * `record_video_view`.
+ * `record_video_view`; one that has not run 0017 has no `record_video_play`.
  */
 const MISSING_FUNCTION = new Set(['PGRST202', '42883']);
 
@@ -94,7 +94,7 @@ const MISSING_FUNCTION = new Set(['PGRST202', '42883']);
  * function did not exist would go on working around it until it happened to
  * be restarted — on a serverless host, whenever the platform felt like it.
  */
-export const FUNCTION_RECHECK_MS = 5 * 60_000;
+export const FUNCTION_RECHECK_MS = 60_000;
 
 /**
  * Supabase driver. Uses the service role key on the server so that the app can
@@ -128,10 +128,11 @@ export class SupabaseDriver implements Driver {
   /** Remembers that the database has no `name`, and says so once each time it is found missing. */
   private missing(name: string, migration: string, consequence: string): void {
     this.missingSince.set(name, Date.now());
+    const minutes = FUNCTION_RECHECK_MS / 60_000;
     console.warn(
       `[faytarra] This database has no ${name} function (migration ${migration}), so ${consequence}. ` +
         `Run supabase/migrations/${migration}_*.sql; it is picked up within ` +
-        `${FUNCTION_RECHECK_MS / 60_000} minutes, without a restart.`,
+        `${minutes === 1 ? 'a minute' : `${minutes} minutes`}, without a restart.`,
     );
   }
 
@@ -284,6 +285,42 @@ export class SupabaseDriver implements Driver {
     throw new Error(`[supabase:${table}] ${column} on ${id} could not be raised: too much contention`);
   }
 
+  async recordPlay(play: Row<'video_views'>): Promise<PlayOutcome | null> {
+    if (this.lacks('record_video_play')) return null;
+    // One round trip that decides and stores: see record_video_play in
+    // migration 0017. The post is checked, the viewer's plays of it are
+    // serialised, and the play and its +1 are one transaction.
+    const { data, error } = await this.client.rpc('record_video_play', {
+      play_id: play.id,
+      target_post: play.post_id,
+      viewer: play.viewer_id,
+      viewer_identity: play.identity,
+      play_key: play.dedupe_key,
+    });
+    if (error) {
+      if (!MISSING_FUNCTION.has(error.code ?? '')) throwQueryError('video_views', error);
+      this.missing(
+        'record_video_play',
+        '0017',
+        'plays are decided in the app and stored in two steps that are undone together',
+      );
+      return null;
+    }
+    const row = (Array.isArray(data) ? data[0] : data) as
+      | { counted?: boolean | null; total?: number | string | null; reason?: string | null }
+      | null
+      | undefined;
+    const total = row?.total == null ? null : Number(row.total);
+    const reason = row?.reason ?? undefined;
+    return {
+      counted: row?.counted === true,
+      total: total !== null && Number.isFinite(total) ? total : null,
+      ...(reason === 'no-post' || reason === 'not-a-video' || reason === 'duplicate-session' || reason === 'too-fast'
+        ? { reason }
+        : {}),
+    };
+  }
+
   async recordView(view: Row<'video_views'>) {
     if (!this.lacks('record_video_view')) {
       // The row and the total in one transaction: see record_video_view in
@@ -306,9 +343,10 @@ export class SupabaseDriver implements Driver {
         return { counted: row?.counted === true, total: Number.isFinite(total) ? total : null };
       }
       if (!MISSING_FUNCTION.has(error.code ?? '')) throwQueryError('video_views', error);
+      // 0017 is the file to run: it makes this path unnecessary altogether.
       this.missing(
         'record_video_view',
-        '0016',
+        '0017',
         'a view is stored and added up in two steps, with the first undone when the second fails',
       );
     }
@@ -334,10 +372,10 @@ export class SupabaseDriver implements Driver {
         await this.remove('video_views', view.id);
       } catch (undo) {
         // Both writes failed in a row. The view is stored but not added up;
-        // 0016's repair step counts rows like this back into the total.
+        // the repair step in 0016 and 0017 counts rows like this back into the total.
         console.error(
           '[faytarra] A video view was stored but could not be added to its total, and could ' +
-            'not be taken back out either. Migration 0016 adds such views back.',
+            'not be taken back out either. Migration 0017 (or running it again) adds such views back.',
           undo,
         );
       }

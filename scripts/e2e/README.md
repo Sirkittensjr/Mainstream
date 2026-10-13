@@ -21,6 +21,7 @@ psql -d faytarra_test -f scripts/e2e/auto-review-checks.sql
 psql -d faytarra_test -f scripts/e2e/comment-checks.sql
 psql -d faytarra_test -f scripts/e2e/hashtag-checks.sql
 psql -d faytarra_test -f scripts/e2e/views-checks.sql
+psql -d faytarra_test -f scripts/e2e/play-count-checks.sql
 ```
 
 The shim's `storage.buckets` carries `file_size_limit` and `allowed_mime_types`
@@ -105,6 +106,24 @@ never lowered.
 
 ```bash
 psql -d faytarra_test -f scripts/e2e/views-checks.sql
+```
+
+`play-count-checks.sql` proves migration 0017 in the DATABASE — every playback
+start counted, by `record_video_play` in one transaction: a play counts once and
+a video's existing views are kept; the same playback session again (a retry, a
+duplicate event) counts nothing; repeat plays by the same viewer, the creator
+and a visitor all count; ten thousand plays by one viewer are ten thousand views;
+the 51st start of one video by one viewer inside ten seconds is refused, for
+that viewer only, and not ten seconds later; a photo, a missing, removed or
+under-review post count nothing and store nothing; a malformed play is refused;
+when the total cannot be raised the play is not stored either;
+`increment_counter` cannot be turned on another column or moved down; neither
+API role may call either function or read or write `video_views`; and running
+0017 again keeps every total. Run it after `supabase-roles.sql` for the roles
+(about ten seconds — the ten thousand plays are real calls).
+
+```bash
+psql -d faytarra_test -f scripts/e2e/play-count-checks.sql
 ```
 
 ## 2. The app side — `gotrue-stub.mjs` + `auth-flow.mjs` + `social-flow.mjs`
@@ -1495,10 +1514,46 @@ reads the count from the DATABASE and checks the eye shows that number:
 autoplay, a swipe on, a clip left after 0.7 s, a swipe back to a clip whose
 player was taken down, a refresh, the post page and the profile, the creator
 watching their own, a visitor, and every stored view row being in its total.
+A slide two away has no player — or, once somebody has tapped for sound, keeps
+one (Safari readies each element once) that has let go of the video: no
+source, nothing loaded, no network.
 
 ```bash
 DATABASE_URL=postgres://…/faytarra_sb BASE_URL=http://localhost:3000 \
   node scripts/e2e/views-feed-iphone-flow.mjs
+```
+
+### 18b. Every play, and sound — `views-sound-flow.mjs`
+
+Against the same stand-in, with migration 0017 applied, in four browsers'
+worth of rules. After every step it reads the DATABASE and checks it moved by
+exactly what happened — one view per playback start, and nothing for a pause
+and resume, a duplicate event, a retry or a refused autoplay — and that the eye
+shows that number.
+
+- **An iPhone, signed out, under Safari's rule** — simulated per ELEMENT, as
+  WebKit applies it: sound needs a tap on each video element. Autoplay refused
+  with sound plays muted and offers "Tap for sound"; the tap turns it on and the
+  following clips keep it with no further tap; rapid swipes and sub-second
+  glances are compared, per post, with the playback starts the page itself saw;
+  duplicate `play`/`playing`/`timeupdate` events; pause and resume; the loop
+  coming round; muting that stays muted across swipes and a refresh; one video
+  heard at a time.
+- **Chrome's rule, signed in** — one interaction with the page allows sound
+  anywhere on it (simulated: headless Chromium allows sound regardless).
+- **Autoplay with sound allowed** — the creator's own play, with sound.
+- **Every other place a video plays** — the post page, Home, a profile, a
+  hashtag page; the eye moving as playback starts; replays, seeks, scrolling
+  away and back; signed out; a refresh.
+- **Delivery** — an answer lost on the way back, a failed attempt, a page closed
+  with its report unanswered, ten concurrent copies of one report, and a flood.
+- **Security** — other sites, malformed reports, a photo, and the public API key
+  calling the functions directly (`SUPABASE_URL` and `SUPABASE_ANON_KEY`).
+
+```bash
+DATABASE_URL=postgres://…/faytarra_sb BASE_URL=http://localhost:3000 \
+SUPABASE_URL=http://127.0.0.1:54321 SUPABASE_ANON_KEY=… \
+  node scripts/e2e/views-sound-flow.mjs
 ```
 
 ### 19. How fast it is on a phone — `perf-mobile.mjs` + `supabase-perf-seed.mjs`

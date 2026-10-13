@@ -192,31 +192,59 @@ describe('watching again is another view', () => {
         viewerId: watcher.id,
         browserId: null,
         sessionKey: key,
-        now: T0 + i * (rules.VIEW_COOLDOWN_MS + 1_000),
+        // A loop coming round, a tap on replay: no gap is required.
+        now: T0 + i * 250,
       });
       assert.equal(result.counted, true, `viewing ${i + 1}`);
     }
     assert.equal(await stored(post.id), 3);
   });
 
-  it('does not count a burst of invented session keys inside the cooldown', async () => {
+  it('has no hourly cap: two hundred plays by one person are two hundred views', async () => {
+    const post = await video();
+    let counted = 0;
+    for (let i = 0; i < 200; i += 1) {
+      const result = await views.recordVideoView({
+        postId: post.id,
+        viewerId: watcher.id,
+        browserId: null,
+        sessionKey: `repeat-play-${i}-xxxx`,
+        // One every second, as a one-second clip loops.
+        now: T0 + i * 1_000,
+      });
+      if (result.counted) counted += 1;
+    }
+    assert.equal(counted, 200);
+    assert.equal(await stored(post.id), 200);
+  });
+
+  it('refuses only a burst nobody can produce: plays faster than one every fifth of a second', async () => {
     const post = await video();
     const results = [];
-    for (let i = 0; i < 5; i += 1) {
+    for (let i = 0; i < 60; i += 1) {
       results.push(
         await views.recordVideoView({
           postId: post.id,
           viewerId: watcher.id,
           browserId: null,
           sessionKey: `burst-key-${i}-xxxxxx`,
-          // All inside the gap between two views: no person starts the same
-          // video five times in a fifth of a second.
+          // Sixty starts of the same video in two and a half seconds.
           now: T0 + i * 40,
         }),
       );
     }
-    assert.equal(results.filter((result) => result.counted).length, 1);
-    assert.equal(await stored(post.id), 1);
+    assert.equal(results.filter((result) => result.counted).length, rules.PLAY_BURST_LIMIT);
+    assert.equal(results.at(-1)?.reason, 'too-fast');
+    assert.equal(await stored(post.id), rules.PLAY_BURST_LIMIT);
+    // Somebody else, at the same moment, is not affected.
+    const other = await views.recordVideoView({
+      postId: post.id,
+      viewerId: author.id,
+      browserId: null,
+      sessionKey: 'burst-other-xxxxxx',
+      now: T0 + 60 * 40,
+    });
+    assert.equal(other.counted, true);
   });
 
   it('loses nobody when many people watch at the same moment', async () => {
@@ -358,7 +386,7 @@ describe('the views that used to be lost', () => {
 
     assert.deepEqual(await report('session-off-0001', T0), { count: 0, counted: false, reason: 'unavailable' });
     assert.equal(logged.mock.callCount(), 1, 'said so, in the server log');
-    assert.match(String(logged.mock.calls[0].arguments[0]), /NOT being counted.*0010/);
+    assert.match(String(logged.mock.calls[0].arguments[0]), /NOT being counted.*0017_count_every_play/);
 
     // The migration is applied. Within the recheck window this server still
     // waits, rather than asking the database on every play…
@@ -369,5 +397,102 @@ describe('the views that used to be lost', () => {
     const back = await report('session-off-0003', T0 + views.STORAGE_RECHECK_MS + 1);
     assert.deepEqual(back, { count: 1, counted: true });
     assert.equal(await stored(post.id), 1);
+  });
+});
+
+describe('what is not a report', () => {
+  it('a report without a usable session key, or without a real post id, counts nothing', async () => {
+    const post = await video();
+    for (const [postId, sessionKey] of [
+      [post.id, null],
+      [post.id, ''],
+      ['not-a-post-id', 'session-llllllll'],
+      [`${post.id}x`, 'session-llllllll'],
+    ] as const) {
+      const result = await views.recordVideoView({ postId, viewerId: watcher.id, browserId: null, sessionKey, now: T0 });
+      assert.deepEqual(result, { count: 0, counted: false, reason: 'invalid' });
+    }
+    assert.equal(await stored(post.id), 0);
+  });
+
+  it('a report from nobody: no account and no browser id', async () => {
+    const post = await video();
+    const result = await views.recordVideoView({
+      postId: post.id,
+      viewerId: null,
+      browserId: null,
+      sessionKey: 'session-mmmmmmmm',
+      now: T0,
+    });
+    assert.equal(result.reason, 'unknown-viewer');
+    assert.equal(await stored(post.id), 0);
+  });
+});
+
+describe('when the database decides (Supabase with migration 0017)', () => {
+  it('passes the play to it once and answers with what it decided', async () => {
+    const post = await video();
+    const plays: { dedupe_key: string; identity: string; viewer_id: string | null; post_id: string }[] = [];
+    const answers = [
+      { counted: true, total: 41 },
+      { counted: false, total: 41, reason: 'duplicate-session' as const },
+      { counted: false, total: 41, reason: 'too-fast' as const },
+      { counted: false, total: null },
+    ];
+    const decide = mock.method(store, 'recordPlay', async (play: (typeof plays)[number]) => {
+      plays.push(play);
+      return answers[plays.length - 1];
+    });
+    const asked = mock.method(store, 'query', async () => {
+      throw new Error('the app should not decide what the database already has');
+    });
+    const report = () =>
+      views.recordVideoView({
+        postId: post.id,
+        viewerId: null,
+        browserId: 'browser-db',
+        sessionKey: 'session-nnnnnnnn',
+        now: T0,
+      });
+    assert.deepEqual(await report(), { count: 41, counted: true });
+    assert.deepEqual(await report(), { count: 41, counted: false, reason: 'duplicate-session' });
+    assert.deepEqual(await report(), { count: 41, counted: false, reason: 'too-fast' });
+    assert.deepEqual(await report(), { count: 0, counted: false, reason: 'no-post' });
+    decide.mock.restore();
+    asked.mock.restore();
+
+    assert.equal(plays.length, 4, 'one call per report');
+    assert.equal(plays[0].post_id, post.id);
+    assert.equal(plays[0].identity, 'anon:browser-db');
+    assert.equal(plays[0].viewer_id, null);
+    assert.equal(plays[0].dedupe_key, `${post.id}:anon:browser-db:session-nnnnnnnn`);
+  });
+
+  it('switches off without its storage, as the app path does', async () => {
+    const post = await video();
+    const { MissingRelationError } = await import('@/lib/db');
+    const missing = mock.method(store, 'recordPlay', async () => {
+      throw new MissingRelationError('video_views', null, 'relation "public.video_views" does not exist');
+    });
+    const logged = mock.method(console, 'error', () => undefined);
+    const result = await views.recordVideoView({
+      postId: post.id,
+      viewerId: watcher.id,
+      browserId: null,
+      sessionKey: 'session-oooooooo',
+      now: T0 + 5 * 60_000,
+    });
+    missing.mock.restore();
+    logged.mock.restore();
+    assert.deepEqual(result, { count: 0, counted: false, reason: 'unavailable' });
+    // Back on after the recheck window, through the app path here.
+    const later = await views.recordVideoView({
+      postId: post.id,
+      viewerId: watcher.id,
+      browserId: null,
+      sessionKey: 'session-pppppppp',
+      now: T0 + 5 * 60_000 + views.STORAGE_RECHECK_MS + 1,
+    });
+    assert.deepEqual(later, { count: 1, counted: true });
   });
 });

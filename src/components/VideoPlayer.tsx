@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { formatSeconds } from '@/lib/video/limits';
+import { claimAudio } from '@/lib/video/sound';
 import type { Media } from '@/lib/types';
 import { useVideoView } from './video/useVideoView';
 import { VideoText } from './video/VideoText';
@@ -59,6 +60,27 @@ export function VideoPlayer({
   useEffect(() => {
     notify.current?.(watch.count);
   }, [watch.count]);
+  /**
+   * Scrolled away and back is a new viewing, as it is in the Videos feed: once
+   * this player has left the screen while stopped, pressing play on it again
+   * is a new playback start, and a new view. A video still PLAYING when it
+   * scrolls off is left alone — nothing has stopped, and coming back to it is
+   * not a new start.
+   */
+  const frame = useRef<HTMLDivElement>(null);
+  const element = useRef<HTMLVideoElement>(null);
+  const { restart } = watch;
+  useEffect(() => {
+    const node = frame.current;
+    if (!node || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting && element.current?.paused) restart();
+      }
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [restart]);
   // Until the file says otherwise, trust what was measured at upload; 4:5 is
   // only ever a placeholder for the moment before the first frame arrives.
   /** Playhead, for text that only shows for part of the video. */
@@ -69,6 +91,7 @@ export function VideoPlayer({
 
   return (
     <div
+      ref={frame}
       className={`relative mx-auto w-full overflow-hidden rounded-2xl bg-black ${className}`}
       style={{
         aspectRatio: ratio ? `${ratio}` : '4 / 5',
@@ -79,6 +102,7 @@ export function VideoPlayer({
       }}
     >
       <video
+        ref={element}
         src={media.url}
         poster={media.poster}
         controls
@@ -99,7 +123,13 @@ export function VideoPlayer({
             setRatio(video.videoWidth / video.videoHeight);
           }
         }}
-        onPlay={watch.onPlay}
+        onPlay={(event) => {
+          // One video heard at a time: starting this one with sound stops any
+          // other that is playing with sound.
+          claimAudio(event.currentTarget);
+          watch.onPlay(event);
+        }}
+        onVolumeChange={(event) => claimAudio(event.currentTarget)}
         onPlaying={watch.onPlaying}
         onTimeUpdate={(event) => {
           watch.onTimeUpdate(event);

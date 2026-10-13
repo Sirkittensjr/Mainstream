@@ -240,3 +240,75 @@ describe('without it, until 0016 is applied', () => {
     assert.deepEqual(calls, ['rpc record_video_view']);
   });
 });
+
+/** record_video_play as migration 0017 has it, over the fake's tables. */
+const recordVideoPlay: Rpc = (args, tables) => {
+  const post = tables.get('posts')!.find((row) => row.id === args.target_post);
+  if (!post) return { data: [{ counted: false, total: null, reason: 'no-post' }], error: null };
+  const views = tables.get('video_views')!;
+  if (views.some((row) => row.dedupe_key === args.play_key)) {
+    return { data: [{ counted: false, total: post.video_views, reason: 'duplicate-session' }], error: null };
+  }
+  views.push({ id: args.play_id, post_id: args.target_post, dedupe_key: args.play_key });
+  post.video_views = Number(post.video_views) + 1;
+  return { data: [{ counted: true, total: post.video_views, reason: null }], error: null };
+};
+
+describe('with record_video_play (migration 0017)', () => {
+  it('decides and stores a play in one call, with nothing but the play itself', async () => {
+    let sent: Row = {};
+    const { driver, tables, calls } = setup(
+      { record_video_play: (args, all) => ((sent = args), recordVideoPlay(args, all)) },
+      9,
+    );
+    const play = view('session-one');
+    assert.deepEqual(await driver.recordPlay(play), { counted: true, total: 10 });
+    assert.deepEqual(calls, ['rpc record_video_play'], 'one round trip');
+    // No table, column or amount is ever the app's to name.
+    assert.deepEqual(Object.keys(sent).sort(), ['play_id', 'play_key', 'target_post', 'viewer', 'viewer_identity']);
+    assert.equal(sent.play_key, play.dedupe_key);
+    assert.equal(totalOf(tables), 10);
+  });
+
+  it("passes on the database's reasons", async () => {
+    const answers = [
+      { counted: false, total: 3, reason: 'duplicate-session' },
+      { counted: false, total: 3, reason: 'too-fast' },
+      { counted: false, total: 0, reason: 'not-a-video' },
+      { counted: false, total: null, reason: 'no-post' },
+      { counted: false, total: 3, reason: 'something new' },
+    ];
+    let i = 0;
+    const { driver } = setup({ record_video_play: () => ({ data: [answers[i++]], error: null }) });
+    assert.deepEqual(await driver.recordPlay(view('a')), { counted: false, total: 3, reason: 'duplicate-session' });
+    assert.deepEqual(await driver.recordPlay(view('b')), { counted: false, total: 3, reason: 'too-fast' });
+    assert.deepEqual(await driver.recordPlay(view('c')), { counted: false, total: 0, reason: 'not-a-video' });
+    assert.deepEqual(await driver.recordPlay(view('d')), { counted: false, total: null, reason: 'no-post' });
+    assert.deepEqual(await driver.recordPlay(view('e')), { counted: false, total: 3 }, 'an unknown reason is not invented into a known one');
+  });
+
+  it('throws a refusal, and a missing table as one', async () => {
+    const { driver } = setup({
+      record_video_play: () => ({ data: null, error: { message: 'relation "public.video_views" does not exist', code: '42P01' } }),
+    });
+    await assert.rejects(driver.recordPlay(view('session-one')), { name: 'MissingRelationError' });
+    const timeout = setup({
+      record_video_play: () => ({ data: null, error: { message: 'canceling statement due to statement timeout', code: '57014' } }),
+    });
+    await assert.rejects(timeout.driver.recordPlay(view('session-one')), /statement timeout/);
+  });
+
+  it('answers null without it — the app decides — and looks for it again a minute later', async () => {
+    const rpcs: Record<string, Rpc> = {};
+    const { driver, calls } = setup(rpcs);
+    assert.equal(await driver.recordPlay(view('session-one')), null);
+    assert.equal(await driver.recordPlay(view('session-two')), null);
+    assert.deepEqual(calls, ['rpc record_video_play'], 'asked once, then believed');
+    assert.ok(FUNCTION_RECHECK_MS <= 60_000, 'applying 0017 takes effect within a minute, without a restart');
+
+    rpcs.record_video_play = recordVideoPlay;
+    const later = Date.now() + FUNCTION_RECHECK_MS + 1;
+    mock.method(Date, 'now', () => later);
+    assert.deepEqual(await driver.recordPlay(view('session-three')), { counted: true, total: 1 });
+  });
+});

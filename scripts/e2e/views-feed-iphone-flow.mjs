@@ -320,8 +320,14 @@ const run = async () => {
   await sleep(700);
   await arrive('next', 2, third, 'a clip left after 0.7 s is still one view');
   check(
-    'the first clip is two slides away: its player is gone',
-    (await C.page.locator('section[data-index="0"] video').count()) === 0,
+    // No player at all — or, once somebody has tapped for sound, one that
+    // stays (Safari readies each element once) but has let go of the video:
+    // no source, nothing loaded (HAVE_NOTHING), no network (NETWORK_EMPTY).
+    'the first clip is two slides away: its player is gone, or holds nothing',
+    await C.page.evaluate(() => {
+      const video = document.querySelector('section[data-index="0"] video');
+      return !video || (!video.getAttribute('src') && video.readyState === 0 && video.networkState === 0 && video.paused);
+    }),
   );
 
   section('FEED — swiping back');

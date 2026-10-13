@@ -40,7 +40,7 @@ export function storageIsDurable(): boolean {
   return !(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 }
 
-export type { CounterColumn, Driver, QueryOptions, Row, Schema, TableName } from './types';
+export type { CounterColumn, Driver, PlayOutcome, QueryOptions, Row, Schema, TableName } from './types';
 export {
   DuplicateRowError,
   MissingRelationError,

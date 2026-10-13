@@ -2,14 +2,17 @@ import { NextResponse, type NextRequest } from 'next/server';
 import { recordVideoView } from '@/lib/services/video-views';
 import { getViewer } from '@/lib/session';
 import { VIEW_BROWSER_COOKIE, VIEW_BROWSER_COOKIE_OPTIONS } from '@/lib/video/viewer-cookie';
-import { sanitiseSessionKey } from '@/lib/video/views';
+import { isPostId, sanitiseSessionKey } from '@/lib/video/views';
 
 export const dynamic = 'force-dynamic';
 
 const NO_STORE = { 'cache-control': 'no-store' };
 
+/** A report is `{"sessionKey":"…"}`. Anything much bigger than that is not one. */
+const MAX_BODY_BYTES = 1024;
+
 /**
- * A video was watched: one playback session of it began.
+ * A video started playing: one playback session of it began.
  *
  * The client's entire say is which post, and an opaque key for the playback
  * session it is reporting. Whether that is a view, and what the total now is,
@@ -18,11 +21,15 @@ const NO_STORE = { 'cache-control': 'no-store' };
  *
  *   200 { ok: true, count, counted, reason? }   decided — counted or not, with
  *                                               the total the database holds
+ *   400 / 404 / 413 { ok: false, error }        not a report; sending it again
+ *                                               would change nothing
+ *   403 { ok: false, error: 'cross-site' }      sent by some other site
  *   503 { ok: false }                           not stored; nothing was
  *                                               written, so send it again
  *
  * The player sends this with `fetch(…, { keepalive: true })` rather than as a
- * server action; lib/video/view-reports.ts says why.
+ * server action; lib/video/view-reports.ts says why. It never waits for the
+ * answer before playing.
  */
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // Browsers say where a request came from. A view is only ever reported by
@@ -33,16 +40,28 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ ok: false, error: 'cross-site' }, { status: 403, headers: NO_STORE });
   }
 
+  // Every post id is a UUID: anything else is answered without asking the
+  // database, which would otherwise refuse it as a malformed query — a 5xx the
+  // player would retry.
   const { id } = await params;
-  const postId = String(id || '').slice(0, 64);
-  if (!postId) return NextResponse.json({ ok: false }, { status: 404, headers: NO_STORE });
+  if (!isPostId(id)) {
+    return NextResponse.json({ ok: false, error: 'no-post' }, { status: 404, headers: NO_STORE });
+  }
 
-  let sessionKey: unknown = null;
+  const raw = await request.text().catch(() => '');
+  if (raw.length > MAX_BODY_BYTES) {
+    return NextResponse.json({ ok: false, error: 'too-large' }, { status: 413, headers: NO_STORE });
+  }
+  let sessionKey: string | null = null;
   try {
-    sessionKey = ((await request.json()) as { sessionKey?: unknown } | null)?.sessionKey ?? null;
+    sessionKey = sanitiseSessionKey((JSON.parse(raw) as { sessionKey?: unknown } | null)?.sessionKey);
   } catch {
-    // No body, or not JSON: counted without a session key, which the rules
-    // treat as one playback session per person.
+    sessionKey = null;
+  }
+  // The key is what makes a retried or duplicated report count once. Without
+  // one there is no telling a second play from a second copy of the first.
+  if (!sessionKey) {
+    return NextResponse.json({ ok: false, error: 'session-key' }, { status: 400, headers: NO_STORE });
   }
 
   try {
@@ -55,10 +74,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (minted) browserId = crypto.randomUUID();
 
     const result = await recordVideoView({
-      postId,
+      postId: id,
       viewerId: viewer?.id ?? null,
       browserId,
-      sessionKey: sanitiseSessionKey(sessionKey),
+      sessionKey,
     });
     const response = NextResponse.json({ ok: true, ...result }, { headers: NO_STORE });
     if (minted && browserId) {

@@ -106,8 +106,9 @@ export function PostCard({
    *
    * Only a video post has one. It is a different number from `views`, which
    * counts the post page being opened and has always been shown here. Whichever
-   * is newer wins: a refresh hands this card a fresh `data.videoViews`, and a
-   * view the player reported hands it the total the server answered with.
+   * is newer wins: a refresh hands this card a fresh `data.videoViews`, and the
+   * player hands it what it shows — a play the moment it starts, then the
+   * total the server answered with.
    */
   const [reportedViews, setReportedViews] = useState(0);
   const videoViews = Math.max(data.videoViews, reportedViews);
@@ -258,7 +259,10 @@ export function PostCard({
           postId={data.id}
           author={data.author.username}
           warned={data.contentWarning === true}
-          videoViews={videoViews}
+          // What the SERVER rendered, never the number on the eye: that one
+          // includes a play the server has not answered yet, and handing it
+          // back to the player as a stored total would count that play twice.
+          videoViews={data.videoViews}
           onVideoViews={setReportedViews}
           full={full}
         />

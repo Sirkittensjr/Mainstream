@@ -4,6 +4,7 @@ import { AdminBadge } from '@/components/AdminBadge';
 import Image from 'next/image';
 import Link from 'next/link';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { likeAction } from '@/app/actions';
 import { formatCount } from '@/lib/format';
@@ -22,6 +23,14 @@ import { AdminRemovePost } from '@/components/AdminRemovePost';
 import { useViewerIsAdmin } from '@/components/ViewerRole';
 import { HashtagChips, HashtagText } from '@/components/HashtagText';
 import { extraTags } from '@/lib/hashtags';
+import {
+  claimAudio,
+  classifyPlayError,
+  readSoundChoice,
+  readyForSound,
+  saveSoundChoice,
+  type SoundChoice,
+} from '@/lib/video/sound';
 import { useVideoView } from './useVideoView';
 import { VideoComments, type CommenterInfo, type VideoComment } from './VideoComments';
 import { VideoText } from './VideoText';
@@ -93,23 +102,46 @@ export function VideoFeed({
   const [deleted, setDeleted] = useState<ReadonlySet<string>>(() => new Set());
   const shown = useMemo(() => items.filter((item) => !deleted.has(item.id)), [items, deleted]);
   /**
-   * What the person wants, and what the browser has allowed.
+   * What the viewer wants, and what the browser has allowed.
    *
-   * The intended experience is sound, so `wantsSound` starts true and every
-   * clip tries to play with it. Safari — and Chrome, on a page nobody has
-   * touched yet — refuses that, and the refusal arrives as a rejected
-   * play(): the slide then falls back to muted playback and says so here, by
-   * setting `blocked`. That is the only thing that mutes anybody who has not
-   * asked to be muted, and one tap on the speaker clears it for good, because
-   * a tap is the interaction those policies were waiting for.
+   * The intended experience is sound, so unless the viewer has turned it off
+   * every clip asks to play with it (lib/video/sound.ts). Safari — and Chrome,
+   * on a page nobody has touched yet — can refuse that, and the refusal
+   * arrives as a play() rejected with NotAllowedError: the slide then plays
+   * muted instead, says so here by setting `blocked`, and shows "Tap for
+   * sound". That tap is the interaction those policies were waiting for: it
+   * turns the sound on inside the tap itself, and readies every other player
+   * in the feed for sound so the clips after it keep it.
    *
-   * Nothing here is an attempt to get around the policy. It is the two
-   * outcomes the policy allows, in the order that gives somebody sound as
-   * soon as they are entitled to it.
+   * The choice is the viewer's and is remembered (localStorage): turning the
+   * sound off is never undone by the feed, on this page or the next. The page
+   * is rendered before that can be read, so `choice` catches up after
+   * hydration; a slide starting playback reads the stored choice itself, so a
+   * viewer who muted yesterday does not hear the first second of today's first
+   * clip, and nothing waits for a re-render before it starts.
    */
-  const [wantsSound, setWantsSound] = useState(true);
+  const [choice, setChoice] = useState<SoundChoice>('on');
   const [blocked, setBlocked] = useState(false);
-  const muted = !wantsSound || blocked;
+  useEffect(() => {
+    setChoice(readSoundChoice());
+  }, []);
+  const muted = choice === 'off' || blocked;
+  /**
+   * Whether every slide keeps a player element, rather than only the slide on
+   * screen and its neighbours. Off until somebody taps for sound — the page
+   * starts exactly as light as it always has — and then on for good: Safari
+   * readies an element for sound once, inside a tap, and the clips further
+   * down need theirs to exist in that tap to be readied with it.
+   */
+  const [keepPlayers, setKeepPlayers] = useState(false);
+  /** Every slide's player, by post, and whether its creator posted it silent. */
+  const players = useRef(new Map<string, { element: HTMLVideoElement; silent: boolean }>());
+  /** Players already readied for sound inside a tap (see readyForSound). */
+  const readied = useRef(new WeakSet<HTMLMediaElement>());
+  const registerPlayer = useCallback((postId: string, element: HTMLVideoElement | null, silent: boolean) => {
+    if (element) players.current.set(postId, { element, silent });
+    else players.current.delete(postId);
+  }, []);
   const scroller = useRef<HTMLDivElement>(null);
   const slides = useRef<Array<HTMLElement | null>>([]);
 
@@ -179,9 +211,34 @@ export function VideoFeed({
   // swipe re-renders the two or three slides it actually changes rather than
   // all thirty.
   const handleBlocked = useCallback(() => setBlocked(true), []);
-  const handleUnmute = useCallback(() => {
+  /**
+   * Sound on, from a tap — so it runs inside the tap, where every browser
+   * allows it: the clip on screen is unmuted and played right here rather than
+   * after a re-render, and the other players are readied for sound.
+   */
+  const enableSound = useCallback((postId: string | null) => {
+    const player = postId ? players.current.get(postId) : undefined;
+    if (player && !player.silent) {
+      player.element.muted = false;
+      if (player.element.paused) void player.element.play().catch(() => undefined);
+    }
+    // Every slide's player, created now — synchronously, still inside the tap
+    // — so that all of them can be readied for sound by it.
+    flushSync(() => setKeepPlayers(true));
+    readyForSound(
+      [...players.current.values()].map((entry) => entry.element),
+      readied.current,
+    );
+    saveSoundChoice('on');
+    setChoice('on');
     setBlocked(false);
-    setWantsSound(true);
+  }, []);
+  /** Sound off, from a tap. Remembered, and never undone by the feed. */
+  const disableSound = useCallback((postId: string | null) => {
+    const player = postId ? players.current.get(postId) : undefined;
+    if (player) player.element.muted = true;
+    saveSoundChoice('off');
+    setChoice('off');
   }, []);
   const openComments = useCallback((postId: string) => setOpenFor(postId), []);
   const removeVideo = useCallback(
@@ -199,8 +256,9 @@ export function VideoFeed({
             // This tap is a control, not a tap on the video: it must not
             // reach the play/pause layer underneath.
             event.stopPropagation();
-            setBlocked(false);
-            setWantsSound(muted);
+            const onScreen = shown[active]?.id ?? null;
+            if (muted) enableSound(onScreen);
+            else disableSound(onScreen);
           }}
           aria-label={muted ? 'Unmute' : 'Mute'}
           aria-pressed={!muted}
@@ -236,11 +294,14 @@ export function VideoFeed({
               // to read its start so it plays the moment it is swiped to;
               // nothing else on the queue touches the network.
               preload={index === active ? 'auto' : index === active + 1 ? 'metadata' : 'none'}
+              keepPlayer={keepPlayers}
               muted={muted}
+              soundBlocked={blocked && choice === 'on'}
               commentCount={counts[data.id] ?? data.comments}
               onOpenComments={openComments}
               onBlocked={handleBlocked}
-              onUnmute={handleUnmute}
+              onEnableSound={enableSound}
+              onPlayer={registerPlayer}
               onDeleted={removeVideo}
               last={index === shown.length - 1}
               end={end}
@@ -297,11 +358,14 @@ const Slide = memo(function Slide({
   mounted,
   isActive,
   preload,
+  keepPlayer,
   muted,
+  soundBlocked,
   commentCount,
   onOpenComments,
   onBlocked,
-  onUnmute,
+  onEnableSound,
+  onPlayer,
   onDeleted,
   last,
   end,
@@ -315,20 +379,43 @@ const Slide = memo(function Slide({
   mounted: boolean;
   isActive: boolean;
   preload: 'auto' | 'metadata' | 'none';
+  /** Keep a player element even while far away (see `keepPlayers`). */
+  keepPlayer: boolean;
   muted: boolean;
+  /** Sound is wanted but the browser refused it: "Tap for sound" is shown. */
+  soundBlocked: boolean;
   commentCount: number;
   onOpenComments: (postId: string) => void;
   /** Autoplay with sound was refused, so everything from here plays muted. */
   onBlocked: () => void;
-  onUnmute: () => void;
+  /** A tap asking for sound, for the clip with this post id. */
+  onEnableSound: (postId: string | null) => void;
+  /** This slide's player element, for the feed to ready for sound. */
+  onPlayer: (postId: string, element: HTMLVideoElement | null, silent: boolean) => void;
   /** Its author deleted it. */
   onDeleted: (postId: string) => void;
   last: boolean;
   end: { href: string; label: string };
   returnTo: string;
 }) {
-  const video = useRef<HTMLVideoElement>(null);
+  const video = useRef<HTMLVideoElement | null>(null);
+  /** The creator posted it without sound: no viewer choice turns it on. */
+  const silent = media.muted === true;
+  /**
+   * Whether this player should be muted. The stored choice as well as the
+   * feed's: just after the page loads, the feed has not caught up with what
+   * the viewer chose last time (see VideoFeed), and a viewer who turned the
+   * sound off must not hear a moment of the first clip.
+   */
+  const quiet = useCallback(() => muted || silent || readSoundChoice() === 'off', [muted, silent]);
   const attachHere = useCallback((node: HTMLElement | null) => attach(index, node), [attach, index]);
+  const attachPlayer = useCallback(
+    (node: HTMLVideoElement | null) => {
+      video.current = node;
+      onPlayer(data.id, node, silent);
+    },
+    [onPlayer, data.id, silent],
+  );
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   /**
@@ -368,7 +455,7 @@ const Slide = memo(function Slide({
 
   useEffect(() => {
     const element = video.current;
-    if (!isActive || covered) {
+    if (!isActive || covered || !mounted) {
       // Scrolled away (or covered): this viewing is over, and playing it again
       // when somebody comes back is a new one.
       endViewing();
@@ -383,16 +470,15 @@ const Slide = memo(function Slide({
 
     let cancelled = false;
     void (async () => {
-      element.muted = muted;
+      element.muted = quiet();
       try {
         await element.play();
-      } catch {
-        if (cancelled || element.muted) {
-          // Already muted and still refused: the browser is not going to
-          // start this on its own. The poster and the play button stay, and
-          // a tap starts it.
-          return;
-        }
+      } catch (error) {
+        // Interrupted — a swipe on, a newer play() — is not a refusal, and
+        // muting the feed for it would take sound away from somebody who was
+        // allowed it. Refused even muted (Low Power Mode): the poster and the
+        // play button stay, and a tap starts it.
+        if (cancelled || element.muted || classifyPlayError(error) !== 'needs-gesture') return;
         // Refused with sound. Mute and try once more, which is the one thing
         // every autoplay policy does allow, and tell the feed so the rest of
         // the clips do not each repeat this.
@@ -404,19 +490,35 @@ const Slide = memo(function Slide({
     return () => {
       cancelled = true;
     };
-  }, [isActive, mounted, covered, muted, onBlocked, endViewing]);
+  }, [isActive, mounted, covered, quiet, onBlocked, endViewing]);
 
   // React will not re-mute a player that has already started, so the mute
   // state is applied to the element itself.
   useEffect(() => {
-    if (video.current) video.current.muted = muted;
-  }, [muted]);
+    if (video.current) video.current.muted = quiet();
+  }, [muted, silent, quiet]);
+
+  // Out of reach of the screen: let go of the video it was holding. The element
+  // itself stays — on Safari it may already have been readied for sound, and a
+  // new one would need another tap.
+  useEffect(() => {
+    const element = video.current;
+    if (mounted || !element || !element.currentSrc) return;
+    element.removeAttribute('src');
+    element.load();
+  }, [mounted]);
 
   function togglePlay() {
     const element = video.current;
     if (!element) return;
-    if (element.paused) void element.play().catch(() => undefined);
-    else element.pause();
+    if (!element.paused) {
+      element.pause();
+      return;
+    }
+    // A tap to play is an interaction: if sound is wanted and was only refused
+    // for want of one, this is when it comes on.
+    if (soundBlocked && !silent) onEnableSound(data.id);
+    else void element.play().catch(() => undefined);
   }
 
   function toggleLike() {
@@ -463,24 +565,32 @@ const Slide = memo(function Slide({
       className="relative h-full w-full snap-start snap-always overflow-hidden bg-black"
     >
       <div className="video-picture-stage absolute inset-0 flex items-center justify-center">
-        {mounted ? (
+        {/* The slide on screen and its neighbours have a player. Once somebody
+            has tapped for sound every slide keeps one, so a player readied for
+            sound (Safari asks for that per element) is still the one used when
+            its clip comes round; further away it has no source, fetches
+            nothing and is hidden. */}
+        {mounted || keepPlayer ? (
           <video
-            ref={video}
-            src={media.url}
-            poster={media.poster}
-            preload={preload}
+            ref={attachPlayer}
+            src={mounted ? media.url : undefined}
+            poster={mounted ? media.poster : undefined}
+            preload={mounted ? preload : 'none'}
             playsInline
             loop
             // The feed's own mute toggle, or the creator's — whichever silences it.
             // A video posted with the sound off does not start making noise
             // because a viewer unmuted the feed.
-            muted={muted || media.muted === true}
+            muted={muted || silent}
             onPlay={(event) => {
               setPlaying(true);
+              // One video heard at a time, page-wide.
+              claimAudio(event.currentTarget);
               watch.onPlay(event);
             }}
             onPlaying={watch.onPlaying}
             onPause={() => setPlaying(false)}
+            onVolumeChange={(event) => claimAudio(event.currentTarget)}
             // `loop` means `ended` never fires here; the loop coming round is
             // a seek back to the start, which is where a replay is noticed.
             onSeeked={watch.onSeeked}
@@ -494,9 +604,10 @@ const Slide = memo(function Slide({
               setSeconds(element.currentTime);
               watch.onTimeUpdate(event);
             }}
-            className="h-full w-full object-contain"
+            className={mounted ? 'h-full w-full object-contain' : 'hidden'}
           />
-        ) : media.poster ? (
+        ) : null}
+        {!mounted && media.poster ? (
           <Image
             src={media.poster}
             alt=""
@@ -575,15 +686,22 @@ const Slide = memo(function Slide({
             )}
           </button>
 
-          {muted && isActive && (
+          {/* Only when the browser refused sound the viewer wanted. A viewer
+              who turned the sound off has the speaker at the top for that,
+              and is not asked again; a clip posted silent has none to give. */}
+          {soundBlocked && isActive && !silent && (
             <button
               type="button"
               onClick={(event) => {
+                // The tap is the interaction the browser was waiting for, and
+                // it is handled right here, inside it. Not a tap on the video.
                 event.stopPropagation();
-                onUnmute();
+                onEnableSound(data.id);
               }}
-              className="absolute left-1/2 top-[22%] z-20 -translate-x-1/2 rounded-full bg-black/55 px-4 py-2 text-xs font-semibold backdrop-blur"
+              data-tap-for-sound
+              className="absolute left-1/2 top-[22%] z-20 flex min-h-11 -translate-x-1/2 items-center gap-2 rounded-full bg-black/65 px-5 py-2.5 text-sm font-semibold shadow-lg backdrop-blur transition active:scale-95"
             >
+              <VolumeIcon muted width={18} height={18} />
               Tap for sound
             </button>
           )}

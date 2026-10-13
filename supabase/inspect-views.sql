@@ -16,7 +16,8 @@ with facts as (
             where table_schema = 'public' and table_name = 'posts'
               and column_name = 'video_views') as has_column,
     to_regprocedure('public.increment_counter(text, uuid, text, integer)') as counter_fn,
-    to_regprocedure('public.record_video_view(uuid, uuid, uuid, text, text, timestamptz)') as record_fn
+    to_regprocedure('public.record_video_view(uuid, uuid, uuid, text, text, timestamptz)') as record_fn,
+    to_regprocedure('public.record_video_play(uuid, uuid, uuid, text, text)') as play_fn
 ),
 -- Counts that need the table, run only when it exists (query_to_xml runs its
 -- query by name at run time, so a missing table is never even parsed).
@@ -45,7 +46,20 @@ checks as (
               when has_table then 'table only' when has_column then 'column only'
               else 'not installed' end as result,
          case when has_table and has_column then 'Good.'
-              else 'NOT COUNTING: run migrations/0010_video_views.sql. Until then every report is answered "not counted" and the eye stays where it is.' end as verdict
+              else 'NOT COUNTING — this is what keeps the eye at 0: every report is answered "not counted (unavailable)". Run migrations/0017_count_every_play.sql, which installs the storage too.' end as verdict
+    from facts
+
+  union all
+  select 0, 'Every play counted in one step (migration 0017)',
+         case when play_fn is null then 'missing'
+              when has_function_privilege('service_role', play_fn, 'execute') then 'installed, app may call it'
+              else 'installed, but the app''s role may NOT call it' end,
+         case when play_fn is null then 'Run migrations/0017_count_every_play.sql. It needs nothing else first.'
+              when has_function_privilege('service_role', play_fn, 'execute')
+                   and not has_function_privilege('anon', play_fn, 'execute')
+                   and not has_function_privilege('authenticated', play_fn, 'execute') then 'Good.'
+              when has_function_privilege('service_role', play_fn, 'execute') then 'UNSAFE: the public API roles may call it. Re-run migrations/0017_count_every_play.sql.'
+              else 'Grant it: re-run migrations/0017_count_every_play.sql.' end
     from facts
 
   union all
@@ -53,9 +67,9 @@ checks as (
          case when counter_fn is null then 'missing'
               when has_function_privilege('service_role', counter_fn, 'execute') then 'installed, app may call it'
               else 'installed, but the app''s role may NOT call it' end,
-         case when counter_fn is null then 'Run migrations/0015_hashtags_and_counters.sql.'
+         case when counter_fn is null then 'Run migrations/0017_count_every_play.sql (it installs this too).'
               when has_function_privilege('service_role', counter_fn, 'execute') then 'Good.'
-              else 'LOSING VIEWS: the total cannot be raised. Migration 0016 grants it.' end
+              else 'LOSING VIEWS: the total cannot be raised. Migration 0017 grants it.' end
     from facts
 
   union all
@@ -63,7 +77,7 @@ checks as (
          case when record_fn is null then 'missing'
               when has_function_privilege('service_role', record_fn, 'execute') then 'installed, app may call it'
               else 'installed, but the app''s role may NOT call it' end,
-         case when record_fn is null then 'Run migrations/0016_record_video_view.sql (the app works without it, in two steps).'
+         case when record_fn is null then 'Not needed once 0017 is installed (row 0); without either, the app counts in two steps.'
               when has_function_privilege('service_role', record_fn, 'execute') then 'Good.'
               else 'Grant it: re-run migrations/0016_record_video_view.sql.' end
     from facts
@@ -81,7 +95,7 @@ checks as (
          coalesce(views_missing::text || ' views on ' || posts_missing_views::text || ' posts', 'n/a'),
          case when views_missing is null then 'n/a'
               when views_missing = 0 then 'Good.'
-              else 'This is the lost-view bug: the view was stored, raising the total failed, and every retry was then "already counted". Migration 0016 adds these back and stops it happening.' end
+              else 'This is the lost-view bug: the view was stored, raising the total failed, and every retry was then "already counted". Migration 0017 (or 0016) adds these back and stops it happening.' end
     from counts
 )
 select check_name, result, verdict from checks order by ord;
