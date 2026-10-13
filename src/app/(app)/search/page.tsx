@@ -10,7 +10,7 @@ import { PostList } from '@/components/PostList';
 import { SearchIcon } from '@/components/Icons';
 import { SectionHeader } from '@/components/EmptyState';
 import { search } from '@/lib/services/search';
-import { tagHref } from '@/lib/hashtags';
+import { hashtagHref } from '@/lib/hashtags';
 import { followingIds } from '@/lib/services/users';
 import { CATEGORIES } from '@/lib/types';
 import { getViewer } from '@/lib/session';
@@ -72,25 +72,39 @@ export default async function SearchPage({
 
         {nothing && (
           <p className="mt-10 text-center text-sm text-white/40">
-            Nothing matched &ldquo;{query}&rdquo;. Try a name, a tag or a category.
+            Nothing matched &ldquo;{query}&rdquo;. Try a name, a #hashtag or a category.
           </p>
         )}
 
+        {/* Hashtags first, and apart from the posts that carry them: each one
+            is a page, not a post. */}
         {results.hashtags.length > 0 && (
           <section className="mt-8" data-search-hashtags>
             <SectionHeader title="Hashtags" />
-            <ul className="flex flex-wrap gap-2">
-              {results.hashtags.map((tag) => (
-                <li key={tag.key} className="min-w-0 max-w-full">
+            <ul className="space-y-2">
+              {results.hashtags.map((hashtag) => (
+                <li key={hashtag.tag}>
                   <Link
-                    href={tagHref(tag.key)}
-                    data-hashtag={tag.key}
-                    className="chip max-w-full hover:bg-white/10"
+                    href={hashtagHref(hashtag.tag)}
+                    data-hashtag-result={hashtag.tag}
+                    className="card flex items-center gap-3 p-4 transition hover:bg-white/[0.06]"
                   >
-                    <span className="truncate font-semibold text-white">#{tag.label}</span>
-                    <span className="shrink-0 text-white/40">
-                      {tag.videos === 1 ? '1 video' : `${tag.videos} videos`}
-                      {tag.posts > tag.videos ? ` · ${tag.posts} posts` : ''}
+                    <span
+                      aria-hidden
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-aura to-fay font-display text-lg font-extrabold"
+                    >
+                      #
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-semibold">#{hashtag.display}</span>
+                      <span className="block text-xs text-white/40">
+                        {hashtag.posts === 0
+                          ? 'No public posts yet'
+                          : `${hashtag.posts.toLocaleString()} public ${hashtag.posts === 1 ? 'post' : 'posts'}`}
+                      </span>
+                    </span>
+                    <span aria-hidden className="text-white/30">
+                      →
                     </span>
                   </Link>
                 </li>

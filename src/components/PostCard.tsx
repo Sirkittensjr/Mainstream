@@ -20,9 +20,10 @@ import { ReportDialog } from './ReportDialog';
 import { AdminRemovePost } from './AdminRemovePost';
 import { useViewerIsAdmin } from './ViewerRole';
 import { CommentIcon, EyeIcon, HeartIcon, ShareIcon } from './Icons';
-import { HashtagLinks } from './HashtagLinks';
 import { SpeechBubble } from './SpeechBubble';
+import { HashtagChips, HashtagText } from './HashtagText';
 import { drawnAs } from '@/lib/text-posts';
+import { extraTags } from '@/lib/hashtags';
 
 export interface PostCardData {
   id: string;
@@ -104,9 +105,14 @@ export function PostCard({
    * The watch count, which the server rendered and the player updates.
    *
    * Only a video post has one. It is a different number from `views`, which
-   * counts the post page being opened and has always been shown here.
+   * counts the post page being opened and has always been shown here. Whichever
+   * is newer wins: a refresh hands this card a fresh `data.videoViews`, and a
+   * view the player reported hands it the total the server answered with.
    */
-  const [videoViews, setVideoViews] = useState(data.videoViews);
+  const [reportedViews, setReportedViews] = useState(0);
+  const videoViews = Math.max(data.videoViews, reportedViews);
+  /** Tags the post carries that its words do not already show as #hashtags. */
+  const tagChips = extraTags({ caption: data.caption, text_title: data.textTitle, tags: data.tags });
   const [, startTransition] = useTransition();
   const router = useRouter();
   const isOwn = viewerId === data.author.id;
@@ -186,8 +192,8 @@ export function PostCard({
         )}
       </header>
 
-      {(data.reason || data.category) && (
-        <div className="flex flex-wrap items-center gap-2 px-4 pb-3 lg:px-5">
+      {(data.reason || data.category || tagChips.length > 0) && (
+        <div className="flex flex-wrap items-center gap-2 px-4 pb-3 lg:px-5" data-post-chips>
           <Link
             href={`/discover?category=${encodeURIComponent(data.category)}`}
             className="chip hover:bg-white/10"
@@ -199,6 +205,10 @@ export function PostCard({
               {data.reason}
             </span>
           )}
+          {/* A video's hashtags are collected as tags, not typed into its
+              caption, so this is where they are seen — and each one opens its
+              hashtag page. */}
+          <HashtagChips tags={tagChips} />
         </div>
       )}
 
@@ -219,21 +229,28 @@ export function PostCard({
         />
       ) : (
         data.caption && (
-          <Link href={`/post/${data.id}`} className="block px-4 pb-3 lg:px-5 lg:pb-4">
+          // The caption opens the post, as it always has — apart from its
+          // hashtags, which open their own pages. The link to the post is laid
+          // under the words rather than wrapped round them, so it and the
+          // hashtag links are siblings: never a link inside a link, and a tap on
+          // a hashtag cannot fall through to the post.
+          <div className="relative px-4 pb-3 lg:px-5 lg:pb-4" data-post-caption>
+            <Link
+              href={`/post/${data.id}`}
+              aria-label="Open post"
+              className="absolute inset-0"
+            />
             <p
-              className={`whitespace-pre-wrap text-[15px] leading-relaxed text-white/90 lg:text-base ${
+              className={`pointer-events-none relative whitespace-pre-wrap text-[15px] leading-relaxed text-white/90 lg:text-base ${
                 compact ? 'line-clamp-3' : ''
               }`}
             >
-              {data.caption}
+              <HashtagText text={data.caption} />
             </p>
-          </Link>
+          </div>
         )
       )}
 
-      {/* Its hashtags, as links to their pages — the tags it was posted with,
-          and any written into the caption. */}
-      <HashtagLinks tags={data.tags} caption={data.caption} className="-mt-1 px-4 pb-3 lg:px-5 lg:pb-4" />
 
       {data.media.length > 0 && (
         <MediaStrip
@@ -242,7 +259,7 @@ export function PostCard({
           author={data.author.username}
           warned={data.contentWarning === true}
           videoViews={videoViews}
-          onVideoViews={setVideoViews}
+          onVideoViews={setReportedViews}
           full={full}
         />
       )}

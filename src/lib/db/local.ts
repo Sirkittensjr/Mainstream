@@ -1,7 +1,8 @@
+import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { Driver, QueryOptions, Row, Schema, TableName } from './types';
+import type { CounterColumn, Driver, QueryOptions, Row, Schema, TableName } from './types';
 
 /**
  * Where the local driver keeps its data.
@@ -51,6 +52,8 @@ const EMPTY: Store = {
   messages: [],
   moderation_events: [],
   video_views: [],
+  hashtags: [],
+  post_hashtags: [],
 };
 
 /**
@@ -75,6 +78,13 @@ class LocalDriver implements Driver {
         const raw = await fs.readFile(DB_FILE, 'utf8');
         const parsed = JSON.parse(raw) as Partial<Store>;
         this.store = { ...structuredClone(EMPTY), ...parsed };
+        // A store saved before hashtags were indexed: index what it already
+        // holds, once — the local equivalent of migration 0015's backfill.
+        if (!parsed.post_hashtags) {
+          const { hashtagIndexFor } = await import('@/lib/hashtags');
+          Object.assign(this.store, hashtagIndexFor(this.store.posts, () => randomUUID()));
+          await this.flush();
+        }
       } catch {
         this.store = structuredClone(EMPTY);
         // First run: populate with sample creators so the app never looks empty.
@@ -134,6 +144,14 @@ class LocalDriver implements Driver {
       const entries = Object.entries(options.in) as [keyof Row<T>, unknown[]][];
       rows = rows.filter((row) =>
         entries.every(([key, values]) => !values || values.includes(row[key])),
+      );
+    }
+    if (options.startsWith) {
+      const entries = Object.entries(options.startsWith) as [keyof Row<T>, string | undefined][];
+      rows = rows.filter((row) =>
+        entries.every(
+          ([key, prefix]) => prefix === undefined || String(row[key] ?? '').startsWith(prefix),
+        ),
       );
     }
     if (options.orderBy) {
@@ -229,6 +247,25 @@ class LocalDriver implements Driver {
     }
     if (changed > 0) await this.flush();
     return changed;
+  }
+
+  async increment<T extends TableName>(
+    table: T,
+    id: string,
+    column: CounterColumn<Row<T>>,
+    by = 1,
+  ) {
+    const store = await this.load();
+    const list = store[table] as Row<T>[];
+    const index = list.findIndex((r) => (r as { id: string }).id === id);
+    if (index === -1) return null;
+    // Synchronous from the read to the write, so nothing else in this process
+    // can add in between: the local equivalent of `set n = n + 1`.
+    const current = Number((list[index] as unknown as Record<string, unknown>)[column] ?? 0);
+    const next = (Number.isFinite(current) ? current : 0) + by;
+    list[index] = { ...list[index], [column]: next };
+    await this.flush();
+    return next;
   }
 
   async clear() {

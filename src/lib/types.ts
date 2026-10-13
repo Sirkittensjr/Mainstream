@@ -302,6 +302,35 @@ export interface VideoView {
   created_at: ISODate;
 }
 
+/**
+ * One hashtag FayTarra knows about: one row per tag, whatever its casing.
+ *
+ * `tag` is the normalised key (lib/hashtags.ts) and is unique, so `#Gaming`
+ * and `#gaming` can never become two hashtags. `display` is how it was written
+ * the first time anybody published it, which is how its page is titled.
+ */
+export interface HashtagRecord {
+  id: ID;
+  tag: string;
+  display: string;
+  created_at: ISODate;
+}
+
+/**
+ * A post filed under a hashtag — the index a hashtag page is read from.
+ *
+ * Kept in step with what the post says: written when it is published, replaced
+ * whenever its words or tags change, and gone with it when it is deleted.
+ * `post_created_at` is the post's own time, so a hashtag page reads newest
+ * first straight off the index.
+ */
+export interface PostHashtag {
+  id: ID;
+  post_id: ID;
+  tag: string;
+  post_created_at: ISODate;
+}
+
 export interface Like {
   id: ID;
   post_id: ID;

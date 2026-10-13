@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { isMissingRelation, throwQueryError } from './errors';
-import type { Driver, QueryOptions, Row, TableName } from './types';
+import type { CounterColumn, Driver, QueryOptions, Row, TableName } from './types';
 
 const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'faytarra-media';
 
@@ -31,6 +31,18 @@ export interface Filterable {
   eq(column: string, value: never): Filterable;
   is(column: string, value: null): Filterable;
   in(column: string, values: never[]): Filterable;
+  like(column: string, pattern: string): Filterable;
+}
+
+/**
+ * A LIKE pattern matching text that starts with `prefix`, and nothing else.
+ *
+ * `%` and `_` are LIKE's wildcards and `\` its escape, and all three can be in
+ * what somebody typed — `_` is in hashtags — so each is escaped rather than left
+ * to widen the match.
+ */
+export function prefixPattern(prefix: string): string {
+  return `${prefix.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
 }
 
 /**
@@ -51,6 +63,7 @@ export function applyFilters(
   builder: Filterable,
   where: Record<string, unknown> | undefined,
   inFilters: Record<string, unknown[] | undefined> | undefined,
+  startsWith?: Record<string, string | undefined>,
 ): Filterable {
   let next = builder;
   for (const [key, value] of Object.entries(where ?? {})) {
@@ -59,8 +72,17 @@ export function applyFilters(
   for (const [key, values] of Object.entries(inFilters ?? {})) {
     if (values) next = next.in(key, values as never[]);
   }
+  for (const [key, prefix] of Object.entries(startsWith ?? {})) {
+    if (prefix !== undefined) next = next.like(key, prefixPattern(prefix));
+  }
   return next;
 }
+
+/**
+ * PostgREST's "no such function", and Postgres's. A database that has not run
+ * migration 0015 has no `increment_counter`.
+ */
+const MISSING_FUNCTION = new Set(['PGRST202', '42883']);
 
 /**
  * Supabase driver. Uses the service role key on the server so that the app can
@@ -70,6 +92,8 @@ export function applyFilters(
 class SupabaseDriver implements Driver {
   readonly name = 'supabase' as const;
   private client: SupabaseClient;
+  /** False once the database has said it has no `increment_counter`. */
+  private atomicIncrement = true;
 
   constructor() {
     this.client = createClient(
@@ -97,6 +121,7 @@ class SupabaseDriver implements Driver {
         base as unknown as Filterable,
         options.where as Record<string, unknown> | undefined,
         options.in as Record<string, unknown[] | undefined> | undefined,
+        options.startsWith as Record<string, string | undefined> | undefined,
       ) as unknown as typeof base;
       if (options.orderBy) {
         builder = builder.order(String(options.orderBy), { ascending: !options.desc });
@@ -187,8 +212,55 @@ class SupabaseDriver implements Driver {
     return (data ?? []).length;
   }
 
+  async increment<T extends TableName>(
+    table: T,
+    id: string,
+    column: CounterColumn<Row<T>>,
+    by = 1,
+  ) {
+    if (this.atomicIncrement) {
+      // `update … set n = n + by … returning n`, in the database, under the
+      // row's lock. See increment_counter in migration 0015.
+      const { data, error } = await this.client.rpc('increment_counter', {
+        target_table: table,
+        target_id: id,
+        target_column: column,
+        amount: by,
+      });
+      if (!error) return typeof data === 'number' ? data : data == null ? null : Number(data);
+      if (!MISSING_FUNCTION.has(error.code ?? '')) throwQueryError(table, error);
+      this.atomicIncrement = false;
+      console.warn(
+        '[faytarra] This database has no increment_counter function, so counters are ' +
+          'raised by compare-and-set from the app instead. ' +
+          'Run supabase/migrations/0015_hashtags_and_counters.sql to do it in one statement.',
+      );
+    }
+    // The fallback until the migration is run: compare-and-set. The write only
+    // lands if the number is still what was read, so of two increments racing,
+    // one wins and the other reads the new number and goes again — nothing is
+    // lost, and nothing is written that a read did not see.
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const row = await this.get(table, id);
+      if (!row) return null;
+      const stored = (row as unknown as Record<string, unknown>)[column];
+      const current = typeof stored === 'number' ? stored : null;
+      const changed = await this.updateWhere(
+        table,
+        { id, [column]: current } as Partial<Row<T>>,
+        { [column]: (current ?? 0) + by } as Partial<Row<T>>,
+      );
+      if (changed > 0) return (current ?? 0) + by;
+      // A short, uneven pause, so a crowd of these does not retry in step.
+      await new Promise((resolve) => setTimeout(resolve, 2 + Math.floor(Math.random() * 8)));
+    }
+    throw new Error(`[supabase:${table}] ${column} on ${id} could not be raised: too much contention`);
+  }
+
   async clear() {
     const tables: TableName[] = [
+      'post_hashtags',
+      'hashtags',
       'messages',
       'ratings',
       'notifications',

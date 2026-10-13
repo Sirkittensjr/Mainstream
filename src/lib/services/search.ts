@@ -1,8 +1,8 @@
 import 'server-only';
 import { db } from '@/lib/db';
-import { postHashtags, tagKey } from '@/lib/hashtags';
+import { hashtagQuery, hasHashtag } from '@/lib/hashtags';
 import { CATEGORIES, type Category, type ID, type PublicUser } from '@/lib/types';
-import { matchHashtags, type HashtagSummary } from './hashtags';
+import { searchHashtags, type HashtagResult } from './hashtags';
 import { hydratePosts, visiblePosts, type PostView } from './posts';
 import { ratingsIndex } from './ratings';
 import { followerCounts, hiddenUserIds, toPublicUser } from './users';
@@ -11,14 +11,13 @@ export interface SearchResults {
   people: { user: PublicUser; followers: number; rating: number | null; votes: number }[];
   posts: PostView[];
   categories: Category[];
-  hashtags: HashtagSummary[];
+  /** Hashtag pages, separate from the posts that carry them. */
+  hashtags: HashtagResult[];
 }
 
 export async function search(query: string, viewerId: ID | null): Promise<SearchResults> {
   const needle = query.trim().toLowerCase();
   if (!needle) return { people: [], posts: [], categories: [], hashtags: [] };
-  // The same search as a hashtag: "#Gaming", "gaming" and "GAMING" are one.
-  const tagNeedle = tagKey(needle);
   const store = db();
   const [users, hidden, posts, index] = await Promise.all([
     store.query('users', { where: { status: 'active' } }),
@@ -39,20 +38,26 @@ export async function search(query: string, viewerId: ID | null): Promise<Search
     .slice(0, 20);
   const followers = await followerCounts(people.map((u) => u.id));
 
+  // `#Gaming` and `Gaming` find the same posts: anything filed under the
+  // hashtag, whatever capitalisation it was written in.
+  const asHashtag = hashtagQuery(query);
   const matchedPosts = posts
     .filter(
       (post) =>
+        (asHashtag !== null && hasHashtag(post, asHashtag)) ||
         post.caption.toLowerCase().includes(needle) ||
         // A Story Message's title is its words too, and usually the ones
         // somebody remembers it by.
         (post.text_title ?? '').toLowerCase().includes(needle) ||
         post.tags.some((tag) => tag.toLowerCase().includes(needle)) ||
-        (tagNeedle !== null && postHashtags(post).some((tag) => tag.key?.includes(tagNeedle))) ||
         post.category.toLowerCase() === needle,
     )
     .slice(0, 24);
 
+  const hashtags = await searchHashtags(query, posts);
+
   return {
+    hashtags,
     people: people.map((user) => {
       const summary = index.users.get(user.id);
       return {
@@ -64,6 +69,5 @@ export async function search(query: string, viewerId: ID | null): Promise<Search
     }),
     posts: await hydratePosts(matchedPosts, viewerId),
     categories: CATEGORIES.filter((category) => category.toLowerCase().includes(needle)),
-    hashtags: matchHashtags(posts, needle),
   };
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { createClient } from '@supabase/supabase-js';
-import { applyFilters, type Filterable } from './supabase';
+import { applyFilters, prefixPattern, type Filterable } from './supabase';
 
 /**
  * These build a real PostgREST query and read the URL it produced. Nothing is
@@ -13,9 +13,10 @@ const client = createClient('http://127.0.0.1:1/', 'not-a-real-key');
 function queryString(
   where: Record<string, unknown> | undefined,
   inFilters?: Record<string, unknown[] | undefined>,
+  startsWith?: Record<string, string | undefined>,
 ): string {
   const builder = client.from('messages').select('*');
-  const filtered = applyFilters(builder as unknown as Filterable, where, inFilters);
+  const filtered = applyFilters(builder as unknown as Filterable, where, inFilters, startsWith);
   return decodeURIComponent((filtered as unknown as { url: URL }).url.search);
 }
 
@@ -53,5 +54,15 @@ describe('translating a query into PostgREST filters', () => {
 
   it('applies nothing when there is nothing to apply', () => {
     assert.equal(queryString(undefined), '?select=*');
+  });
+
+  it('matches a prefix with LIKE', () => {
+    assert.match(queryString(undefined, undefined, { tag: 'gam' }), /tag=like\.gam%/);
+  });
+
+  it('escapes LIKE wildcards in a prefix, so `_` and `%` match only themselves', () => {
+    assert.equal(prefixPattern('my_tag'), 'my\\_tag%');
+    assert.equal(prefixPattern('100%'), '100\\%%');
+    assert.equal(prefixPattern('a\\b'), 'a\\\\b%');
   });
 });

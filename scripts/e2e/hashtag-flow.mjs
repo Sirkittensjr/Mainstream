@@ -5,11 +5,12 @@
  *      written, on the post page, in the feed and in the Videos feed — and so
  *      are hashtags written into a caption.
  *   2. Each one is a link; every spelling of one hashtag opens the same page.
- *   3. A hashtag's page is the Videos feed — same player, one video playing —
- *      holding every public video with that hashtag, whatever its case.
+ *   3. A hashtag's page holds every public post with that hashtag — videos in
+ *      the FayTarra player, photos and text posts — whatever its case, newest
+ *      first, titled the way it was first written.
  *   4. A video with several hashtags is on each of their pages.
  *   5. Search finds hashtags with or without the #, and leads to their pages.
- *   6. A deleted video leaves the page at once.
+ *   6. A deleted video leaves the page, and the counts in search, at once.
  *   7. All of it works on a phone and on a desktop, signed in or out.
  *
  *   OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
@@ -116,21 +117,19 @@ async function postPhoto(actor, caption, tags) {
   return page.url().split('/post/')[1].split(/[?#]/)[0];
 }
 
-/** The hashtag links a post shows, as [text, href]. */
+/**
+ * The hashtag links a post shows, as [text, href]: hashtags written in its
+ * words, linked where they are, then the tags it was posted with as chips.
+ */
 async function hashtagsOn(scope) {
-  await scope.locator('[data-hashtags]').first().waitFor({ timeout: 10000 }).catch(() => {});
+  await scope.locator('a[data-hashtag-link]').first().waitFor({ timeout: 10000 }).catch(() => {});
   return scope
-    .locator('[data-hashtags] a[data-hashtag]')
+    .locator('a[data-hashtag-link]')
     .evaluateAll((links) => links.map((a) => [a.textContent.trim(), a.getAttribute('href')]));
 }
 
-const players = (page) =>
-  page.evaluate(() =>
-    [...document.querySelectorAll('section[data-index] video')].map((video) => ({
-      index: Number(video.closest('section[data-index]').dataset.index),
-      paused: video.paused,
-    })),
-  );
+/** What a hashtag page lists, as each card's text. */
+const cardsOn = (page) => page.locator('article').allInnerTexts();
 
 async function run() {
   const browser = await chromium.launch({
@@ -178,40 +177,42 @@ async function run() {
   const slide = V.page.locator('section[data-index="0"]');
   const onSlide = await hashtagsOn(slide);
   check('the Videos feed shows them over the video', onSlide.map(([text]) => text).join(' ') === `#${game} #${speed}`, JSON.stringify(onSlide));
-  await slide.locator(`[data-hashtags] a[href="/tag/${gameKey}"]`).click();
+  await slide.locator(`a[data-hashtag-link][href="/tag/${gameKey}"]`).first().click();
   await V.page.waitForURL(new RegExp(`/tag/${gameKey}$`), { timeout: 15000 }).catch(() => {});
-  await V.page.waitForSelector('section[data-index="2"]', { timeout: 20000 }).catch(() => {});
+  await V.page.waitForSelector(`[data-hashtag-page="${gameKey}"]`, { timeout: 20000 }).catch(() => {});
   check('tapping one opens its page', V.page.url().endsWith(`/tag/${gameKey}`), V.page.url());
 
   /* ==================================================================== */
-  section('A HASHTAG’S PAGE IS THE VIDEOS FEED');
+  section('A HASHTAG’S PAGE');
   await V.page.waitForLoadState('networkidle');
-  check('titled with the hashtag', (await V.page.locator('h1').first().innerText()).trim() === `#${gameKey}`);
-  const slides = await V.page.locator('section[data-index]').allInnerTexts();
-  check('every video with it — as a tag in any case, or in the caption — and no photo', slides.length === 3 && [`third clip ${stamp}`, `second clip ${stamp}`, `first clip ${stamp}`].every((t, i) => slides[i]?.includes(t)), slides.map((s) => s.split('\n').find((l) => l.includes(stamp))).join(' | '));
-  await V.page.waitForTimeout(1500);
-  const first = await players(V.page);
-  check('one video playing: the one on screen', first.filter((p) => !p.paused).length === 1 && first.find((p) => !p.paused)?.index === 0, JSON.stringify(first));
-  await V.page.locator('section[data-index="1"]').evaluate((el) => el.scrollIntoView({ block: 'start' }));
-  await V.page.waitForTimeout(1500);
-  const second = await players(V.page);
-  check('scrolling moves playback to the next one', second.filter((p) => !p.paused).length === 1 && second.find((p) => !p.paused)?.index === 1, JSON.stringify(second));
-  const end = V.page.locator('section[data-index="2"] a', { hasText: /That is every video/ });
-  check('the last video says it is the last, and points to the photo with it too', (await end.count()) === 1 && (await end.getAttribute('href')) === `/search?q=${encodeURIComponent(`#${gameKey}`)}`);
+  check(
+    'titled with the hashtag, as first written',
+    (await V.page.locator('[data-hashtag-page] h1').innerText()).trim() === `#${game}`,
+  );
+  const cards = await cardsOn(V.page);
+  check(
+    'every post with it — videos and the photo, as a tag in any case or in the caption — newest first',
+    cards.length === 4 &&
+      [`a photo ${stamp}`, `third clip ${stamp}`, `second clip ${stamp}`, `first clip ${stamp}`].every((t, i) => cards[i]?.includes(t)),
+    cards.map((c) => c.split('\n').find((l) => l.includes(stamp))).join(' | '),
+  );
+  check('its videos are in the FayTarra player', (await V.page.locator('article video').count()) === 3);
+  check('its photo is the FayTarra photo', (await V.page.locator('article [data-photo-frame]').count()) === 1);
+  check('and it says when that is everything', /That is everything public with #/.test(await V.page.locator('body').innerText()));
 
   for (const spelling of [game.toUpperCase(), `%23${game}`]) {
     await V.page.goto(`/tag/${spelling}`, { waitUntil: 'networkidle' });
     check(`/tag/${spelling} is the same page`, V.page.url().endsWith(`/tag/${gameKey}`), V.page.url());
   }
   await V.page.goto(`/tag/${speedKey}`, { waitUntil: 'networkidle' });
-  const speedSlides = await V.page.locator('section[data-index]').allInnerTexts();
-  check('a video with two hashtags is on the other one’s page too', speedSlides.length === 1 && speedSlides[0].includes(`first clip ${stamp}`));
+  const speedCards = await cardsOn(V.page);
+  check('a video with two hashtags is on the other one’s page too', speedCards.length === 1 && speedCards[0].includes(`first clip ${stamp}`));
 
   await V.page.goto(`/tag/photo${stamp}`, { waitUntil: 'networkidle' });
-  const photoOnly = await V.page.locator('[data-hashtag-page]').innerText();
-  check('a hashtag only photos use says so, and links to them', /No videos with #photo/.test(photoOnly) && (await V.page.locator(`a[href="/search?q=${encodeURIComponent(`#photo${stamp}`)}"]`).count()) === 1, photoOnly.slice(0, 80));
+  const photoOnly = await cardsOn(V.page);
+  check('a hashtag only a photo uses is that photo’s page', photoOnly.length === 1 && photoOnly[0].includes(`a photo ${stamp}`), String(photoOnly.length));
   await V.page.goto(`/tag/nothing${stamp}`, { waitUntil: 'networkidle' });
-  check('an unused hashtag is an empty page, not an error', /No videos with #nothing/.test(await V.page.locator('body').innerText()));
+  check('an unused hashtag is an empty page, not an error', /Nothing public uses #nothing/.test(await V.page.locator('body').innerText()));
   // A streamed page has sent its 200 before it can know; what matters is that
   // it is the not-found page rather than a hashtag page for nothing.
   await V.page.goto('/tag/%21%21%21', { waitUntil: 'networkidle' });
@@ -223,7 +224,7 @@ async function run() {
     await V.page.goto(`/search?q=${encodeURIComponent(query)}`, { waitUntil: 'networkidle' });
     const chip = V.page.locator(`[data-search-hashtags] a[href="/tag/${gameKey}"]`);
     const text = (await chip.count()) ? (await chip.innerText()).replace(/\s+/g, ' ') : '';
-    check(`“${query}” finds the hashtag, with what uses it`, text.includes(`#${game}`) && text.includes('3 videos') && text.includes('4 posts'), text);
+    check(`“${query}” finds the hashtag, with what uses it`, text.includes(`#${game}`) && text.includes('4 public posts'), text);
   }
   await V.page.locator(`[data-search-hashtags] a[href="/tag/${gameKey}"]`).click();
   await V.page.waitForURL(new RegExp(`/tag/${gameKey}$`), { timeout: 15000 }).catch(() => {});
@@ -239,11 +240,11 @@ async function run() {
   await B.page.locator('[data-delete-confirm-button]').click();
   await settle((s) => !s.posts.some((p) => p.id === v2));
   await V.page.goto(`/tag/${gameKey}`, { waitUntil: 'networkidle' });
-  const after = await V.page.locator('section[data-index]').allInnerTexts();
-  check('a deleted video is gone from the page at once', after.length === 2 && !after.some((t) => t.includes(`second clip ${stamp}`)), String(after.length));
+  const after = await cardsOn(V.page);
+  check('a deleted video is gone from the page at once', after.length === 3 && !after.some((t) => t.includes(`second clip ${stamp}`)), String(after.length));
   await V.page.goto(`/search?q=${encodeURIComponent(`#${gameKey}`)}`, { waitUntil: 'networkidle' });
   const recount = (await V.page.locator(`[data-search-hashtags] a[href="/tag/${gameKey}"]`).innerText()).replace(/\s+/g, ' ');
-  check('and from the counts in search', recount.includes('2 videos') && recount.includes('3 posts'), recount);
+  check('and from the counts in search', recount.includes('3 public posts'), recount);
 
   /* ==================================================================== */
   for (const [device, options] of [
@@ -258,20 +259,22 @@ async function run() {
     const wide = () => page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
 
     await page.goto(`/post/${v1}`, { waitUntil: 'networkidle' });
-    const links = page.locator('article [data-hashtags] a[data-hashtag]');
+    const links = page.locator('article a[data-hashtag-link]');
     const boxes = await links.evaluateAll((els) => els.map((el) => el.getBoundingClientRect()).map((r) => ({ left: r.left, right: r.right, height: r.height })));
     const width = await page.evaluate(() => window.innerWidth);
     check(`${device}: hashtags fit on screen, big enough to tap, signed out`, boxes.length === 2 && boxes.every((b) => b.left >= 0 && b.right <= width && b.height >= 24), JSON.stringify(boxes));
     check(`${device}: no sideways scroll on the post`, (await wide()) <= 0);
     await links.first().click();
     await page.waitForURL(new RegExp(`/tag/${gameKey}$`), { timeout: 15000 }).catch(() => {});
-    // The URL changes as the page starts loading; its videos stream in after.
-    await page.waitForSelector('section[data-index="0"] video', { timeout: 20000 }).catch(() => {});
+    // The URL changes as the page starts loading; its posts stream in after.
+    await page.waitForSelector(`[data-hashtag-page="${gameKey}"]`, { timeout: 20000 }).catch(() => {});
+    await page.waitForLoadState('networkidle');
     check(`${device}: a tap opens the hashtag’s page`, page.url().endsWith(`/tag/${gameKey}`));
-    check(`${device}: which plays its videos full height`, (await page.locator('section[data-index]').count()) === 2 && (await page.locator('section[data-index="0"] video').count()) === 1);
+    check(`${device}: which lists its posts, videos in the player`, (await page.locator('article').count()) === 3 && (await page.locator('article video').count()) === 2);
     check(`${device}: no sideways scroll on the hashtag page`, (await wide()) <= 0);
     if (SHOTS) await page.screenshot({ path: `${SHOTS}/${device}-tag.png` });
-    const slideTags = page.locator('section[data-index="0"] [data-hashtags] a[data-hashtag]');
+    await page.goto(`/videos?v=${v1}`, { waitUntil: 'networkidle' });
+    const slideTags = page.locator('section[data-index="0"] a[data-hashtag-link]');
     const slideBox = await slideTags.first().boundingBox();
     check(`${device}: the hashtags on a video are on screen`, Boolean(slideBox) && slideBox.x >= 0 && slideBox.x + slideBox.width <= width, JSON.stringify(slideBox));
     await page.goto(`/search?q=${encodeURIComponent(`#${gameKey}`)}`, { waitUntil: 'networkidle' });

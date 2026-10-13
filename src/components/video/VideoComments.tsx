@@ -1,5 +1,6 @@
 'use client';
 import { AdminBadge } from '@/components/AdminBadge';
+import { HashtagText } from '@/components/HashtagText';
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
@@ -218,7 +219,7 @@ export function VideoComments({
                       </time>
                     </p>
                     <p className="whitespace-pre-wrap break-words text-sm leading-snug text-white/85">
-                      {comment.body}
+                      <HashtagText text={comment.body} />
                     </p>
                     {/* Its author, and whoever posted the video, may delete it. */}
                     {comment.canDelete &&

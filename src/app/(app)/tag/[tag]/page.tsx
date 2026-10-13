@@ -1,19 +1,17 @@
 import type { Metadata } from 'next';
 import { notFound, redirect } from 'next/navigation';
-import { isAdminRole } from '@/lib/admin-badge';
 import { EmptyState } from '@/components/EmptyState';
+import { LoadMore } from '@/components/LoadMore';
 import { PageTopBar } from '@/components/PageTopBar';
-import { VideoFeed } from '@/components/video/VideoFeed';
-import { tagHref, tagKey } from '@/lib/hashtags';
-import { hashtagVideos } from '@/lib/services/hashtags';
+import { PostList } from '@/components/PostList';
+import { hashtagHref, normaliseHashtag } from '@/lib/hashtags';
+import { HASHTAG_MAX, HASHTAG_PAGE, hashtagPage } from '@/lib/services/hashtags';
 import { getViewer } from '@/lib/session';
-import { toCardData } from '@/lib/view';
 
 export const dynamic = 'force-dynamic';
 
-/** The segment as typed, whether or not the router has decoded it already. */
-function segment(raw: string): string {
-  if (!raw.includes('%')) return raw;
+/** The tag as it arrived in the address, decoded once whichever way Next handed it over. */
+function fromAddress(raw: string): string {
   try {
     return decodeURIComponent(raw);
   } catch {
@@ -26,76 +24,82 @@ export async function generateMetadata({
 }: {
   params: Promise<{ tag: string }>;
 }): Promise<Metadata> {
-  const key = tagKey(segment((await params).tag));
-  return { title: key ? `#${key}` : 'Hashtag' };
+  const { tag } = await params;
+  const normalised = normaliseHashtag(fromAddress(tag));
+  return { title: normalised ? `#${normalised}` : 'Hashtag' };
 }
 
 /**
- * One hashtag's videos, in the Videos feed.
+ * One hashtag's page: every public video, photo and text post that carries it,
+ * from everybody who used it, newest first.
  *
- * The same player, the same full-screen feed, the same likes, comments and
- * menus as /videos — only the list is different: every public video that uses
- * this hashtag, newest first. Case does not matter, so every spelling is sent
- * to one address and #Gaming, #gaming and #GAMING are one page.
+ * One page per hashtag whatever the capitalisation — `/tag/Gaming` and
+ * `/tag/%23GAMING` are sent on to `/tag/gaming` — and what is shown is decided
+ * on the server, per viewer, by the same rules as the feeds: nothing removed,
+ * hidden for review, by a suspended account or by somebody blocked in either
+ * direction. See lib/services/hashtags.ts.
  */
-export default async function HashtagPage({ params }: { params: Promise<{ tag: string }> }) {
-  const raw = segment((await params).tag);
-  const key = tagKey(raw);
-  if (!key) notFound();
-  if (raw !== key) redirect(tagHref(key));
+export default async function HashtagPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ tag: string }>;
+  searchParams: Promise<{ show?: string }>;
+}) {
+  const [{ tag: raw }, { show }] = await Promise.all([params, searchParams]);
+  const asked = fromAddress(raw);
+  const tag = normaliseHashtag(asked);
+  if (!tag) notFound();
 
-  const viewer = await getViewer();
-  const page = await hashtagVideos(key, viewer?.id ?? null);
-  const others = page.otherPosts;
-  const searchHref = `/search?q=${encodeURIComponent(`#${key}`)}`;
-  const morePosts = others === 1 ? '1 post' : `${others} posts`;
+  const requested = Number.parseInt(show ?? '', 10);
+  const limit = Number.isFinite(requested)
+    ? Math.min(Math.max(requested, HASHTAG_PAGE), HASHTAG_MAX)
+    : HASHTAG_PAGE;
 
-  if (page.videos.length === 0) {
-    return (
-      <>
-        <PageTopBar title={`#${key}`} />
-        <div className="mx-auto max-w-2xl px-4 pt-10" data-hashtag-page={key}>
-          <EmptyState
-            title={`No videos with #${key} yet`}
-            body={
-              others > 0
-                ? `There ${others === 1 ? 'is' : 'are'} ${morePosts} with #${key}, but no videos yet. Post one and it shows up here.`
-                : `Add #${key} to a video when you post it and it shows up here.`
-            }
-            cta={
-              others > 0
-                ? { href: searchHref, label: `See ${morePosts} with #${key}` }
-                : { href: '/videos', label: 'Watch videos' }
-            }
-          />
-        </div>
-      </>
-    );
+  // Every spelling of a hashtag is the same page, at one address.
+  if (asked !== tag) {
+    redirect(`${hashtagHref(tag)}${limit > HASHTAG_PAGE ? `?show=${limit}` : ''}`);
   }
 
+  const viewer = await getViewer();
+  const page = await hashtagPage(tag, viewer?.id ?? null, limit);
+  if (!page) notFound();
+
+  const moreHref = `${hashtagHref(tag)}?show=${Math.min(limit + HASHTAG_PAGE, HASHTAG_MAX)}`;
+
   return (
-    <div data-hashtag-page={key}>
-      <VideoFeed
-        items={page.videos.map(toCardData)}
-        title={`#${key}`}
-        end={
-          others > 0
-            ? { href: searchHref, label: `That is every video — see ${morePosts} with #${key}` }
-            : { href: '/videos', label: `That is every video with #${key} — more videos` }
-        }
-        returnTo={tagHref(key)}
-        viewerId={viewer?.id ?? null}
-        viewer={
-          viewer
-            ? {
-                username: viewer.username,
-                displayName: viewer.display_name,
-                avatarUrl: viewer.avatar_url,
-                isAdmin: isAdminRole(viewer.role),
-              }
-            : null
-        }
-      />
-    </div>
+    <>
+      {/* No title in the bar: the hashtag below is this page's one heading. */}
+      <PageTopBar />
+      <div className="mx-auto max-w-2xl px-4 pt-4 lg:max-w-[768px] lg:px-6 lg:pt-8 2xl:max-w-[808px]">
+        <header className="mb-5 px-1" data-hashtag-page={page.tag}>
+          <p className="label">Hashtag</p>
+          <h1 className="mt-1 break-words font-display text-3xl font-extrabold tracking-tight lg:text-4xl">
+            #{page.display}
+          </h1>
+          <p className="mt-2 text-sm text-white/45">
+            Public videos, photos and posts from everyone who used #{page.display}, newest first.
+          </p>
+        </header>
+
+        <PostList
+          posts={page.posts}
+          viewerId={viewer?.id ?? null}
+          empty={
+            <EmptyState
+              title={`Nothing public uses #${page.display} yet`}
+              body={`When somebody posts a video, photo or message with #${page.display}, it shows up here. It could be you.`}
+              cta={viewer ? { href: '/create', label: 'Make a post' } : { href: '/signup', label: 'Join FayTarra' }}
+            />
+          }
+        />
+
+        <LoadMore
+          href={moreHref}
+          hasMore={page.hasMore && limit < HASHTAG_MAX}
+          endNote={page.posts.length > 0 ? `That is everything public with #${page.display}.` : undefined}
+        />
+      </div>
+    </>
   );
 }

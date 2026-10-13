@@ -22,6 +22,7 @@ import { ProfileBackdrop } from '@/components/ProfileBackdrop';
 import { CreatePostMenu } from '@/components/CreatePostMenu';
 import { mediaKindForUrl, sanitiseAvatarUrl } from '@/lib/media';
 import { ProfileShelves } from '@/components/ProfileShelves';
+import { HashtagText } from '@/components/HashtagText';
 import {
   PROFILE_TABS,
   profileTabFrom,
@@ -214,7 +215,10 @@ export default async function ProfilePage({
 
             {user.bio && (
               <p className="mt-4 whitespace-pre-wrap text-[15px] leading-relaxed text-white/80 lg:order-3 lg:mt-6 lg:max-w-[62ch] lg:text-base">
-                {user.bio}
+                {/* In the bio's own colour: a profile can be any colour its
+                    owner chose, and one fixed link colour would not read on
+                    all of them. */}
+                <HashtagText text={user.bio} tone="inherit" />
               </p>
             )}
 

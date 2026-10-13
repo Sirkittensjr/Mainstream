@@ -19,6 +19,7 @@ psql -d faytarra_test -f scripts/e2e/dm-checks.sql
 psql -d faytarra_test -f scripts/e2e/admin-checks.sql
 psql -d faytarra_test -f scripts/e2e/auto-review-checks.sql
 psql -d faytarra_test -f scripts/e2e/comment-checks.sql
+psql -d faytarra_test -f scripts/e2e/hashtag-checks.sql
 ```
 
 The shim's `storage.buckets` carries `file_size_limit` and `allowed_mime_types`
@@ -76,6 +77,19 @@ itself, so it is re-runnable.
 
 ```bash
 psql -d faytarra_test -f scripts/e2e/auto-review-checks.sql
+```
+
+`hashtag-checks.sql` proves migration 0015's rules hold in the DATABASE: the
+SQL hashtag finder agrees with `src/lib/hashtags.ts` (`#Gaming` and `#GAMING`
+are one hashtag, `#31`, `C#` and `page#x` are none, `#Café` works on a
+`C`-locale database), publishing files a post, editing its caption re-files it,
+deleting it unfiles it, `increment_counter` adds up and refuses anything that
+is not a counter, and neither API role can read the index or move a counter.
+Each check raises when it fails; the errors under the lines marked "must fail"
+are the check passing. It cleans up after itself.
+
+```bash
+psql -d faytarra_test -f scripts/e2e/hashtag-checks.sql
 ```
 
 ## 2. The app side — `gotrue-stub.mjs` + `auth-flow.mjs` + `social-flow.mjs`
@@ -324,7 +338,7 @@ sideways with an EXIF rotation, a 300×200 JPEG and a 600×2400 PNG screenshot.
 ### 3f. Hashtags — `hashtag-flow.mjs`
 
 Hashtags shown on what was published, each one a link, and a page per hashtag
-that plays its videos in the Videos feed.
+holding every public post that uses it.
 
 ```bash
 npm start &
@@ -337,23 +351,51 @@ Against an EMPTY store, with the fixtures from `make-video-fixtures.mjs`.
 of search.
 
 - **Shown as posted**: hashtags typed in the video composer (one at a time,
-  Enter after each) and in the photo composer are stored as typed and shown on
-  the post page, the feed card and the Videos feed slide. A hashtag written in
-  a caption is linked too; the caption itself is unchanged.
+  Enter after each) and in the photo composer are stored as typed and shown,
+  as links, on the post page, the feed card and the Videos feed slide. A
+  hashtag written in a caption is linked where it is written; the caption
+  itself is unchanged.
 - **One page per hashtag, whatever the case**: every link goes to
   `/tag/<lower-case>`; `/tag/GAMING…` and `/tag/%23Gaming…` land there too.
-- **The page is the Videos feed**: titled with the hashtag, every public video
-  using it — as a tag in any case or in a caption — newest first, no photos;
-  one video playing, and scrolling moves playback on. A video with two
-  hashtags is on both pages. A hashtag only photos use says so and links to
-  them; an unused one is an empty page; punctuation is "Nothing here".
-- **Search** finds the hashtag with or without `#` and in any case, with its
-  video and post counts, opens its page, and lists the posts using it.
+- **The page holds every post using it**: titled with the hashtag as first
+  written, every public video, photo and text post using it — as a tag in any
+  case or in a caption — newest first, videos in the FayTarra player. A video
+  with two hashtags is on both pages; a hashtag only a photo uses is that
+  photo's page; an unused one is an empty page; punctuation is "Nothing here".
+- **Search** finds the hashtag with or without `#` and in any case, with how
+  many public posts use it, opens its page, and lists the posts using it.
 - **Kept current**: a video its author deletes is gone from the page and from
-  the counts at once.
+  the count in search at once.
 - **Phone and desktop, signed out**: links on screen and at least 24px tall,
   a tap opens the page, and no sideways scroll on the post, hashtag or search
   page.
+
+### 3f-2. Video views and hashtag pages, read back from the server — `views-hashtags-flow.mjs`
+
+```bash
+npm start &
+OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
+FIXTURES=/tmp/fay-video-fixtures node scripts/e2e/views-hashtags-flow.mjs
+```
+
+Needs `landscape.webm` (four seconds) and `photo.jpg` in the fixtures folder;
+the file's header has the two ffmpeg lines that make them. Works against an
+empty store or the seeded community.
+
+Every view check reads the count back from the server — the API, and the HTML
+each page is rendered with — rather than trusting the number on screen:
+autoplay counts once; scrolling away and back counts again; the loop coming
+round counts again; a refreshed feed, the post page and the creator's profile
+are all rendered with the stored count; pressing play counts, one playback is
+one view however long, playing again after it ended counts, pause and play
+does not; a signed-out visitor counts, and so does the author. Then hashtags:
+one page for every spelling, holding a video, a photo and a text post from two
+people; hashtags in a text post, a photo caption, a video description and a
+video's tags each open their page and never the post; on a card whose caption
+opens the post, the rest of the caption still does; hashtags in comments are
+links; search finds the page for `Gaming`, `#Gaming` and `GAMING` with its
+count; a deleted post leaves the page; a hashtag only typed in an unposted
+draft does not exist; and no page logs an error.
 
 ### 3g. Video views and deleting comments — `views-comments-flow.mjs`
 

@@ -2,35 +2,38 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { recordVideoViewAction } from '@/app/actions';
-import { isLoopRestart, newSessionKey } from '@/lib/video/views';
-
-/** Pauses before each retry of a report that did not reach the server. */
-const RETRY_AFTER_MS = [1_500, 4_000];
-
-/** The player's own length when it knows it; a recording can say Infinity. */
-const lengthOf = (element: { duration: number }, fallback?: number | null) =>
-  Number.isFinite(element.duration) && element.duration > 0 ? element.duration : (fallback ?? null);
+import { createViewTracker, type ViewTracker } from '@/lib/video/views';
 
 /**
- * Counting a view, from the player's side.
+ * How long to wait before each retry of a report that did not get through.
  *
- * A view is a playback session, reported the moment playback actually starts
- * (`playing`) — not when a player renders, mounts or loads a thumbnail, and not
- * when autoplay was attempted and refused. One report per session, whatever the
- * player does in between:
+ * Safe to retry because a report is keyed on its playback session: the server
+ * stores one view per session key, so a retry of a report that did land the
+ * first time is recognised and counts nothing.
+ */
+const RETRY_DELAYS_MS = [1_000, 4_000];
+
+/**
+ * Counting a watch, from the player's side.
  *
- *   a re-render                nothing here runs on render
- *   duplicate events           `reported` is set before anything is sent
- *   pause and play, a stall    the same session, already reported
- *   a report that fails        retried with the SAME session key, which the
- *                              server counts once however often it arrives
+ * Deliberately not "this component rendered". Every rule about when a viewing
+ * starts and when it is reported lives in `createViewTracker`
+ * (lib/video/views.ts), which is fed the player's own media events and answers
+ * "report now" once per viewing:
  *
- * A new session — and so a new view — starts when the video is watched again:
- * it ended and plays again, it loops round to its start, or the feed scrolled
- * away from it and back (the feed calls `restart`). A fresh mount, which is
- * what opening or refreshing a page is, starts with a fresh session too.
+ *   playback begins           reported — on `playing`, or the first timeupdate
+ *                             that moves — autoplay included
+ *   a re-render               nothing here runs on render
+ *   pause and play            the same viewing, already reported
+ *   seeking mid-video         the same viewing
+ *   played to the end         `ended`: the next play is a new view
+ *   the loop comes round      a new view
+ *   rewound to the start      a new view
+ *   scrolled away and back    the feed calls `restart`; a new view
+ *   autoplay being refused    no playback, no view
  *
- * The count this returns is always the server's.
+ * The server still has the final say on whether a report counts, and the count
+ * this returns is always the server's.
  */
 export function useVideoView({
   postId,
@@ -45,113 +48,80 @@ export function useVideoView({
   /** What the server rendered. The starting point, and never overwritten by a guess. */
   initialCount: number;
 }) {
-  const [count, setCount] = useState(initialCount);
+  /** The newest total the server has answered a report with. */
+  const [reportedCount, setReportedCount] = useState(0);
+  // Whichever is newer: what the page was rendered with — a navigation or a
+  // refresh brings a fresh one — or what this player's own reports returned.
+  const count = Math.max(initialCount, reportedCount);
 
-  /** Whether this playback session has been reported. One per session, ever. */
-  const reported = useRef(false);
-  /** This session's key, made when it is reported. */
-  const session = useRef('');
-  /** Where the playhead was at the last event, to tell a loop from playback. */
-  const lastAt = useRef<number | null>(null);
-  /** Unmounted: a retry has nobody to tell. */
-  const gone = useRef(false);
+  const tracker = useRef<ViewTracker | null>(null);
+  tracker.current ??= createViewTracker({ duration });
+  const live = useRef(true);
   useEffect(() => {
-    gone.current = false;
+    live.current = true;
     return () => {
-      gone.current = true;
+      live.current = false;
     };
   }, []);
 
-  // A fresh server count — a navigation, a revalidation — wins over what this
-  // component has been told by its own reports, but never takes it backwards.
-  useEffect(() => {
-    setCount((current) => (initialCount > current ? initialCount : current));
-  }, [initialCount]);
+  const report = useCallback(
+    (sessionKey: string) => {
+      if (!enabled || !postId) return;
+      const attempt = (retry: number) => {
+        void recordVideoViewAction(postId, sessionKey)
+          .then((result) => {
+            if (result.ok) {
+              if (live.current) setReportedCount((current) => Math.max(current, result.count));
+              return;
+            }
+            throw new Error('not recorded');
+          })
+          .catch(() => {
+            // A view that could not be reported is a number that does not move,
+            // not a video that fails to play. Try again a couple of times under
+            // the same session key, which the server will not count twice.
+            const delay = RETRY_DELAYS_MS[retry];
+            if (delay !== undefined) setTimeout(() => attempt(retry + 1), delay);
+          });
+      };
+      attempt(0);
+    },
+    [enabled, postId],
+  );
 
-  /** The next playback is a new session, and so a new view. */
-  const restart = useCallback(() => {
-    reported.current = false;
-    session.current = '';
-    lastAt.current = null;
+  const onPlay = useCallback((event: { currentTarget: { currentTime: number } }) => {
+    tracker.current?.play(event.currentTarget.currentTime);
   }, []);
 
-  const send = useCallback(
-    (key: string, attempt: number) => {
-      void recordVideoViewAction(postId, key)
-        .then((result) => {
-          if (result.ok) {
-            if (!gone.current) setCount((current) => Math.max(current, result.count));
-            return;
-          }
-          throw new Error('not counted');
-        })
-        .catch(() => {
-          // The server did not answer, or could not store it. Try again with
-          // the same key a couple of times — it counts that key at most once —
-          // and then let it go: a view that could not be reported is a number
-          // that does not move, and nothing about playback depends on it.
-          const wait = RETRY_AFTER_MS[attempt];
-          if (wait === undefined || gone.current) return;
-          setTimeout(() => {
-            if (!gone.current) send(key, attempt + 1);
-          }, wait);
-        });
+  /** Playback has actually begun: the moment a view is. */
+  const onPlaying = useCallback(
+    (event: { currentTarget: { currentTime: number } }) => {
+      if (!enabled) return;
+      const watch = tracker.current;
+      if (watch?.playing(event.currentTarget.currentTime)) report(watch.sessionKey);
     },
-    [postId],
+    [enabled, report],
   );
-
-  /** Reports this session, once. */
-  const report = useCallback(() => {
-    if (!enabled || !postId || reported.current) return;
-    // Set before anything is sent: a burst of events must not each report.
-    reported.current = true;
-    session.current = newSessionKey();
-    send(session.current, 0);
-  }, [enabled, postId, send]);
-
-  /** Playback has actually begun — the moment a view is. */
-  const onPlaying = useCallback(() => report(), [report]);
-
-  /** Kept for callers: pressing play is not yet playback, so nothing happens here. */
-  const onPlay = useCallback(() => undefined, []);
 
   const onTimeUpdate = useCallback(
-    (event: { currentTarget: { currentTime: number; paused: boolean; duration: number } }) => {
+    (event: { currentTarget: { currentTime: number; paused: boolean } }) => {
       if (!enabled) return;
+      const watch = tracker.current;
       const element = event.currentTarget;
-      const at = element.currentTime;
-      if (!element.paused) {
-        // Looped round to the start: watching it again.
-        if (lastAt.current !== null && isLoopRestart(lastAt.current, at, lengthOf(element, duration))) restart();
-        // The fallback for a browser that is playing without having said so.
-        if (at > 0) report();
-      }
-      lastAt.current = at;
+      if (watch?.timeUpdate(element.currentTime, element.paused)) report(watch.sessionKey);
     },
-    [enabled, duration, report, restart],
-  );
-
-  const onSeeked = useCallback(
-    (event: { currentTarget: { currentTime: number; paused: boolean; duration: number } }) => {
-      if (!enabled) return;
-      const element = event.currentTarget;
-      // A loop is a seek to the start made by the browser; so is replaying
-      // from the end. Either is a new viewing.
-      if (
-        !element.paused &&
-        lastAt.current !== null &&
-        isLoopRestart(lastAt.current, element.currentTime, lengthOf(element, duration))
-      ) {
-        restart();
-        report();
-      }
-      lastAt.current = element.currentTime;
-    },
-    [enabled, duration, report, restart],
+    [enabled, report],
   );
 
   /** Watched to the end: playing it again is watching it again. */
-  const onEnded = useCallback(() => restart(), [restart]);
+  const onEnded = useCallback(() => tracker.current?.ended(), []);
+
+  const onSeeked = useCallback((event: { currentTarget: { currentTime: number } }) => {
+    tracker.current?.seeked(event.currentTarget.currentTime);
+  }, []);
+
+  /** Starts a new viewing. Called when a feed moves off this video. */
+  const restart = useCallback(() => tracker.current?.restart(), []);
 
   return { count, onPlay, onPlaying, onTimeUpdate, onEnded, onSeeked, restart };
 }

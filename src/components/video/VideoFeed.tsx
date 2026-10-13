@@ -20,10 +20,11 @@ import { DeletePost } from '@/components/DeletePost';
 import { ReportDialog } from '@/components/ReportDialog';
 import { AdminRemovePost } from '@/components/AdminRemovePost';
 import { useViewerIsAdmin } from '@/components/ViewerRole';
+import { HashtagChips, HashtagText } from '@/components/HashtagText';
+import { extraTags } from '@/lib/hashtags';
 import { useVideoView } from './useVideoView';
 import { VideoComments, type CommenterInfo, type VideoComment } from './VideoComments';
 import { VideoText } from './VideoText';
-import { HashtagLinks } from '@/components/HashtagLinks';
 import {
   CommentIcon,
   EyeIcon,
@@ -324,9 +325,10 @@ function Slide({
    *
    * Not the IntersectionObserver, and not mounting: a slide becoming the
    * active one is the feed deciding to try playing it, which is not the same
-   * as somebody watching it — autoplay can be refused, and a slide next to the
-   * current one mounts its player without ever playing. A view is the player
-   * actually starting, which is why this hangs off the player's own events.
+   * as somebody watching it — autoplay can be refused, a scroll can pass
+   * through four slides in a second, and a slide next to the current one
+   * mounts its player without ever playing. A view is the clip actually
+   * starting to play, which is why this hangs off the player's own events.
    * Leaving the slide ends that viewing; coming back to it is another.
    */
   const watch = useVideoView({
@@ -445,14 +447,16 @@ function Slide({
             // A video posted with the sound off does not start making noise
             // because a viewer unmuted the feed.
             muted={muted || media.muted === true}
-            onPlay={() => {
+            onPlay={(event) => {
               setPlaying(true);
-              watch.onPlay();
+              watch.onPlay(event);
             }}
             onPlaying={watch.onPlaying}
-            onEnded={watch.onEnded}
             onPause={() => setPlaying(false)}
+            // `loop` means `ended` never fires here; the loop coming round is
+            // a seek back to the start, which is where a replay is noticed.
             onSeeked={watch.onSeeked}
+            onEnded={watch.onEnded}
             onTimeUpdate={(event) => {
               const element = event.currentTarget;
               const length = Number.isFinite(element.duration) && element.duration > 0
@@ -581,22 +585,28 @@ function Slide({
           </div>
 
           {data.caption && (
-            <button
-              type="button"
-              onClick={() => setExpanded((value) => !value)}
-              className="mt-2.5 block w-full text-left"
-            >
+            // Tapping the caption opens it out, as it always has — apart from
+            // its hashtags, which open their own pages. The expand control is
+            // laid under the words rather than wrapped round them, because a
+            // link cannot live inside a button, and so a tap on a hashtag can
+            // only ever be the hashtag.
+            <div className="relative mt-2.5" data-video-caption>
+              <button
+                type="button"
+                onClick={() => setExpanded((value) => !value)}
+                aria-expanded={expanded}
+                aria-label={expanded ? 'Show less of the caption' : 'Show all of the caption'}
+                className="absolute inset-0"
+              />
               <span
-                className={`block whitespace-pre-wrap text-[14px] leading-snug text-white/90 ${
+                className={`pointer-events-none relative block whitespace-pre-wrap text-[14px] leading-snug text-white/90 ${
                   expanded ? '' : 'line-clamp-2'
                 }`}
               >
-                {data.caption}
+                <HashtagText text={data.caption} />
               </span>
-            </button>
+            </div>
           )}
-
-          <HashtagLinks tags={data.tags} caption={data.caption} tone="video" className="mt-1.5" />
 
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
             <Link
@@ -610,6 +620,11 @@ function Slide({
                 {data.reason}
               </span>
             )}
+            {/* The hashtags it was posted with, each one its hashtag's page. */}
+            <HashtagChips
+              tags={extraTags({ caption: data.caption, text_title: data.textTitle, tags: data.tags })}
+              className="bg-white/10 hover:bg-white/15"
+            />
             {last && (
               <Link href={end.href} className="chip bg-white/10 hover:bg-white/15">
                 {end.label}

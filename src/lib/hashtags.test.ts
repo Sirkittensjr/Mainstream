@@ -1,87 +1,142 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { captionHashtags, postHashtags, postHasTag, tagHref, tagKey } from './hashtags';
+import {
+  MAX_HASHTAGS_PER_POST,
+  extractHashtags,
+  extraTags,
+  hasHashtag,
+  hashtagHref,
+  hashtagQuery,
+  normaliseHashtag,
+  postHashtags,
+  splitHashtags,
+} from './hashtags';
 
-describe('one hashtag, whatever its case', () => {
-  it('#Gaming, #gaming, GAMING and " #gaming " share one key', () => {
-    for (const spelling of ['#Gaming', 'gaming', 'GAMING', ' #gaming ', '##Gaming']) {
-      assert.equal(tagKey(spelling), 'gaming', spelling);
+const tags = (list: { tag: string }[]) => list.map((hashtag) => hashtag.tag);
+
+describe('one hashtag, however it is capitalised', () => {
+  it('normalises #Gaming, #gaming and #GAMING to the same tag', () => {
+    assert.equal(normaliseHashtag('#Gaming'), 'gaming');
+    assert.equal(normaliseHashtag('#gaming'), 'gaming');
+    assert.equal(normaliseHashtag('#GAMING'), 'gaming');
+    assert.equal(normaliseHashtag('Gaming'), 'gaming');
+  });
+
+  it('gives every capitalisation the same page', () => {
+    assert.equal(hashtagHref('Gaming'), '/tag/gaming');
+    assert.equal(hashtagHref('#GAMING'), '/tag/gaming');
+    assert.equal(hashtagHref('gaming'), '/tag/gaming');
+  });
+
+  it('handles letters beyond English', () => {
+    assert.equal(normaliseHashtag('#Café'), 'café');
+    assert.equal(normaliseHashtag('#ÜBER'), 'über');
+    assert.equal(hashtagHref('Café'), `/tag/${encodeURIComponent('café')}`);
+    // The same word typed as one character or as a letter plus an accent.
+    assert.equal(normaliseHashtag('#Café'), normaliseHashtag('#Café'));
+  });
+
+  it('refuses things that are not hashtags', () => {
+    for (const raw of ['', '#', '##', '#31', '1', 'two words', '#tag!', 'x'.repeat(51), null, undefined]) {
+      assert.equal(normaliseHashtag(raw as string), null, String(raw));
     }
   });
+});
 
-  it('keeps letters in any script, numbers and underscores', () => {
-    assert.equal(tagKey('#Café_2024'), 'café_2024');
-    assert.equal(tagKey('#ÉTÉ'), 'été');
-    assert.equal(tagKey('#東京'), '東京');
+describe('finding hashtags in what was published', () => {
+  it('finds every #word, in order, each once', () => {
+    assert.deepEqual(extractHashtags('Clutched it #Gaming #fps and again #gaming'), [
+      { tag: 'gaming', display: 'Gaming' },
+      { tag: 'fps', display: 'fps' },
+    ]);
   });
 
-  it('nothing but punctuation is not a hashtag', () => {
-    assert.equal(tagKey('#'), null);
-    assert.equal(tagKey('!!!'), null);
-    assert.equal(tagKey(''), null);
+  it('stops a hashtag at punctuation', () => {
+    assert.deepEqual(tags(extractHashtags('so good #Gaming! (#clips), #art.')), ['gaming', 'clips', 'art']);
   });
 
-  it('links to one page per hashtag, safely encoded', () => {
-    assert.equal(tagHref('gaming'), '/tag/gaming');
-    assert.equal(tagHref('東京'), `/tag/${encodeURIComponent('東京')}`);
+  it('ignores what only looks like one', () => {
+    assert.deepEqual(extractHashtags('open mic #31 tonight'), [], 'a number');
+    assert.deepEqual(extractHashtags('see example.com/page#section'), [], 'a link');
+    assert.deepEqual(extractHashtags('I write C# all day'), [], 'the middle of a word');
+    assert.deepEqual(extractHashtags('it&#39;s fine'), [], 'an HTML entity');
+  });
+
+  it('files photo, video and text posts the same way', () => {
+    const photo = { caption: 'Golden hour #Photography', tags: [] };
+    const video = { caption: 'one take', tags: ['Gaming', 'clips'] };
+    const story = { caption: 'and then it rained #weather', text_title: 'A #Rainy day', tags: [] };
+    assert.deepEqual(tags(postHashtags(photo)), ['photography']);
+    assert.deepEqual(tags(postHashtags(video)), ['gaming', 'clips']);
+    assert.deepEqual(tags(postHashtags(story)), ['rainy', 'weather']);
+  });
+
+  it('merges a tag and the same word in the caption into one', () => {
+    const post = { caption: 'new setup #GAMING', tags: ['gaming', 'setup'] };
+    assert.deepEqual(tags(postHashtags(post)), ['gaming', 'setup']);
+    assert.ok(hasHashtag(post, 'gaming'));
+    assert.ok(!hasHashtag(post, 'clips'));
+  });
+
+  it('has a ceiling on how many one post is filed under', () => {
+    const caption = Array.from({ length: 50 }, (_, i) => `#tag${String.fromCharCode(97 + (i % 26))}${i}`).join(' ');
+    assert.equal(postHashtags({ caption, tags: [] }).length, MAX_HASHTAGS_PER_POST);
+  });
+
+  it('shows the tags that are not already written in the words', () => {
+    const post = { caption: 'new setup #Gaming', tags: ['gaming', 'Setup', '2024'] };
+    assert.deepEqual(extraTags(post), [{ tag: 'setup', display: 'Setup' }]);
   });
 });
 
-describe('hashtags written into a caption', () => {
-  it('finds them at the start, mid-sentence and after punctuation', () => {
-    assert.deepEqual(captionHashtags('#first then #Second, and (#third).'), ['first', 'Second', 'third']);
-    assert.deepEqual(captionHashtags('line one\n#onanewline'), ['onanewline']);
-  });
-
-  it('a number is not a hashtag, but a word with numbers in it is', () => {
-    assert.deepEqual(captionHashtags('open mic #31. be honest about #3'), []);
-    assert.deepEqual(captionHashtags('day #100daysofcode'), ['100daysofcode']);
-  });
-
-  it('a # inside a word, a link or an entity is not one', () => {
-    assert.deepEqual(captionHashtags('email me at a#b or see example.com/page#top'), []);
-    assert.deepEqual(captionHashtags('C# and ##double'), []);
-    assert.deepEqual(captionHashtags('&#847;'), []);
-  });
-
-  it('none in an empty caption', () => {
-    assert.deepEqual(captionHashtags(''), []);
-    assert.deepEqual(captionHashtags(null), []);
-  });
-});
-
-describe('every hashtag a post carries', () => {
-  it('its tags first, exactly as stored, then its caption’s', () => {
-    const tags = postHashtags({ tags: ['Gaming', 'clips'], caption: 'one shot #NoCuts' });
+describe('drawing text with hashtags in it', () => {
+  it('cuts text into words and hashtag links, losing nothing', () => {
+    const text = 'Clutch! #Gaming and #fps, ok';
+    const parts = splitHashtags(text);
+    assert.equal(parts.map((part) => part.text).join(''), text);
     assert.deepEqual(
-      tags.map((tag) => [tag.label, tag.key, tag.fromCaption]),
+      parts.filter((part) => part.hashtag).map((part) => [part.text, hashtagHref(part.hashtag!.tag)]),
       [
-        ['Gaming', 'gaming', false],
-        ['clips', 'clips', false],
-        ['NoCuts', 'nocuts', true],
+        ['#Gaming', '/tag/gaming'],
+        ['#fps', '/tag/fps'],
       ],
     );
   });
 
-  it('one entry per hashtag, whatever the case — the first spelling wins', () => {
-    const tags = postHashtags({ tags: ['Gaming', 'gaming'], caption: '#GAMING #clips #Clips' });
-    assert.deepEqual(tags.map((tag) => tag.label), ['Gaming', 'clips']);
+  it('leaves text with no hashtags as it is', () => {
+    assert.deepEqual(splitHashtags('nothing to see'), [{ text: 'nothing to see' }]);
+  });
+});
+
+describe('searching for a hashtag', () => {
+  it('reads Gaming and #Gaming as the same hashtag', () => {
+    assert.equal(hashtagQuery('Gaming'), 'gaming');
+    assert.equal(hashtagQuery('  #Gaming '), 'gaming');
   });
 
-  it('a stored tag that cannot be linked is still shown, unlinked', () => {
-    const tags = postHashtags({ tags: ['!!!'] });
-    assert.deepEqual(tags, [{ label: '!!!', key: null, fromCaption: false }]);
+  it('does not read a phrase as a hashtag', () => {
+    assert.equal(hashtagQuery('gaming clips'), null);
+    assert.equal(hashtagQuery(''), null);
+  });
+});
+
+describe('running in every browser FayTarra supports', () => {
+  it('uses no lookbehind, which older iPhones cannot parse', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('./hashtags.ts', import.meta.url), 'utf8');
+    assert.doesNotMatch(source, /\(\?<[=!]/);
   });
 
-  it('a post from before tags existed, with no tags at all, is fine', () => {
-    assert.deepEqual(postHashtags({ caption: 'no tags here' }), []);
-    assert.deepEqual(postHashtags({ tags: null, caption: null }), []);
-  });
-
-  it('matches by key, so case never matters', () => {
-    const post = { tags: ['Gaming'], caption: 'and #Retro too' };
-    assert.equal(postHasTag(post, 'gaming'), true);
-    assert.equal(postHasTag(post, 'retro'), true);
-    assert.equal(postHasTag(post, 'game'), false);
+  it('finds hashtags back to back and at the very start', () => {
+    assert.deepEqual(
+      extractHashtags('#one #two,#three\n#four').map((hashtag) => hashtag.tag),
+      ['one', 'two', 'three', 'four'],
+    );
+    const text = '#one #two,#three';
+    assert.equal(splitHashtags(text).map((part) => part.text).join(''), text);
+    assert.deepEqual(
+      splitHashtags(text).filter((part) => part.hashtag).map((part) => part.text),
+      ['#one', '#two', '#three'],
+    );
   });
 });

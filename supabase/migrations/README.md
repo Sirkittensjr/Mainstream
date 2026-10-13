@@ -15,8 +15,8 @@ has never been installed.
 
 | Row 1 says | Run |
 | --- | --- |
-| `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including every migration — `0014` included. |
-| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`, `0006`, `0007`, `0008`, `0009`, `0010`, `0011`, `0012`, `0013` and `0014`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
+| `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including every migration — `0015` included. |
+| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`, `0006`, `0007`, `0008`, `0009`, `0010`, `0011`, `0012`, `0013`, `0014` and `0015`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
 | anything between | Stop and ask. A half-installed schema needs looking at, not a migration. |
 
 If the storage bucket row shows `none`, create it in the dashboard
@@ -495,3 +495,52 @@ of days the moderation log notes that it could not be stored. `/api/health`
 lists `users.suspended_until` under `schema.missingColumns` until it has been
 run.
 
+## 0015_hashtags_and_counters.sql
+
+Hashtag pages, hashtag search, and video view counts that cannot lose a view.
+Additive, safe to run twice. **Nothing in this file is destructive** — no
+drops of data, no deletes, no existing row rewritten. Run 0011 first (the
+hashtag trigger reads a story's title).
+
+| Step | Statement | What it touches | Risk |
+| --- | --- | --- | --- |
+| 0 | Checks the ICU collation `und-x-icu` exists, and stops if not | Nothing — read only | **None.** Every Supabase project has it |
+| 1 | `create or replace function increment_counter(…)` | Adds a function | None. Moves only `posts.video_views` and `posts.views`, refuses any other column, and is executable only by the service role |
+| 2 | `create table if not exists hashtags` + unique `tag` + a prefix index | Adds a table | None |
+| 2 | `create table if not exists post_hashtags` + `(tag, post_created_at desc)` index, foreign keys to `posts` and `hashtags` with `on delete cascade` | Adds a table | None. Deleting a post takes it off every hashtag page |
+| 3 | `hashtags_in(caption, title, tags)` + `sync_post_hashtags()` + trigger `posts_sync_hashtags` (after insert, or update of `caption`, `text_title`, `tags`) | Adds two functions and a trigger | None. Each post insert does a few more small writes |
+| 4 | Backfill: files every existing post under its hashtags | **Inserts** rows into the two new tables only | None. `on conflict do nothing`, so re-running adds nothing |
+| 5 | RLS on, and `revoke all` from `anon` / `authenticated` on both tables and both functions | Permissions only | None |
+
+**Why the counter.** A view used to be counted by reading the post, adding one
+in the app and writing the total back. Two people starting the same video at
+the same moment could therefore be one view. `increment_counter` does
+`update … set video_views = video_views + 1 … returning video_views` under the
+row lock.
+
+**What a hashtag is.** `hashtags_in` is the SQL twin of `postHashtags()` in
+`src/lib/hashtags.ts`: `#` then letters, digits or `_`, with at least one
+letter, at most 50 characters, and not straight after a letter, digit, `/`,
+`&` or `#`. `#Gaming`, `#gaming` and `#GAMING` are one hashtag (`gaming`); the
+first spelling anybody published is how its page is titled. A post's hashtags
+come from its caption (the words of a photo, video or text post), a story's
+title, and its `tags`. `scripts/e2e/hashtag-checks.sql` checks the two agree.
+
+**What is not stored.** Who may see a post. A removed post, one hidden for
+review or one by a suspended account stays filed under its hashtags and never
+appears on a hashtag page or in search, because the app applies the feeds'
+visibility rules to everything it reads from the index. Restoring a post puts
+it back.
+
+Check afterwards:
+
+```sql
+select count(*) from public.hashtags;
+select tag, count(*) from public.post_hashtags group by tag order by 2 desc limit 20;
+```
+
+**Not running it** loses nothing: hashtag links, hashtag pages and hashtag
+search all work, reading every visible post instead of the index, and video
+views are still counted, by read-then-write. `/api/health` lists `hashtags`
+and `post_hashtags` under `schema.missingTables` until it has been run, and the
+server log says once that the index and the atomic counter are off.

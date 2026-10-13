@@ -1,20 +1,17 @@
 /**
- * Hashtag pages and hashtag search, against the real services and a throwaway
- * local store.
- *
- *   - a page holds every public VIDEO with the hashtag, whatever case it was
- *     written in, as a tag or in the caption, newest first
- *   - a video with several hashtags is on each of their pages
- *   - deleted, removed, held-for-review and suspended or blocked authors'
- *     videos are not on any page, and leave it the moment that happens
- *   - search finds hashtags with or without the #, and the posts that use them
+ * Hashtag pages and hashtag search, checked against the real services and a
+ * real (throwaway) local store: publishing, moderating, blocking and deleting
+ * through the same functions the app calls, and reading back what a person
+ * opening `/tag/…` or searching would be shown.
  */
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it, mock } from 'node:test';
 
+// Next's cache tags exist only inside a request; out here, refreshing one is a
+// no-op and a cached function is just the function.
 mock.module('next/cache', {
   namedExports: {
     revalidateTag: () => undefined,
@@ -23,19 +20,20 @@ mock.module('next/cache', {
   },
 });
 
+// Before anything touches the store: it picks its directory when it loads.
 const dataDir = mkdtempSync(path.join(tmpdir(), 'fay-hashtags-'));
 process.env.FAYTARRA_DATA_DIR = dataDir;
-const uploads = path.join(dataDir, 'uploads');
 
 let store: ReturnType<typeof import('@/lib/db').db>;
 let posts: typeof import('./posts');
 let hashtags: typeof import('./hashtags');
-let searching: typeof import('./search');
-let users: typeof import('./users');
+let index: typeof import('./hashtag-index');
 let moderation: typeof import('./moderation');
+let users: typeof import('./users');
+let search: typeof import('./search');
 
-function person(username: string, extra: Record<string, unknown> = {}) {
-  const now = new Date(Date.now() - 30 * 86_400_000).toISOString();
+function person(username: string, role: 'user' | 'admin' = 'user') {
+  const now = new Date().toISOString();
   return {
     id: crypto.randomUUID(),
     email: `${username}@example.com`,
@@ -45,173 +43,300 @@ function person(username: string, extra: Record<string, unknown> = {}) {
     avatar_url: null as string | null,
     location: null,
     interests: [],
-    role: 'user' as const,
+    role,
     status: 'active' as const,
     status_reason: null,
-    trusted: true,
+    trusted: false,
     username_changed_at: null,
     created_at: now,
     last_active_at: now,
-    ...extra,
   };
 }
 
-const creator = person('creator');
-const other = person('other');
-const viewer = person('viewer');
-const admin = person('boss', { role: 'admin' });
+const ana = person('tagana');
+const ben = person('tagben');
+const cal = person('tagcal');
+const viewer = person('tagviewer');
+const admin = person('tagadmin', 'admin');
 
-function file(extension: string): string {
-  mkdirSync(uploads, { recursive: true });
-  const name = `${crypto.randomUUID()}${extension}`;
-  writeFileSync(path.join(uploads, name), 'bytes');
-  return `/api/media/${name}`;
+type Kind = 'text' | 'photo' | 'video';
+const MEDIA = {
+  text: () => ({ media: [], textKind: 'short' as const }),
+  photo: () => ({ media: [{ kind: 'image' as const, url: `/api/media/${crypto.randomUUID()}.jpg` }] }),
+  video: () => ({
+    media: [{ kind: 'video' as const, url: `/api/media/${crypto.randomUUID()}.webm`, duration: 5 }],
+  }),
+};
+
+function publish(kind: Kind, caption: string, author = ana, tags: string[] = []) {
+  return posts.createPost({ authorId: author.id, caption, category: 'Gaming', tags, ...MEDIA[kind]() });
 }
 
-async function video(authorId: string, tags: string[], caption = '') {
-  const post = await posts.createPost({
-    authorId,
-    caption,
-    category: 'Gaming',
-    tags,
-    media: [{ kind: 'video', url: file('.webm'), poster: file('.jpg') }],
-  });
-  // createdAt order is what the page sorts by; keep each one distinct.
-  await new Promise((resolve) => setTimeout(resolve, 5));
-  return post;
+/** Post ids on a hashtag's page, as `who` would be shown them. */
+async function onPage(tag: string, who: { id: string } | null = viewer, limit?: number) {
+  const page = await hashtags.hashtagPage(tag, who?.id ?? null, limit);
+  return page ? page.posts.map((view) => view.post.id) : null;
 }
-
-async function photo(authorId: string, tags: string[], caption = '') {
-  return posts.createPost({
-    authorId,
-    caption,
-    category: 'Life',
-    tags,
-    media: [{ kind: 'image', url: file('.jpg') }],
-  });
-}
-
-const ids = async (key: string, viewerId: string | null = viewer.id) =>
-  (await hashtags.hashtagVideos(key, viewerId)).videos.map((view) => view.post.id);
 
 before(async () => {
   posts = await import('./posts');
   hashtags = await import('./hashtags');
-  searching = await import('./search');
-  users = await import('./users');
+  index = await import('./hashtag-index');
   moderation = await import('./moderation');
+  users = await import('./users');
+  search = await import('./search');
   store = (await import('@/lib/db')).db();
-  for (const each of [creator, other, viewer, admin]) await store.insert('users', each);
+  for (const each of [ana, ben, cal, viewer, admin]) await store.insert('users', each);
 });
 
 after(() => rmSync(dataDir, { recursive: true, force: true }));
 
-describe('a hashtag page', () => {
-  it('holds every public video with the hashtag, whatever case it was written in, newest first', async () => {
-    const upper = await video(creator.id, ['Speedrun']);
-    const lower = await video(other.id, ['speedrun']);
-    const shouty = await video(creator.id, [], 'new PB!! #SPEEDRUN');
-    assert.deepEqual(await ids('speedrun'), [shouty.id, lower.id, upper.id]);
+describe('publishing makes a hashtag', () => {
+  it('files text, photo and video posts under every hashtag they carry', async () => {
+    const text = await publish('text', 'gg #Clutchmoment #Esports');
+    const photo = await publish('photo', 'new desk #CLUTCHMOMENT');
+    // The video posting screen collects hashtags as tags, not in the caption.
+    const video = await publish('video', 'one take', ana, ['clutchmoment', 'Highlights']);
+
+    const filed = await store.query('post_hashtags', { where: { tag: 'clutchmoment' } });
+    assert.deepEqual(
+      new Set(filed.map((row) => row.post_id)),
+      new Set([text.id, photo.id, video.id]),
+    );
+    assert.deepEqual(
+      (await store.query('post_hashtags', { where: { post_id: text.id } })).map((row) => row.tag).sort(),
+      ['clutchmoment', 'esports'],
+    );
+    assert.deepEqual(await onPage('clutchmoment'), [video.id, photo.id, text.id], 'newest first');
+    assert.deepEqual(await onPage('highlights'), [video.id]);
   });
 
-  it('holds videos only — a photo with the hashtag is counted, not played', async () => {
-    const clip = await video(creator.id, ['onlyvideos']);
-    await photo(creator.id, ['OnlyVideos']);
-    await photo(other.id, [], 'a photo #onlyvideos');
-    const page = await hashtags.hashtagVideos('onlyvideos', viewer.id);
-    assert.deepEqual(page.videos.map((view) => view.post.id), [clip.id]);
-    assert.equal(page.otherPosts, 2);
+  it('keeps #Gaming, #gaming and #GAMING as one hashtag and one page', async () => {
+    const one = await publish('text', 'first #Samewordtag', ana);
+    const two = await publish('photo', 'second #sameWORDtag', ben);
+    const three = await publish('video', 'third #SAMEWORDTAG', cal);
+
+    const rows = await store.query('hashtags', { where: { tag: 'samewordtag' } });
+    assert.equal(rows.length, 1, 'one hashtag record');
+    assert.equal(rows[0].display, 'Samewordtag', 'titled the way it was first written');
+    for (const spelling of ['Samewordtag', 'samewordtag', 'SAMEWORDTAG', '#SameWordTag']) {
+      assert.deepEqual(await onPage(spelling), [three.id, two.id, one.id], spelling);
+    }
+    const page = await hashtags.hashtagPage('SAMEWORDTAG', null);
+    assert.equal(page?.tag, 'samewordtag');
+    assert.equal(page?.display, 'Samewordtag');
   });
 
-  it('a video with several hashtags is on each of their pages', async () => {
-    const clip = await video(creator.id, ['alpha', 'Beta'], 'and #gamma in the caption');
-    for (const key of ['alpha', 'beta', 'gamma']) assert.deepEqual(await ids(key), [clip.id], key);
+  it('shows posts from everybody who used it, not just whoever used it first', async () => {
+    const mine = await publish('text', '#Everyonestag mine', ana);
+    const theirs = await publish('text', '#everyonestag theirs', ben);
+    assert.deepEqual(new Set(await onPage('everyonestag')), new Set([mine.id, theirs.id]));
   });
 
-  it('includes the viewer’s own videos, and works signed out', async () => {
-    const mine = await video(viewer.id, ['mine']);
-    assert.deepEqual(await ids('mine', viewer.id), [mine.id]);
-    assert.deepEqual(await ids('mine', null), [mine.id]);
+  it('files nothing that is not a hashtag', async () => {
+    const post = await publish('text', 'open mic #31, C# and example.com/page#anchor');
+    assert.deepEqual(await store.query('post_hashtags', { where: { post_id: post.id } }), []);
   });
 
-  it('existing posts with tags count, with no change to them', async () => {
-    const before = await video(creator.id, ['Legacy']);
-    const row = await store.get('posts', before.id);
-    assert.deepEqual(row?.tags, ['Legacy'], 'stored as written');
-    assert.deepEqual(await ids('legacy'), [before.id]);
-  });
-});
-
-describe('a hashtag page stays current', () => {
-  it('a deleted video leaves it', async () => {
-    const clip = await video(creator.id, ['deleteme']);
-    assert.deepEqual(await ids('deleteme'), [clip.id]);
-    const result = await posts.deletePost(clip.id, creator.id);
-    assert.equal(result.ok, true);
-    assert.deepEqual(await ids('deleteme'), []);
+  it('is not a page for something that is not a hashtag at all', async () => {
+    assert.equal(await hashtags.hashtagPage('#', null), null);
+    assert.equal(await hashtags.hashtagPage('31', null), null);
+    assert.equal(await hashtags.hashtagPage('two words', null), null);
   });
 
-  it('a video removed from public viewing leaves it, and comes back if restored', async () => {
-    const clip = await video(creator.id, ['moderated']);
-    assert.equal((await moderation.hideFromPublic(clip.id, admin.id, 'Spam')).ok, true);
-    assert.deepEqual(await ids('moderated'), []);
-    await moderation.restorePost(clip.id);
-    assert.deepEqual(await ids('moderated'), [clip.id]);
-  });
-
-  it('a removed video and one held for review are not on it', async () => {
-    const removed = await video(creator.id, ['held']);
-    const held = await video(creator.id, ['held']);
-    await store.update('posts', removed.id, { removed: true, removed_reason: 'Spam' });
-    await store.update('posts', held.id, { review_state: 'temporary_review' } as never);
-    assert.deepEqual(await ids('held'), []);
-  });
-
-  it('a suspended author’s videos are not on it, nor a blocked one’s for whoever blocked them', async () => {
-    const benched = person('benched');
-    await store.insert('users', benched);
-    const suspended = await video(benched.id, ['accounts']);
-    const blocked = await video(other.id, ['accounts']);
-    assert.deepEqual(await ids('accounts'), [blocked.id, suspended.id]);
-    await store.update('users', benched.id, { status: 'suspended' });
-    await users.blockUser(viewer.id, other.id);
-    assert.deepEqual(await ids('accounts', viewer.id), []);
-    assert.deepEqual(await ids('accounts', null), [blocked.id], 'blocking is only for the blocker');
+  it('is still a page, an empty one, for a hashtag nothing carries', async () => {
+    const page = await hashtags.hashtagPage('nothinghasthisyet', null);
+    assert.deepEqual(page && { tag: page.tag, posts: page.posts, hasMore: page.hasMore }, {
+      tag: 'nothinghasthisyet',
+      posts: [],
+      hasMore: false,
+    });
   });
 });
 
-describe('searching for hashtags', () => {
-  it('finds a hashtag with or without the #, in any case, with what uses it', async () => {
-    await video(creator.id, ['Skateboarding']);
-    // Not `other`: the viewer blocked them above, and search respects that.
-    await video(creator.id, [], 'kickflip #skateboarding');
-    await photo(creator.id, ['skateboarding']);
-    for (const query of ['#skateboarding', 'Skateboarding', '#SKATE']) {
-      const { hashtags: found } = await searching.search(query, viewer.id);
-      const hit = found.find((tag) => tag.key === 'skateboarding');
+describe('what a hashtag page never shows', () => {
+  it('a deleted post', async () => {
+    const post = await publish('photo', 'gone soon #Deletedcase');
+    assert.ok((await posts.deletePost(post.id, ana.id)).ok);
+    assert.deepEqual(await onPage('deletedcase'), []);
+    assert.deepEqual(await store.query('post_hashtags', { where: { post_id: post.id } }), [], 'unfiled');
+  });
+
+  it('a post removed by a moderator, or removed from public viewing', async () => {
+    const removed = await publish('video', '#Moderatedcase one');
+    const hidden = await publish('text', '#Moderatedcase two');
+    const kept = await publish('text', '#Moderatedcase three');
+    assert.ok((await moderation.removePostPermanently(removed.id, admin.id, 'rule 1')).ok);
+    assert.ok((await moderation.hideFromPublic(hidden.id, admin.id, 'rule 2')).ok);
+    assert.deepEqual(await onPage('moderatedcase'), [kept.id]);
+    // Not even for the moderator who did it, on a public page.
+    assert.deepEqual(await onPage('moderatedcase', admin), [kept.id]);
+  });
+
+  it('a post hidden while reports are reviewed', async () => {
+    const held = await publish('photo', '#Reviewcase held');
+    const kept = await publish('photo', '#Reviewcase kept');
+    await store.update('posts', held.id, {
+      review_state: 'temporary_review',
+      review_started_at: new Date().toISOString(),
+      review_expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+    });
+    assert.deepEqual(await onPage('reviewcase'), [kept.id]);
+  });
+
+  it('posts by a suspended account', async () => {
+    const suspended = person('tagsuspended');
+    await store.insert('users', suspended);
+    await publish('text', '#Suspendedcase theirs', suspended);
+    const kept = await publish('text', '#Suspendedcase mine', ana);
+    assert.ok((await moderation.setUserStatus(suspended.id, 'suspended', 'spam', admin.id)).ok);
+    assert.deepEqual(await onPage('suspendedcase'), [kept.id]);
+  });
+
+  it('posts by somebody the viewer blocked, or who blocked the viewer', async () => {
+    const blocked = await publish('text', '#Blockcase from ben', ben);
+    const blocker = await publish('text', '#Blockcase from cal', cal);
+    const kept = await publish('text', '#Blockcase from ana', ana);
+    await users.blockUser(viewer.id, ben.id);
+    await users.blockUser(cal.id, viewer.id);
+    assert.deepEqual(await onPage('blockcase', viewer), [kept.id]);
+    // Somebody else still sees all three: blocks are personal.
+    assert.deepEqual(new Set(await onPage('blockcase', null)), new Set([blocked.id, blocker.id, kept.id]));
+  });
+});
+
+describe('changing what a post says', () => {
+  it('moves it between hashtag pages', async () => {
+    const post = await publish('text', 'before #Editbefore');
+    assert.deepEqual(await onPage('editbefore'), [post.id]);
+
+    // What an edit does: the post's words change, then it is re-filed.
+    await store.update('posts', post.id, { caption: 'after #Editafter', tags: ['Edittag'] });
+    await index.indexPost({ ...post, caption: 'after #Editafter', tags: ['Edittag'] });
+
+    assert.deepEqual(await onPage('editbefore'), [], 'off the hashtag it lost');
+    assert.deepEqual(await onPage('editafter'), [post.id], 'on the hashtag it gained');
+    assert.deepEqual(await onPage('edittag'), [post.id], 'and on a tag it gained');
+    assert.deepEqual(
+      (await store.query('post_hashtags', { where: { post_id: post.id } })).map((row) => row.tag).sort(),
+      ['editafter', 'edittag'],
+    );
+  });
+
+  it('never shows a post under a hashtag it no longer carries, even before it is re-filed', async () => {
+    const post = await publish('text', 'before #Stalecase');
+    await store.update('posts', post.id, { caption: 'the hashtag is gone' });
+    assert.deepEqual(await onPage('stalecase'), []);
+  });
+
+  it('re-filing is harmless to repeat', async () => {
+    const post = await publish('text', 'twice #Repeatcase');
+    await index.indexPost(post);
+    await index.indexPost(post);
+    assert.equal((await store.query('post_hashtags', { where: { post_id: post.id } })).length, 1);
+  });
+});
+
+describe('a busy hashtag', () => {
+  it('opens with a page and grows with Show more', async () => {
+    const made = [];
+    for (let i = 0; i < 25; i += 1) {
+      made.push(await publish(i % 2 ? 'photo' : 'text', `number ${i} #Busycase`, i % 3 ? ana : ben));
+    }
+    // Signed out, so the blocks set up above are nobody's here.
+    const first = await hashtags.hashtagPage('busycase', null, 20);
+    assert.equal(first?.posts.length, 20);
+    assert.equal(first?.hasMore, true);
+    const all = await hashtags.hashtagPage('busycase', null, 40);
+    assert.equal(all?.posts.length, 25);
+    assert.equal(all?.hasMore, false);
+    assert.deepEqual(
+      all?.posts.map((view) => view.post.id),
+      [...made].reverse().map((post) => post.id),
+      'newest first, every one',
+    );
+  });
+
+  it('fills a page even when much of the index is hidden from this viewer', async () => {
+    const older = [];
+    for (let i = 0; i < 5; i += 1) older.push(await publish('text', `#Mostlyblocked ok ${i}`, ana));
+    // `viewer` blocked ben above, so the eighty newest are not theirs to see,
+    // and the first read of the index finds nothing visible in them.
+    for (let i = 0; i < 80; i += 1) await publish('text', `#Mostlyblocked ${i}`, ben);
+    const page = await hashtags.hashtagPage('mostlyblocked', viewer.id, 3);
+    assert.deepEqual(
+      page?.posts.map((view) => view.post.id),
+      [older[4].id, older[3].id, older[2].id],
+    );
+    assert.equal(page?.hasMore, true);
+  });
+});
+
+describe('without the index', () => {
+  it('reads the visible posts directly and shows the same page', async () => {
+    const a = await publish('text', '#Fallbackcase a');
+    const b = await publish('photo', '#FALLBACKCASE b', ben);
+    const withIndex = await onPage('fallbackcase', null);
+    // A database that has not run migration 0015.
+    index.index.available = false;
+    index.index.retryAt = Date.now() + 60_000;
+    try {
+      assert.deepEqual(await onPage('fallbackcase', null), withIndex);
+      assert.deepEqual(new Set(withIndex), new Set([a.id, b.id]));
+    } finally {
+      index.index.available = null;
+      index.index.retryAt = 0;
+    }
+  });
+});
+
+describe('searching for a hashtag', () => {
+  it('finds the hashtag page for Gaming and #Gaming alike', async () => {
+    const dee = person('tagdee');
+    await store.insert('users', dee);
+    await publish('video', 'go #Searchable', ana);
+    await publish('photo', 'go #SEARCHABLE', dee);
+    for (const query of ['Searchable', '#Searchable', 'searchable', '#SEARCHABLE']) {
+      const results = await search.search(query, viewer.id);
+      const hit = results.hashtags.find((result) => result.tag === 'searchable');
       assert.ok(hit, query);
-      assert.deepEqual([hit.videos, hit.posts], [2, 3], query);
+      assert.equal(hit.posts, 2);
+      assert.equal(hit.display, 'Searchable');
     }
   });
 
-  it('an exact match comes before longer hashtags that contain it', async () => {
-    await video(creator.id, ['cats']);
-    await video(creator.id, ['catsofinstagram']);
-    await video(creator.id, ['catsofinstagram']);
-    const { hashtags: found } = await searching.search('#cats', viewer.id);
-    assert.deepEqual(found.slice(0, 2).map((tag) => tag.key), ['cats', 'catsofinstagram']);
+  it('keeps hashtags apart from the people and posts that match', async () => {
+    const results = await search.search('#Searchable', viewer.id);
+    assert.ok(results.hashtags.length > 0);
+    assert.ok(results.posts.length > 0, 'the posts are still found, as posts');
   });
 
-  it('“#tag” finds the posts that use it too, which it did not before', async () => {
-    const clip = await video(creator.id, ['puzzlegame']);
-    const { posts: found } = await searching.search('#PuzzleGame', viewer.id);
-    assert.ok(found.some((view) => view.post.id === clip.id));
+  it('suggests hashtags that start with what was typed', async () => {
+    await publish('text', '#Prefixcaseone and #Prefixcasetwo');
+    const tags = (await search.search('prefixcase', viewer.id)).hashtags.map((result) => result.tag);
+    assert.deepEqual(tags.sort(), ['prefixcaseone', 'prefixcasetwo']);
   });
 
-  it('a hidden video is not counted in search either', async () => {
-    const clip = await video(creator.id, ['vanishing']);
-    await store.update('posts', clip.id, { removed: true });
-    const { hashtags: found } = await searching.search('#vanishing', viewer.id);
-    assert.equal(found.length, 0);
+  it('never counts, or suggests, a hashtag only hidden posts carry', async () => {
+    const post = await publish('text', '#Hiddenonlycase secret');
+    await publish('text', '#Hiddenonlycasevisible fine');
+    assert.ok((await moderation.removePostPermanently(post.id, admin.id, 'rule 3')).ok);
+    const results = await search.search('hiddenonlycase', viewer.id);
+    // The exact hashtag that was typed is offered, with nothing on it — its
+    // page says so. Nothing hidden is counted or shown.
+    assert.deepEqual(
+      results.hashtags.map((result) => [result.tag, result.posts]),
+      [
+        ['hiddenonlycase', 0],
+        ['hiddenonlycasevisible', 1],
+      ],
+    );
+    assert.ok(!results.posts.some((view) => view.post.id === post.id));
+    const hiddenOnly = (await search.search('hiddenonly', viewer.id)).hashtags.map((r) => r.tag);
+    assert.deepEqual(hiddenOnly, ['hiddenonlycasevisible'], 'not suggested from a prefix');
+  });
+
+  it('finds no hashtag for a phrase', async () => {
+    assert.deepEqual((await search.search('searchable things', viewer.id)).hashtags, []);
   });
 });

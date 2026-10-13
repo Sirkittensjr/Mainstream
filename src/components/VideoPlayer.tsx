@@ -33,8 +33,8 @@ export function VideoPlayer({
   className?: string;
   autoPlayMuted?: boolean;
   /**
-   * The post this video belongs to. Given, the player reports a watch once
-   * playback starts; left out — a preview, a draft, anything not
+   * The post this video belongs to. Given, the player reports a view each time
+   * a viewing of it begins playing; left out — a preview, a draft, anything not
    * yet a post — it counts nothing.
    */
   postId?: string;

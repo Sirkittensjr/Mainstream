@@ -1,19 +1,25 @@
 import 'server-only';
 import { db, isDuplicateRow, isMissingColumn, isMissingRelation } from '@/lib/db';
+import { underReview } from '@/lib/auto-review-rules';
 import { newId } from '@/lib/ids';
 import type { ID, Media, Post } from '@/lib/types';
-import { MAX_VIEWS_PER_HOUR, decideView, dedupeKey, type ViewVerdict } from '@/lib/video/views';
+import {
+  VIEW_COOLDOWN_MS,
+  VIEW_HOURLY_LIMIT,
+  decideView,
+  dedupeKey,
+} from '@/lib/video/views';
+import { serially } from './serial';
 
 /**
  * Counting video views, server-side.
  *
  * The authoritative number lives in `posts.video_views` and is written here and
- * nowhere else. A browser's part in this is one sentence — "a playback
- * session of post X started, and here is its session key" — and even that is
+ * nowhere else. A browser's part in this is one sentence — "this playback
+ * session watched post X, and here is its session key" — and even that is
  * checked rather than believed: the post has to exist and carry a video; the
- * session must not have been counted already; and one person cannot add views
- * faster than the gap or past the hourly cap, however many session keys they
- * invent. See lib/video/views.ts for what a view is.
+ * session key has to be one that has not been counted; and the same person cannot count twice on the same video
+ * inside the cooldown however many session keys they invent.
  *
  * No count ever comes from the client, and the client is never told anything
  * except the total the database now holds.
@@ -43,8 +49,6 @@ export interface ViewResult {
   count: number;
   /** Whether this request added one. */
   counted: boolean;
-  /** Why it did or did not, for tests and logs. */
-  verdict?: ViewVerdict | 'switched-off';
 }
 
 /**
@@ -69,103 +73,68 @@ function switchOff(reason: unknown): void {
 }
 
 /**
- * One person's decisions about one video, one at a time.
- *
- * "Has this session been counted, and how recently did they view it?" and
- * "store it" have to happen as one step, or two reports of the same session
- * arriving together both see "not yet". The unique index on `dedupe_key`
- * settles that in Postgres whatever happens here; this settles it for the
- * local driver, and saves Postgres the refused insert.
- */
-const queues = new Map<string, Promise<unknown>>();
-function serially<T>(key: string, task: () => Promise<T>): Promise<T> {
-  const previous = queues.get(key) ?? Promise.resolve();
-  const next = previous.then(task, task);
-  const settled = next.catch(() => undefined);
-  queues.set(key, settled);
-  void settled.then(() => {
-    if (queues.get(key) === settled) queues.delete(key);
-  });
-  return next;
-}
-
-/**
- * Adds one to the stored total, without losing a view to a race.
- *
- * Compare-and-set: the write only lands if the total is still what was read,
- * so of two views counted at the same moment one wins, the other reads the
- * new total and tries again. Nothing is ever written that a read did not see,
- * so a total can never go backwards or skip.
- */
-async function addOne(postId: ID): Promise<number | null> {
-  const store = db();
-  for (let attempt = 0; attempt < 30; attempt += 1) {
-    const post = await store.get('posts', postId);
-    if (!post) return null;
-    const current = typeof post.video_views === 'number' ? post.video_views : null;
-    const changed = await store.updateWhere(
-      'posts',
-      { id: postId, video_views: current } as Partial<Post>,
-      { video_views: (current ?? 0) + 1 },
-    );
-    if (changed > 0) return (current ?? 0) + 1;
-    // Somebody else's view landed first. Read again; a short, uneven pause
-    // keeps a crowd of these from retrying in lockstep.
-    await new Promise((resolve) => setTimeout(resolve, 2 + Math.floor(Math.random() * 8)));
-  }
-  console.error(`[faytarra] a view of ${postId} was recorded but the total could not be raised`);
-  return null;
-}
-
-/**
- * Counts a playback, if it is a view.
+ * Counts a watch, if it is one.
  *
  * Returns the stored total either way, so a player that was not counted still
  * shows the right number rather than a stale one.
  */
 export async function recordVideoView(request: ViewRequest): Promise<ViewResult> {
   const { postId, viewerId, browserId, sessionKey } = request;
+  const now = request.now ?? Date.now();
   const store = db();
 
   const post = await store.get('posts', postId);
-  if (!post || post.removed) return { count: 0, counted: false, verdict: 'no-post' };
+  if (!post || post.removed) return { count: 0, counted: false };
+
+  const count = videoViewsOf(post);
   // A photo or a text post has nothing to play, so it has no video views. The
   // `views` counter it has always had is a different number and is untouched.
-  if (!hasVideo(post.media)) return { count: 0, counted: false, verdict: 'not-a-video' };
-  const count = videoViewsOf(post);
-  if (storable === false) return { count, counted: false, verdict: 'switched-off' };
+  if (!hasVideo(post.media)) return { count: 0, counted: false };
+  // Hidden while it is reviewed: only its author and moderators can see it,
+  // and a moderator looking at it is not an audience either.
+  if (underReview(post)) return { count, counted: false };
+  if (storable === false) return { count, counted: false };
 
   // Who watched. The account when there is one; otherwise the browser, which is
   // the most that can honestly be said about a visitor.
   const identity = viewerId ?? (browserId ? `anon:${browserId}` : null);
-  if (!identity) return { count, counted: false, verdict: 'unknown-viewer' };
+  if (!identity) return { count, counted: false };
   const key = dedupeKey(postId, identity, sessionKey);
 
-  return serially(`${postId}:${identity}`, async () => {
-    const now = request.now ?? Date.now();
+  // One person's reports of one video are decided one at a time, so two copies
+  // of the same report — a retry, a handler that fired twice — cannot both read
+  // "not counted yet" and both count. Across server processes the unique index
+  // on `dedupe_key` does the same job; see the DuplicateRowError below.
+  return serially(`video-view:${postId}:${identity}`, async () => {
     try {
-      const [already, recent] = await Promise.all([
+      const [already, mine] = await Promise.all([
+        // Exact, and indexed: has THIS playback session been counted, ever.
         store.query('video_views', { where: { dedupe_key: key }, limit: 1 }),
+        // This person's latest views of this video, for the cooldown and the
+        // hourly ceiling.
         store.query('video_views', {
           where: { post_id: postId, identity },
           orderBy: 'created_at',
           desc: true,
-          limit: MAX_VIEWS_PER_HOUR + 1,
+          limit: VIEW_HOURLY_LIMIT,
         }),
       ]);
       storable ??= true;
 
+      // Every rule about what a view is lives in decideView, which is pure and
+      // tested: this playback session counts once, and no identity counts twice
+      // inside the cooldown or past the hourly ceiling, whatever session key
+      // arrived — the half of the defence that does not trust the client.
       const verdict = decideView({
         post: { removed: post.removed, hasVideo: true },
         identity,
+        dedupeKey: key,
         sessionCounted: already.length > 0,
-        recent,
+        recent: mine,
         now,
+        cooldownMs: VIEW_COOLDOWN_MS,
       });
-      if (verdict !== 'count') {
-        const latest = await store.get('posts', postId);
-        return { count: latest ? videoViewsOf(latest) : count, counted: false, verdict };
-      }
+      if (verdict !== 'count') return { count, counted: false };
 
       await store.insert('video_views', {
         id: newId(),
@@ -176,26 +145,25 @@ export async function recordVideoView(request: ViewRequest): Promise<ViewResult>
         created_at: new Date(now).toISOString(),
       });
     } catch (error) {
-      // Another server instance stored this exact session first. The index is
-      // the rule; this request is the duplicate.
-      if (isDuplicateRow(error)) {
-        const latest = await store.get('posts', postId);
-        return { count: latest ? videoViewsOf(latest) : count, counted: false, verdict: 'duplicate-session' as const };
-      }
       if (isMissingRelation(error)) {
         switchOff(error);
-        return { count, counted: false, verdict: 'switched-off' as const };
+        return { count, counted: false };
       }
+      // Another server process stored this same playback session a moment
+      // ago. It has been counted — once, by that request.
+      if (isDuplicateRow(error)) return { count, counted: false };
       throw error;
     }
 
+    // The database adds the one, so two people watching at the same moment
+    // are two views. The row above is the record; this is the total.
     try {
-      const next = await addOne(postId);
-      return { count: next ?? count, counted: next !== null, verdict: 'count' as const };
+      const next = await store.increment('posts', postId, 'video_views', 1);
+      return { count: next ?? count + 1, counted: true };
     } catch (error) {
       if (isMissingColumn(error, 'posts', 'video_views')) {
         switchOff(error);
-        return { count, counted: false, verdict: 'switched-off' as const };
+        return { count, counted: false };
       }
       throw error;
     }

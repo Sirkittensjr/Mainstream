@@ -1,68 +1,214 @@
 /**
  * What counts as watching a video.
  *
- * A view is a PLAYBACK SESSION: a video starting to play, however briefly. A
- * clip that autoplays as somebody scrolls past it in the feed has been
- * watched; one that only rendered its thumbnail, or mounted a player that
- * never started, has not.
+ * A view is a claim about a person, and almost everything a video player does
+ * is not one. A React component rendering is not a view. Scrolling a feed is
+ * not a view. Autoplay state changing, a slide mounting and unmounting, a seek,
+ * a pause, a tap on the sound button — none of those are somebody watching, and
+ * counting any of them is how a number stops meaning anything.
  *
- * Every new playback session is a new view — opening the video again,
- * refreshing, scrolling away and coming back to it, playing it again after it
- * ended, or a feed clip looping round to its start. What is NOT a new session
- * is everything a player does in between: a re-render, a remount of the same
- * viewing, a pause and play, a stall and resume, the same report arriving
- * twice. Those are one view.
+ * So the rule here is deliberately narrow: a view is PLAYBACK BEGINNING —
+ * the playhead actually advancing, autoplay included — once per playback
+ * session. A new session is a new viewing: played to the end, the loop coming
+ * round, rewound to the start, or scrolled away from and back to. Everything
+ * in this file is the arithmetic for that, kept pure and shared by both sides —
+ * the player decides when to send an event, the server decides whether to
+ * count it, and neither trusts a number the other one made up.
  *
- * Everything in this file is the arithmetic for that, kept pure and shared by
- * both sides — the player decides when a session starts and reports it once,
- * the server decides whether to count it, and neither trusts a number the
- * other one made up. The count itself is never a client's to report.
+ * The count itself is never a client's to report. The browser says "this was
+ * watched"; the database says how many times it has been.
  */
+
+/**
+ * How far into a video still counts as its start.
+ *
+ * A jump back to here from further on is somebody watching it again: the loop
+ * came round, the feed rewound it, or they dragged it back to the beginning.
+ * Half a second rather than zero because a loop lands a frame or two in.
+ */
+export const START_SECONDS = 0.5;
+
+/**
+ * How far a viewing has to have got before a return to the start is a new
+ * viewing, rather than a nudge of the scrubber in the first second.
+ */
+export const REWATCH_AFTER_SECONDS = 1;
 
 /**
  * The least time between two counted views of one video by one person.
  *
- * Only there to absorb a burst — two players firing for one tap, a retry with
- * a fresh key racing the first. Long enough for that, far shorter than anybody
- * can scroll away from a video and back.
+ * The playback-session key stops the accidents — the re-renders, the remounts,
+ * a timeupdate handler firing twice, a request retried. This stops the
+ * deliberate: a client is free to mint a fresh session key for every request,
+ * so the server needs a limit that does not depend on the client being honest.
+ * Two seconds is longer than any burst of accidental reports and shorter than
+ * anybody can genuinely scroll away from a video and back, so watching
+ * something again always counts again.
  */
-export const MIN_VIEW_GAP_MS = 1_000;
+export const VIEW_COOLDOWN_MS = 2_000;
 
 /**
  * The most views one person can add to one video in an hour.
  *
- * Re-watching is a view, so the only thing standing between a client that
- * invents a new session key for every request and an invented total is a cap
- * that does not depend on the client being honest. Sixty an hour is more
- * re-watching than a person does on purpose, and still a ceiling on what a
- * script can do.
+ * A clip left looping counts every time it comes round, which is what a view
+ * count on a looping feed means. This is only the ceiling on that, so a
+ * signed-in script cannot loop one video into the thousands.
  */
-export const MAX_VIEWS_PER_HOUR = 60;
-const HOUR_MS = 3_600_000;
+export const VIEW_HOURLY_LIMIT = 60;
+export const VIEW_HOUR_MS = 60 * 60 * 1000;
+
+/** What the player knows about the playback session it is watching. */
+export interface PlaybackWatch {
+  /** Seconds that have actually elapsed while playing. Not currentTime: a seek
+   *  to the end is not watching. */
+  playedSeconds: number;
+  /** Whether this playback session has already been reported. */
+  reported: boolean;
+}
 
 /**
- * How close to the end a video has to be for a jump back to its start to be
- * the video looping round, rather than somebody scrubbing back a few seconds.
- * A `timeupdate` arrives about every quarter second, so the last one before a
- * loop is well inside this.
- */
-export const LOOP_EDGE_SECONDS = 1;
-
-/**
- * Whether the playhead going from `previous` to `current` is the video
- * starting over — a loop, or a replay from the beginning — which is a new
- * playback session.
+ * Whether the player should report a view now.
  *
- * With a known duration: it was near the end and is now near the start. With
- * no duration (a recording can report Infinity): any jump back to the start
- * from more than a second in.
+ * A view is the video BEGINNING to play — autoplay in a feed included — which
+ * is measured as the playhead actually advancing while it plays. Not the play()
+ * call, which autoplay policy can refuse, and not the element mounting, which
+ * a feed does for the clips either side of the one on screen.
+ *
+ * `reported` is the whole defence against duplicates on the client: one true
+ * per playback session, no matter how many times the component renders or how
+ * many timeupdate events fire.
  */
-export function isLoopRestart(previous: number, current: number, duration?: number | null): boolean {
-  if (!Number.isFinite(previous) || !Number.isFinite(current)) return false;
-  if (current > 0.5 || current >= previous) return false;
-  const length = typeof duration === 'number' && Number.isFinite(duration) && duration > 0 ? duration : null;
-  if (length === null) return previous - current > 1;
-  return previous >= Math.max(0, length - LOOP_EDGE_SECONDS);
+export function shouldReportView(watch: PlaybackWatch): boolean {
+  if (watch.reported) return false;
+  return watch.playedSeconds > 0;
+}
+
+/**
+ * How much playing time to add for a timeupdate.
+ *
+ * The gap between two timeupdates, ignored when it is implausible: a seek
+ * jumps currentTime by minutes without anybody watching them, and a tab that
+ * was in the background reports one enormous step. Anything over a second and
+ * a half of wall clock between events is treated as not-watching rather than
+ * as watched time.
+ */
+export function playedSince(previous: number, current: number): number {
+  const step = current - previous;
+  if (!Number.isFinite(step) || step <= 0) return 0;
+  return step > 1.5 ? 0 : step;
+}
+
+/**
+ * One player's viewings, as a sequence of media events.
+ *
+ * The rules for when a viewing starts and when it has been watched, kept out
+ * of React so they can be tested as the events a real player fires:
+ *
+ *   playback begins           the viewing is reported, once — on `playing`,
+ *                             or the first timeupdate that moves, whichever
+ *                             comes first
+ *   pause and play            the same viewing, nothing new
+ *   a re-render               nothing here runs on render
+ *   a burst of timeupdates    reported once; every one after is ignored
+ *   seeking mid-video         the same viewing; the jump is not watched time
+ *   played to the end         `ended`: the next play is a new viewing
+ *   the loop comes round      back at the start: a new viewing
+ *   rewound to the start      the same, whoever rewound it
+ *   scrolled away             the feed calls `restart`; coming back is new
+ *
+ * `timeUpdate` answers true exactly once per viewing — at the moment it should
+ * be reported — and `sessionKey` is the key to report it under.
+ */
+export interface ViewTracker {
+  /** The key of the viewing in progress. One per viewing, made on demand. */
+  readonly sessionKey: string;
+  /** Playback was asked for, or resumed, at this playhead. */
+  play(at: number): void;
+  /**
+   * The browser says playback has actually begun (`playing`). True when this
+   * viewing should be reported now — the earliest honest moment a view is.
+   * After a stall, or a pause and play, it is the same viewing: false.
+   */
+  playing(at: number): boolean;
+  /** A timeupdate. True when this viewing should be reported now. */
+  timeUpdate(at: number, paused: boolean): boolean;
+  /** A seek finished at this playhead. */
+  seeked(at: number): void;
+  /** Played to the end. */
+  ended(): void;
+  /** Starts a new viewing: the next playback is a new view. */
+  restart(): void;
+}
+
+export function createViewTracker({
+  duration,
+  mint = newSessionKey,
+}: {
+  /** Seconds, if known. A very short clip still loops into new viewings. */
+  duration?: number | null;
+  mint?: () => string;
+} = {}): ViewTracker {
+  const length = typeof duration === 'number' && Number.isFinite(duration) && duration > 0 ? duration : 0;
+  // A clip shorter than these two can still be watched again.
+  const start = length ? Math.min(START_SECONDS, length / 4) : START_SECONDS;
+  const rewatchAfter = length ? Math.min(REWATCH_AFTER_SECONDS, length / 2) : REWATCH_AFTER_SECONDS;
+
+  let session = '';
+  let played = 0;
+  let lastAt: number | null = null;
+  let furthest = 0;
+  let reported = false;
+
+  const restart = () => {
+    session = '';
+    played = 0;
+    lastAt = null;
+    furthest = 0;
+    reported = false;
+  };
+  const key = () => (session ||= mint());
+  // Back at the start of a viewing that has already been counted and has got
+  // somewhere: the loop came round, or it was taken back to be watched again.
+  const backToStart = (at: number) => reported && at <= start && furthest >= rewatchAfter;
+
+  return {
+    get sessionKey() {
+      return key();
+    },
+    play(at) {
+      key();
+      lastAt = at;
+    },
+    playing(at) {
+      key();
+      lastAt = at;
+      if (reported) return false;
+      reported = true;
+      return true;
+    },
+    timeUpdate(at, paused) {
+      // A loop that wraps without a seek event still lands back at the start.
+      if (lastAt != null && at < lastAt && backToStart(at)) restart();
+      if (paused) {
+        lastAt = at;
+        return false;
+      }
+      key();
+      if (lastAt != null) played += playedSince(lastAt, at);
+      lastAt = at;
+      if (at > furthest) furthest = at;
+      if (!shouldReportView({ playedSeconds: played, reported })) return false;
+      reported = true;
+      return true;
+    },
+    seeked(at) {
+      if (backToStart(at)) restart();
+      // Scrubbing is not watching: re-anchor rather than measure the jump.
+      lastAt = at;
+    },
+    ended: restart,
+    restart,
+  };
 }
 
 /** Characters a playback-session key may be made of. */
@@ -74,7 +220,7 @@ const SESSION_KEY = /^[A-Za-z0-9-]{8,64}$/;
  * It is an opaque string used for nothing but equality, so the only questions
  * are whether it is the right shape and short enough to store. A key that
  * fails this is dropped rather than rejected: the view then falls back to the
- * gap and the hourly cap alone, which is the safe way to be wrong.
+ * cooldown alone, which is the safe way to be wrong.
  */
 export function sanitiseSessionKey(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
@@ -85,13 +231,31 @@ export function sanitiseSessionKey(raw: unknown): string | null {
 /**
  * The key a view is deduplicated on, server-side.
  *
- * Identity first, so one person's playback session counts once however many
- * times it is reported — a retry, a duplicate callback, a remount — and two
- * people watching the same video count twice. The session key is the
- * client's contribution and the only part of this it supplies.
+ * Identity first, so one person reloading a player twenty times in one
+ * playback session counts once, and two people watching the same video count
+ * twice. The session key is the client's contribution and the only part of
+ * this it supplies — which is exactly why the cooldown exists alongside it.
  */
 export function dedupeKey(postId: string, identity: string, sessionKey: string | null): string {
   return `${postId}:${identity}:${sessionKey ?? 'no-session'}`;
+}
+
+/**
+ * Whether enough time has passed since this person's last counted view of this
+ * video.
+ *
+ * No previous view is always fresh. This is what makes the count resistant to
+ * a client that invents a new session key per request.
+ */
+export function isFreshView(
+  lastCountedAt: string | number | null | undefined,
+  now: number = Date.now(),
+  cooldownMs: number = VIEW_COOLDOWN_MS,
+): boolean {
+  if (lastCountedAt == null) return true;
+  const last = typeof lastCountedAt === 'number' ? lastCountedAt : Date.parse(lastCountedAt);
+  if (!Number.isFinite(last)) return true;
+  return now - last >= cooldownMs;
 }
 
 /** A new playback-session key. One per viewing, generated by the player. */
@@ -102,7 +266,7 @@ export function newSessionKey(): string {
 }
 
 /**
- * The reasons a reported playback is or is not a view.
+ * The reasons a reported watch is or is not a view.
  *
  * Named rather than boolean because every one of them is a different decision
  * somebody could disagree with, and a test that asserts "false" tells nobody
@@ -110,7 +274,7 @@ export function newSessionKey(): string {
  */
 export type ViewVerdict =
   | 'count'
-  /** No such post, or it has been removed. */
+  /** No such post, it has been removed, or it is hidden while it is reviewed. */
   | 'no-post'
   /** A photo or a text post. There is nothing to play, so there is nothing to count. */
   | 'not-a-video'
@@ -118,46 +282,54 @@ export type ViewVerdict =
   | 'unknown-viewer'
   /** This playback session has already been counted. */
   | 'duplicate-session'
-  /** This person's last view of this video was a moment ago. */
-  | 'too-soon'
-  /** This person has added the most views to this video an hour allows. */
+  /** This person counted a view of this video a moment ago. */
+  | 'cooldown'
+  /** This person has already added the most views to this video an hour allows. */
   | 'hourly-limit';
 
 export interface ViewDecision {
-  post: { removed: boolean; hasVideo: boolean } | null;
+  post: { removed: boolean; hasVideo: boolean; hidden?: boolean } | null;
   /** Account id, or `anon:<browser id>`. Null when neither is known. */
   identity: string | null;
-  /** Whether this exact playback session is already stored. */
-  sessionCounted: boolean;
+  /** The key this request would be stored under. */
+  dedupeKey: string;
+  /**
+   * Whether a view is already stored under `dedupeKey`, from an exact lookup.
+   * `recent` only reaches back so far; this does not.
+   */
+  sessionCounted?: boolean;
   /** This identity's recent counted views of this post, newest first. */
-  recent: readonly { created_at: string }[];
+  recent: readonly { dedupe_key: string; created_at: string }[];
   now?: number;
+  cooldownMs?: number;
+  hourlyLimit?: number;
 }
 
-const timeOf = (value: string): number => {
-  const at = Date.parse(value);
-  return Number.isFinite(at) ? at : Number.NEGATIVE_INFINITY;
-};
-
 /**
- * Whether a reported playback counts.
+ * Whether a reported watch counts.
  *
  * Every rule that decides a view lives here, in one pure function, so the ones
- * that matter can be stated as tests: a photo never gets a video view, one
- * playback session counts once however many times it is reported, a new
- * session — a re-watch — counts again, and no identity can add views faster
- * than the gap or past the hourly cap however many session keys it invents.
+ * that matter most can be stated as tests rather than as comments: a photo
+ * never gets a video view, one playback session counts once however many
+ * times it is reported, and no identity can count twice inside the cooldown
+ * however many session keys it invents. Every playback counts, the author's
+ * own included.
  */
 export function decideView(input: ViewDecision): ViewVerdict {
-  const { post, identity, recent } = input;
+  const { post, identity, dedupeKey: key, recent } = input;
   const now = input.now ?? Date.now();
-  if (!post || post.removed) return 'no-post';
+  if (!post || post.removed || post.hidden) return 'no-post';
   if (!post.hasVideo) return 'not-a-video';
   if (!identity) return 'unknown-viewer';
-  if (input.sessionCounted) return 'duplicate-session';
-  const latest = recent.length > 0 ? timeOf(recent[0].created_at) : Number.NEGATIVE_INFINITY;
-  if (now - latest < MIN_VIEW_GAP_MS) return 'too-soon';
-  const lastHour = recent.filter((row) => now - timeOf(row.created_at) < HOUR_MS).length;
-  if (lastHour >= MAX_VIEWS_PER_HOUR) return 'hourly-limit';
+  if (input.sessionCounted || recent.some((row) => row.dedupe_key === key)) {
+    return 'duplicate-session';
+  }
+  if (!isFreshView(recent[0]?.created_at ?? null, now, input.cooldownMs)) return 'cooldown';
+  const limit = input.hourlyLimit ?? VIEW_HOURLY_LIMIT;
+  const lastHour = recent.filter((row) => {
+    const at = Date.parse(row.created_at);
+    return Number.isFinite(at) && now - at < VIEW_HOUR_MS;
+  }).length;
+  if (lastHour >= limit) return 'hourly-limit';
   return 'count';
 }

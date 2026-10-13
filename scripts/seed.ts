@@ -26,6 +26,9 @@ for (const file of ['.env.local', '.env']) {
 
 type Store = { [K in TableName]: Schema[K][] };
 
+/** Tables Postgres fills itself, from a trigger on `posts` (migration 0015). */
+const FILED_BY_DATABASE = new Set<TableName>(['hashtags', 'post_hashtags']);
+
 /**
  * Creates one Supabase Auth user per seeded profile and rewrites the store so
  * every id is the id Supabase issued. Existing auth users are reused, so the
@@ -130,6 +133,8 @@ async function main() {
   const order: TableName[] = [
     'users',
     'posts',
+    'hashtags',
+    'post_hashtags',
     'ratings',
     'likes',
     'comments',
@@ -142,6 +147,15 @@ async function main() {
   for (const table of order) {
     const rows = store[table];
     if (rows.length === 0) continue;
+    // In Postgres the hashtag index is the database's own: migration 0015's
+    // trigger files every post as it is inserted above, so inserting these
+    // rows as well would collide with what it already wrote. (A database
+    // without 0015 has no index to fill.) The local store has no trigger and
+    // takes them as they are.
+    if (onSupabase && FILED_BY_DATABASE.has(table)) {
+      console.log(`  ${table}: filed by the database`);
+      continue;
+    }
     // Chunked so a large seed does not blow past request size limits.
     for (let i = 0; i < rows.length; i += 500) {
       await driver.insertMany(table, rows.slice(i, i + 500) as never[]);

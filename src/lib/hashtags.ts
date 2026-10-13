@@ -1,93 +1,195 @@
 /**
- * What a hashtag is, once a post has been published.
+ * Hashtags: what one is, how two are the same, and where one lives.
  *
- * Posting is lib/video/hashtags.ts: that is where tags are typed, cleaned and
- * stored in a post's `tags` array. This is the other half — reading them back
- * off a post so they can be shown, linked and matched — and it is shared by
- * the server (hashtag pages, search) and the browser (the cards that draw
- * them), so both always agree on which posts a hashtag belongs to.
+ * A post's hashtags are every `#word` in what it says — the caption of a photo
+ * or a video, the words of a text post, a story's title — together with the
+ * tags it was posted with (the video posting screen collects those as a list;
+ * see lib/video/hashtags.ts). They are found in what was PUBLISHED: nothing
+ * here runs while somebody is typing, and a tag only exists on FayTarra once a
+ * post carrying it does.
  *
- * A post's hashtags are its stored tags, then any hashtag written into its
- * caption that is not already one of them. The caption is never changed; this
- * only reads it.
+ * Two spellings are one hashtag when they differ only in case — `#Gaming`,
+ * `#gaming` and `#GAMING` are the same page — so every comparison, every URL
+ * and every stored key uses `normaliseHashtag`. How a tag is DISPLAYED keeps
+ * the casing somebody typed.
  *
- * Matching ignores case: #Gaming and #gaming are one hashtag, with one page.
+ * Pure, and shared by the server (indexing, the hashtag page, search) and the
+ * browser (turning `#words` into links), so both agree on exactly what is and
+ * is not a hashtag.
  */
-import { cleanTag } from '@/lib/video/hashtags';
+
+import type { HashtagRecord, PostHashtag } from './types';
+
+/** The longest hashtag recognised. A longer run of letters is just text. */
+export const MAX_HASHTAG_LENGTH = 50;
+
+/** The most hashtags one post is filed under. Enough for anybody; a ceiling for spam. */
+export const MAX_HASHTAGS_PER_POST = 30;
 
 /**
- * The form every spelling of one hashtag shares, or null for something that
- * is not a hashtag at all (a tag that was nothing but punctuation).
- */
-export function tagKey(raw: string): string | null {
-  const tag = cleanTag(String(raw ?? '').normalize('NFC'));
-  return tag ? tag.toLowerCase() : null;
-}
-
-/** Where a hashtag's page is. */
-export function tagHref(key: string): string {
-  return `/tag/${encodeURIComponent(key)}`;
-}
-
-/**
- * Hashtags written into a caption.
+ * A `#` that starts a hashtag, and the word after it.
  *
- * A # that starts a word, followed by letters, numbers or underscores with at
- * least one letter among them — so "#3" in "be honest about #3" is a number,
- * not a hashtag, and the # in a link like example.com/page#top is not one
- * either. No lookbehind: older iPhones cannot parse it, and a regular
- * expression they cannot parse would break every page this ships in.
+ * Not after a letter, a digit, `_`, `/`, `&` or another `#`: that is the middle
+ * of a word (`C#`), a link (`example.com/page#section`), an HTML entity
+ * (`&#39;`) or a run of hashes, none of which anybody meant as a tag.
+ *
+ * The character before the `#` is captured (group 1) rather than looked behind
+ * at: this runs in the browser, and older iPhones cannot parse a lookbehind at
+ * all — a pattern they cannot parse breaks every page that ships it. Group 2
+ * is the word. Neither group can contain the other's characters, so matches
+ * never overlap and the result is the same as a lookbehind's.
  */
-const IN_CAPTION = /(^|[^\p{L}\p{N}_&/#])#([\p{L}\p{N}_]+)/gu;
+const HASHTAG = /(^|[^\p{L}\p{N}\p{M}_/&#])#([\p{L}\p{N}\p{M}_]+)/gu;
+
+/** At least one letter. `#1` and `#31` are numbers, not tags. */
 const HAS_LETTER = /\p{L}/u;
 
-export function captionHashtags(caption: string | null | undefined): string[] {
-  const found: string[] = [];
-  for (const match of String(caption ?? '').matchAll(IN_CAPTION)) {
-    const word = match[2];
-    if (HAS_LETTER.test(word)) found.push(word);
-  }
-  return found;
-}
-
-export interface PostHashtag {
-  /** As the author wrote it, without the #. */
-  label: string;
-  /** What it links to and matches by. Null when it cannot be a hashtag. */
-  key: string | null;
-  /** Typed into the caption rather than stored as a tag. */
-  fromCaption: boolean;
+export interface Hashtag {
+  /** The key: lowercased and Unicode-normalised. What URLs and the index use. */
+  tag: string;
+  /** As somebody wrote it, without the `#`. What is shown. */
+  display: string;
 }
 
 /**
- * Every hashtag a post carries, in the order it shows them: its stored tags
- * first, exactly as stored, then hashtags from its caption. One entry per
- * hashtag whatever its case — the first spelling is the one shown.
+ * The one form of a hashtag, or null if this is not one.
+ *
+ * Accepts it with or without the leading `#`, so `Gaming`, `#Gaming` and
+ * `%23gaming` out of a URL all arrive at `gaming`.
  */
-export function postHashtags(post: {
-  tags?: readonly string[] | null;
-  caption?: string | null;
-}): PostHashtag[] {
-  const out: PostHashtag[] = [];
-  const seen = new Set<string>();
-  const add = (raw: string, fromCaption: boolean) => {
-    const label = String(raw ?? '').trim().replace(/^#+/, '');
-    if (!label) return;
-    const key = tagKey(label);
-    const identity = key ?? `raw:${label.toLowerCase()}`;
-    if (seen.has(identity)) return;
-    seen.add(identity);
-    out.push({ label, key, fromCaption });
-  };
-  for (const tag of post.tags ?? []) add(tag, false);
-  for (const tag of captionHashtags(post.caption)) add(tag, true);
-  return out;
+export function normaliseHashtag(raw: string | null | undefined): string | null {
+  if (typeof raw !== 'string') return null;
+  const word = raw.normalize('NFKC').trim().replace(/^#+/, '');
+  if (!word || word.length > MAX_HASHTAG_LENGTH) return null;
+  if (!/^[\p{L}\p{N}\p{M}_]+$/u.test(word) || !HAS_LETTER.test(word)) return null;
+  return word.toLowerCase();
 }
 
-/** Whether a post uses this hashtag, whatever case either is written in. */
-export function postHasTag(
-  post: { tags?: readonly string[] | null; caption?: string | null },
-  key: string,
-): boolean {
-  return postHashtags(post).some((tag) => tag.key === key);
+/** As a hashtag, keeping its casing, or null. */
+function asHashtag(raw: string): Hashtag | null {
+  const display = raw.normalize('NFKC').trim().replace(/^#+/, '');
+  const tag = normaliseHashtag(display);
+  return tag ? { tag, display } : null;
+}
+
+/** Every hashtag written in some text, in order, each once. */
+export function extractHashtags(text: string | null | undefined): Hashtag[] {
+  if (!text) return [];
+  const found = new Map<string, Hashtag>();
+  for (const match of text.normalize('NFKC').matchAll(HASHTAG)) {
+    const hashtag = asHashtag(match[2]);
+    if (hashtag && !found.has(hashtag.tag)) found.set(hashtag.tag, hashtag);
+  }
+  return [...found.values()];
+}
+
+/** The parts of a post that can carry hashtags. */
+export interface Tagged {
+  caption: string;
+  text_title?: string | null;
+  tags?: readonly string[] | null;
+}
+
+/**
+ * Every hashtag a post is filed under: its title, its words and its tags, in
+ * that order, each once whatever its casing, at most MAX_HASHTAGS_PER_POST.
+ *
+ * Photo, video and text posts are all the same here — a caption is a caption
+ * and a text post's words are its caption — which is what makes one hashtag
+ * page hold all three.
+ */
+export function postHashtags(post: Tagged): Hashtag[] {
+  const found = new Map<string, Hashtag>();
+  const add = (hashtag: Hashtag | null) => {
+    if (hashtag && !found.has(hashtag.tag)) found.set(hashtag.tag, hashtag);
+  };
+  for (const hashtag of extractHashtags(post.text_title)) add(hashtag);
+  for (const hashtag of extractHashtags(post.caption)) add(hashtag);
+  for (const tag of post.tags ?? []) add(asHashtag(String(tag)));
+  return [...found.values()].slice(0, MAX_HASHTAGS_PER_POST);
+}
+
+/** Whether a post is filed under this (normalised) hashtag. */
+export function hasHashtag(post: Tagged, tag: string): boolean {
+  return postHashtags(post).some((hashtag) => hashtag.tag === tag);
+}
+
+/** A post's tags that are hashtags but not already written in its words. */
+export function extraTags(post: Tagged): Hashtag[] {
+  const written = new Set([
+    ...extractHashtags(post.text_title).map((hashtag) => hashtag.tag),
+    ...extractHashtags(post.caption).map((hashtag) => hashtag.tag),
+  ]);
+  const found = new Map<string, Hashtag>();
+  for (const raw of post.tags ?? []) {
+    const hashtag = asHashtag(String(raw));
+    if (hashtag && !written.has(hashtag.tag) && !found.has(hashtag.tag)) {
+      found.set(hashtag.tag, hashtag);
+    }
+  }
+  return [...found.values()];
+}
+
+/** The hashtag's own page. Always the normalised form, so one tag is one page. */
+export function hashtagHref(raw: string): string {
+  const tag = normaliseHashtag(raw) ?? raw.replace(/^#+/, '').toLowerCase();
+  return `/tag/${encodeURIComponent(tag)}`;
+}
+
+/** A piece of text: words, or a hashtag to draw as a link. */
+export type TextPart = { text: string; hashtag?: Hashtag };
+
+/**
+ * Text cut into words and hashtags, for drawing. Joining every part's `text`
+ * gives back exactly what was passed in.
+ */
+export function splitHashtags(text: string): TextPart[] {
+  const parts: TextPart[] = [];
+  let last = 0;
+  for (const match of text.matchAll(HASHTAG)) {
+    const hashtag = asHashtag(match[2]);
+    if (!hashtag || match.index === undefined) continue;
+    // The match starts at the character before the `#`, which is not the link.
+    const start = match.index + match[1].length;
+    if (start > last) parts.push({ text: text.slice(last, start) });
+    parts.push({ text: `#${match[2]}`, hashtag });
+    last = start + 1 + match[2].length;
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) });
+  return parts;
+}
+
+/**
+ * What somebody typed into search, as a hashtag to look up — `Gaming` and
+ * `#Gaming` alike. Only a single word is a hashtag; a phrase is a search.
+ */
+export function hashtagQuery(query: string): string | null {
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  return words.length === 1 ? normaliseHashtag(words[0]) : null;
+}
+
+/**
+ * The index rows for a set of posts: every hashtag once, and every post under
+ * each of its hashtags.
+ *
+ * For filling an index that has never been written — the seed, and a local
+ * store saved before hashtags were indexed. Oldest post first, so a hashtag's
+ * display is how it was written the first time.
+ */
+export function hashtagIndexFor(
+  posts: readonly (Tagged & { id: string; created_at: string })[],
+  makeId: () => string,
+): { hashtags: HashtagRecord[]; post_hashtags: PostHashtag[] } {
+  const hashtags = new Map<string, HashtagRecord>();
+  const post_hashtags: PostHashtag[] = [];
+  const oldestFirst = [...posts].sort((a, b) => a.created_at.localeCompare(b.created_at));
+  for (const post of oldestFirst) {
+    for (const { tag, display } of postHashtags(post)) {
+      if (!hashtags.has(tag)) {
+        hashtags.set(tag, { id: makeId(), tag, display, created_at: post.created_at });
+      }
+      post_hashtags.push({ id: makeId(), post_id: post.id, tag, post_created_at: post.created_at });
+    }
+  }
+  return { hashtags: [...hashtags.values()], post_hashtags };
 }

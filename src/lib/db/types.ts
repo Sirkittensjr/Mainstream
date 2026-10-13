@@ -2,11 +2,13 @@ import type {
   Block,
   Comment,
   Follow,
+  HashtagRecord,
   Like,
   Message,
   ModerationEvent,
   Notification,
   Post,
+  PostHashtag,
   Rating,
   Report,
   User,
@@ -27,6 +29,8 @@ export interface Schema {
   messages: Message;
   moderation_events: ModerationEvent;
   video_views: VideoView;
+  hashtags: HashtagRecord;
+  post_hashtags: PostHashtag;
 }
 
 export type TableName = keyof Schema;
@@ -37,10 +41,18 @@ export interface QueryOptions<T> {
   where?: Partial<T>;
   /** Rows whose column value is any of the listed values. */
   in?: { [K in keyof T]?: readonly T[K][] };
+  /** Rows whose (text) column value starts with the given text. */
+  startsWith?: { [K in keyof T]?: string };
   orderBy?: keyof T;
   desc?: boolean;
   limit?: number;
 }
+
+/** The columns of a row that hold a number, and so can be counted up. */
+export type CounterColumn<R> = {
+  [K in keyof R]-?: NonNullable<R[K]> extends number ? K : never;
+}[keyof R] &
+  string;
 
 /**
  * The entire storage contract. Deliberately tiny: ranking, feed mixing and the
@@ -84,6 +96,20 @@ export interface Driver {
     where: Partial<Row<T>>,
     patch: Partial<Row<T>>,
   ): Promise<number>;
+  /**
+   * Adds `by` to one number on one row, as ONE statement, and returns what it
+   * now holds — or null when there is no such row.
+   *
+   * For a counter two requests can move at the same moment. Reading the row,
+   * adding one and writing it back loses one of two simultaneous views; this
+   * cannot, because the database does the adding.
+   */
+  increment<T extends TableName>(
+    table: T,
+    id: string,
+    column: CounterColumn<Row<T>>,
+    by?: number,
+  ): Promise<number | null>;
   /** Wipe every table. Used by the seed script. */
   clear(): Promise<void>;
   /** Persist an uploaded file, returning a URL the app can render. */
