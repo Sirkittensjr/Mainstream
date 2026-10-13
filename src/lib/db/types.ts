@@ -110,6 +110,21 @@ export interface Driver {
     column: CounterColumn<Row<T>>,
     by?: number,
   ): Promise<number | null>;
+  /**
+   * Stores one counted video view AND adds it to its post's total, as one
+   * operation: both happen, or neither does.
+   *
+   * The two used to be separate writes, and the gap between them lost views:
+   * when the total failed to move after the row was stored, the player's retry
+   * found the row, was told "already counted", and that view was never added
+   * to the number anybody sees. Now a failure leaves nothing behind, so the
+   * same report can always be sent again.
+   *
+   * `counted` is false when a view with this `dedupe_key` is already stored —
+   * an earlier copy of the same report got there first — and `total` is then
+   * the stored total. `total` is null when there is no such post.
+   */
+  recordView(view: VideoView): Promise<{ counted: boolean; total: number | null }>;
   /** Wipe every table. Used by the seed script. */
   clear(): Promise<void>;
   /** Persist an uploaded file, returning a URL the app can render. */

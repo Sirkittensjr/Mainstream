@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { isMissingRelation, throwQueryError } from './errors';
+import { isDuplicateRow, isMissingRelation, throwQueryError } from './errors';
 import type { CounterColumn, Driver, QueryOptions, Row, TableName } from './types';
 
 const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'faytarra-media';
@@ -80,26 +80,58 @@ export function applyFilters(
 
 /**
  * PostgREST's "no such function", and Postgres's. A database that has not run
- * migration 0015 has no `increment_counter`.
+ * migration 0015 has no `increment_counter`; one that has not run 0016 has no
+ * `record_video_view`.
  */
 const MISSING_FUNCTION = new Set(['PGRST202', '42883']);
+
+/**
+ * How long "this database has no such function" is believed before it is
+ * asked again.
+ *
+ * Not forever. A migration is applied to a database that running servers are
+ * already talking to, and a server that decided once, at start-up, that a
+ * function did not exist would go on working around it until it happened to
+ * be restarted — on a serverless host, whenever the platform felt like it.
+ */
+export const FUNCTION_RECHECK_MS = 5 * 60_000;
 
 /**
  * Supabase driver. Uses the service role key on the server so that the app can
  * enforce its own rules (blocking, moderation, FayTarra points) in one place; the
  * SQL schema still ships row level security for any direct client access.
  */
-class SupabaseDriver implements Driver {
+export class SupabaseDriver implements Driver {
   readonly name = 'supabase' as const;
   private client: SupabaseClient;
-  /** False once the database has said it has no `increment_counter`. */
-  private atomicIncrement = true;
+  /** When each database function was last found missing (ms since epoch). */
+  private missingSince = new Map<string, number>();
 
-  constructor() {
-    this.client = createClient(
-      url(),
-      process.env.SUPABASE_SERVICE_ROLE_KEY as string,
-      { auth: { persistSession: false, autoRefreshToken: false } },
+  /** `client` is for tests; the app always builds its own from the environment. */
+  constructor(client?: SupabaseClient) {
+    this.client =
+      client ??
+      createClient(url(), process.env.SUPABASE_SERVICE_ROLE_KEY as string, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      });
+  }
+
+  /** Whether `name` is known to be missing, as of less than FUNCTION_RECHECK_MS ago. */
+  private lacks(name: string): boolean {
+    const since = this.missingSince.get(name);
+    if (since === undefined) return false;
+    if (Date.now() - since < FUNCTION_RECHECK_MS) return true;
+    this.missingSince.delete(name);
+    return false;
+  }
+
+  /** Remembers that the database has no `name`, and says so once each time it is found missing. */
+  private missing(name: string, migration: string, consequence: string): void {
+    this.missingSince.set(name, Date.now());
+    console.warn(
+      `[faytarra] This database has no ${name} function (migration ${migration}), so ${consequence}. ` +
+        `Run supabase/migrations/${migration}_*.sql; it is picked up within ` +
+        `${FUNCTION_RECHECK_MS / 60_000} minutes, without a restart.`,
     );
   }
 
@@ -218,7 +250,7 @@ class SupabaseDriver implements Driver {
     column: CounterColumn<Row<T>>,
     by = 1,
   ) {
-    if (this.atomicIncrement) {
+    if (!this.lacks('increment_counter')) {
       // `update … set n = n + by … returning n`, in the database, under the
       // row's lock. See increment_counter in migration 0015.
       const { data, error } = await this.client.rpc('increment_counter', {
@@ -229,12 +261,7 @@ class SupabaseDriver implements Driver {
       });
       if (!error) return typeof data === 'number' ? data : data == null ? null : Number(data);
       if (!MISSING_FUNCTION.has(error.code ?? '')) throwQueryError(table, error);
-      this.atomicIncrement = false;
-      console.warn(
-        '[faytarra] This database has no increment_counter function, so counters are ' +
-          'raised by compare-and-set from the app instead. ' +
-          'Run supabase/migrations/0015_hashtags_and_counters.sql to do it in one statement.',
-      );
+      this.missing('increment_counter', '0015', 'counters are raised by compare-and-set from the app');
     }
     // The fallback until the migration is run: compare-and-set. The write only
     // lands if the number is still what was read, so of two increments racing,
@@ -255,6 +282,67 @@ class SupabaseDriver implements Driver {
       await new Promise((resolve) => setTimeout(resolve, 2 + Math.floor(Math.random() * 8)));
     }
     throw new Error(`[supabase:${table}] ${column} on ${id} could not be raised: too much contention`);
+  }
+
+  async recordView(view: Row<'video_views'>) {
+    if (!this.lacks('record_video_view')) {
+      // The row and the total in one transaction: see record_video_view in
+      // migration 0016. If adding to the total fails, the row is rolled back
+      // with it, so the report can be sent again and still count.
+      const { data, error } = await this.client.rpc('record_video_view', {
+        view_id: view.id,
+        target_post: view.post_id,
+        viewer: view.viewer_id,
+        viewer_identity: view.identity,
+        view_key: view.dedupe_key,
+        viewed_at: view.created_at,
+      });
+      if (!error) {
+        const row = (Array.isArray(data) ? data[0] : data) as
+          | { counted?: boolean | null; total?: number | string | null }
+          | null
+          | undefined;
+        const total = row?.total == null ? null : Number(row.total);
+        return { counted: row?.counted === true, total: Number.isFinite(total) ? total : null };
+      }
+      if (!MISSING_FUNCTION.has(error.code ?? '')) throwQueryError('video_views', error);
+      this.missing(
+        'record_video_view',
+        '0016',
+        'a view is stored and added up in two steps, with the first undone when the second fails',
+      );
+    }
+
+    // Until 0016 is applied: the same two writes the app has always made, made
+    // safe to retry. The row goes first, so the unique index on dedupe_key can
+    // settle a race between two copies of one report; and if the total then
+    // cannot be raised, the row is taken back out — leaving it would make the
+    // retry this failure leads to answer "already counted", and the view would
+    // never be added to the number anybody sees.
+    try {
+      await this.insert('video_views', view);
+    } catch (error) {
+      if (!isDuplicateRow(error)) throw error;
+      const post = await this.get('posts', view.post_id);
+      return { counted: false, total: post ? Number(post.video_views ?? 0) : null };
+    }
+    try {
+      const total = await this.increment('posts', view.post_id, 'video_views', 1);
+      return { counted: true, total };
+    } catch (error) {
+      try {
+        await this.remove('video_views', view.id);
+      } catch (undo) {
+        // Both writes failed in a row. The view is stored but not added up;
+        // 0016's repair step counts rows like this back into the total.
+        console.error(
+          '[faytarra] A video view was stored but could not be added to its total, and could ' +
+            'not be taken back out either. Migration 0016 adds such views back.',
+          undo,
+        );
+      }
+      throw error;
+    }
   }
 
   async clear() {

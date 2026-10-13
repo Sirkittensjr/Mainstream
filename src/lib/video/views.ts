@@ -38,14 +38,16 @@ export const REWATCH_AFTER_SECONDS = 1;
  * The least time between two counted views of one video by one person.
  *
  * The playback-session key stops the accidents — the re-renders, the remounts,
- * a timeupdate handler firing twice, a request retried. This stops the
- * deliberate: a client is free to mint a fresh session key for every request,
- * so the server needs a limit that does not depend on the client being honest.
- * Two seconds is longer than any burst of accidental reports and shorter than
- * anybody can genuinely scroll away from a video and back, so watching
- * something again always counts again.
+ * a timeupdate handler firing twice, a request retried. This only stops two
+ * different session keys arriving for the same video at the same instant,
+ * which no person can do: starting a video, leaving it and coming back to
+ * start it again takes a swipe each way, and the shortest clip loops no
+ * faster than its own length. It was two seconds, which was long enough to
+ * swallow exactly the views that matter here — a glance, a swipe on, and a
+ * swipe straight back. The real ceiling on a client inventing keys is
+ * VIEW_HOURLY_LIMIT.
  */
-export const VIEW_COOLDOWN_MS = 2_000;
+export const VIEW_COOLDOWN_MS = 250;
 
 /**
  * The most views one person can add to one video in an hour.

@@ -60,6 +60,7 @@ import { saveTopCreators } from '@/lib/services/top-creators';
 import { normaliseTags } from '@/lib/video/hashtags';
 import { MAX_VIDEO_SECONDS, MAX_VIDEO_SECONDS_ENFORCED } from '@/lib/video/limits';
 import { recordVideoView } from '@/lib/services/video-views';
+import { VIEW_BROWSER_COOKIE, VIEW_BROWSER_COOKIE_OPTIONS } from '@/lib/video/viewer-cookie';
 import { sanitiseSessionKey } from '@/lib/video/views';
 import type { Reaction, RatingTarget } from '@/lib/types';
 
@@ -74,53 +75,26 @@ export async function likeAction(postId: string) {
 }
 
 /**
- * The cookie that identifies a browser nobody has signed in on.
+ * A video was watched — the way pages built before /api/v1/posts/<id>/views
+ * reported it.
  *
- * Opaque, random, and used for one thing: deduplicating video views from a
- * visitor. Not tied to an account, not readable by script, and it carries no
- * information about the person beyond "the same browser as last time".
- */
-const VIEW_BROWSER_COOKIE = 'fay_viewer';
-
-/**
- * A video was watched.
- *
- * The client's entire say in this is the post and an opaque key for the
- * playback session it is reporting; everything about whether that is a view,
- * and what the total now is, is decided in recordVideoView against the
- * database. A caller sending a count would be sending something this does not
- * read.
- *
- * Never throws at the player: a view that cannot be counted is a number that
- * does not move, not a video that fails to play.
+ * Players now send views to that route (see lib/video/view-reports.ts for why
+ * not a server action). This stays so a page opened before the deploy that
+ * moved them keeps counting until it is reloaded; it is the same service with
+ * the same rules, so nothing can count twice through having two doors.
  */
 export async function recordVideoViewAction(postId: string, sessionKey: string) {
   const id = String(postId || '').slice(0, 64);
   if (!id) return { ok: false as const };
 
-  const viewer = await getViewer();
-  const jar = await cookies();
-
-  // A signed-in viewer is identified by their account; only a visitor needs the
-  // cookie, and it is minted on their first counted view rather than on arrival.
-  let browserId = jar.get(VIEW_BROWSER_COOKIE)?.value ?? null;
-  if (!viewer && !browserId) {
-    browserId = crypto.randomUUID();
-    try {
-      jar.set(VIEW_BROWSER_COOKIE, browserId, {
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: process.env.NODE_ENV === 'production',
-        path: '/',
-        maxAge: 60 * 60 * 24 * 365,
-      });
-    } catch {
-      // Nowhere to keep it. The view is still counted for this request; the
-      // next one from this browser simply looks like a different visitor.
-    }
-  }
-
   try {
+    const viewer = await getViewer();
+    const jar = await cookies();
+    let browserId = jar.get(VIEW_BROWSER_COOKIE)?.value ?? null;
+    if (!viewer && !browserId) {
+      browserId = crypto.randomUUID();
+      jar.set(VIEW_BROWSER_COOKIE, browserId, VIEW_BROWSER_COOKIE_OPTIONS);
+    }
     const result = await recordVideoView({
       postId: id,
       viewerId: viewer?.id ?? null,
@@ -128,8 +102,8 @@ export async function recordVideoViewAction(postId: string, sessionKey: string) 
       sessionKey: sanitiseSessionKey(sessionKey),
     });
     return { ok: true as const, ...result };
-  } catch (error) {
-    console.error('[faytarra] a video view could not be counted', error);
+  } catch {
+    // recordVideoView has logged why; nothing was stored.
     return { ok: false as const };
   }
 }

@@ -403,6 +403,52 @@ end $$;
 
 revoke all on function public.increment_counter(text, uuid, text, integer) from public;
 
+-- A counted video view and its total, in one transaction (0016). The view row
+-- is what stops one playback session counting twice; posts.video_views is the
+-- total the eye shows. Made as two separate writes, a failure between them
+-- left the row stored and the total never raised, and every retry of that
+-- report was then "already counted". Here both happen, or neither does.
+--   counted  true when this call stored the view and added it to the total
+--   total    posts.video_views now; null when there is no such post
+create or replace function public.record_video_view(
+  view_id          uuid,
+  target_post      uuid,
+  viewer           uuid,
+  viewer_identity  text,
+  view_key         text,
+  viewed_at        timestamptz
+)
+returns table (counted boolean, total integer)
+language plpgsql
+set search_path = public, pg_catalog
+as $$
+declare
+  stored uuid;
+begin
+  if not exists (select 1 from public.posts p where p.id = target_post) then
+    return query select false, null::integer;
+    return;
+  end if;
+
+  insert into public.video_views (id, post_id, viewer_id, identity, dedupe_key, created_at)
+  values (view_id, target_post, viewer, viewer_identity, view_key, viewed_at)
+  on conflict (dedupe_key) do nothing
+  returning id into stored;
+
+  if stored is null then
+    return query select false, p.video_views from public.posts p where p.id = target_post;
+    return;
+  end if;
+
+  return query
+    update public.posts p
+       set video_views = p.video_views + 1
+     where p.id = target_post
+    returning true, p.video_views;
+end $$;
+
+revoke all on function public.record_video_view(uuid, uuid, uuid, text, text, timestamptz) from public;
+
 -- Hashtags (0015) -----------------------------------------------------------
 -- One row per hashtag, keyed on its lowercased form so #Gaming, #gaming and
 -- #GAMING are one hashtag and one page; and every post filed under its
@@ -809,13 +855,18 @@ begin
       execute format(
         'revoke all on function public.increment_counter(text, uuid, text, integer) from %I',
         api_role);
+      execute format(
+        'revoke all on function public.record_video_view(uuid, uuid, uuid, text, text, timestamptz) from %I',
+        api_role);
       execute format('revoke all on function public.sync_post_hashtags() from %I', api_role);
     end if;
   end loop;
 
-  -- The app moves counters with the service role.
+  -- The app moves counters, and counts views, with the service role.
   if exists (select 1 from pg_roles where rolname = 'service_role') then
     grant execute on function public.increment_counter(text, uuid, text, integer) to service_role;
+    grant execute on function public.record_video_view(uuid, uuid, uuid, text, text, timestamptz)
+      to service_role;
   end if;
 end $$;
 

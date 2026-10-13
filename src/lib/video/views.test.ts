@@ -237,12 +237,15 @@ describe('the cooldown', () => {
     assert.equal(isFreshView(undefined, now), true);
   });
 
-  it('refuses a second view of the same video moments later', () => {
-    assert.equal(isFreshView(new Date(now - VIEW_COOLDOWN_MS + 500).toISOString(), now), false);
+  it('refuses a second view of the same video at the same instant', () => {
+    assert.equal(isFreshView(new Date(now - VIEW_COOLDOWN_MS / 2).toISOString(), now), false);
   });
 
-  it('is a matter of seconds, so watching again soon after still counts', () => {
-    assert.ok(VIEW_COOLDOWN_MS <= 5_000);
+  it('is shorter than a swipe away and back, so watching again straight after still counts', () => {
+    // Leaving a clip and coming back to it is two swipes and a fresh start of
+    // playback: comfortably over half a second, and a view each time.
+    assert.ok(VIEW_COOLDOWN_MS <= 500);
+    assert.equal(isFreshView(new Date(now - 600).toISOString(), now), true);
   });
 
   it('allows one once the cooldown has passed', () => {
@@ -315,7 +318,7 @@ describe('the server-side decision', () => {
           recent: [
             {
               dedupe_key: dedupeKey('post', 'watcher', 'session-one'),
-              created_at: new Date(now - VIEW_COOLDOWN_MS + 500).toISOString(),
+              created_at: new Date(now - VIEW_COOLDOWN_MS / 2).toISOString(),
             },
           ],
         }),
@@ -335,6 +338,25 @@ describe('the server-side decision', () => {
             {
               dedupe_key: dedupeKey('post', 'watcher', 'session-one'),
               created_at: new Date(now - VIEW_COOLDOWN_MS - 1).toISOString(),
+            },
+          ],
+        }),
+      ),
+      'count',
+    );
+  });
+
+  it('counts a glance, a swipe on and a swipe straight back: two views under a second apart', () => {
+    const now = Date.UTC(2026, 9, 1, 12, 0, 0);
+    assert.equal(
+      decideView(
+        base({
+          now,
+          dedupeKey: dedupeKey('post', 'watcher', 'session-back'),
+          recent: [
+            {
+              dedupe_key: dedupeKey('post', 'watcher', 'session-glance'),
+              created_at: new Date(now - 700).toISOString(),
             },
           ],
         }),

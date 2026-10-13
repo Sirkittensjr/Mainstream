@@ -1,17 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { recordVideoViewAction } from '@/app/actions';
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { createViewTracker, type ViewTracker } from '@/lib/video/views';
-
-/**
- * How long to wait before each retry of a report that did not get through.
- *
- * Safe to retry because a report is keyed on its playback session: the server
- * stores one view per session key, so a retry of a report that did land the
- * first time is recognised and counts nothing.
- */
-const RETRY_DELAYS_MS = [1_000, 4_000];
+import { latestViews, noteViews, reportView, watchViews } from '@/lib/video/view-reports';
 
 /**
  * Counting a watch, from the player's side.
@@ -33,7 +24,8 @@ const RETRY_DELAYS_MS = [1_000, 4_000];
  *   autoplay being refused    no playback, no view
  *
  * The server still has the final say on whether a report counts, and the count
- * this returns is always the server's.
+ * this returns is always the server's: what the page was rendered with, or a
+ * total the server has answered since (see lib/video/view-reports.ts).
  */
 export function useVideoView({
   postId,
@@ -48,43 +40,28 @@ export function useVideoView({
   /** What the server rendered. The starting point, and never overwritten by a guess. */
   initialCount: number;
 }) {
-  /** The newest total the server has answered a report with. */
-  const [reportedCount, setReportedCount] = useState(0);
   // Whichever is newer: what the page was rendered with — a navigation or a
-  // refresh brings a fresh one — or what this player's own reports returned.
-  const count = Math.max(initialCount, reportedCount);
+  // refresh brings a fresh one — or the newest total any player on this page
+  // has been told for this video. A stale render can never pull it back down.
+  const known = useSyncExternalStore(
+    useCallback((listener: () => void) => watchViews(postId, listener), [postId]),
+    () => latestViews(postId),
+    () => 0,
+  );
+  useEffect(() => {
+    if (enabled) noteViews(postId, initialCount);
+  }, [enabled, postId, initialCount]);
+  const count = Math.max(initialCount, known);
 
   const tracker = useRef<ViewTracker | null>(null);
   tracker.current ??= createViewTracker({ duration });
-  const live = useRef(true);
-  useEffect(() => {
-    live.current = true;
-    return () => {
-      live.current = false;
-    };
-  }, []);
 
   const report = useCallback(
     (sessionKey: string) => {
       if (!enabled || !postId) return;
-      const attempt = (retry: number) => {
-        void recordVideoViewAction(postId, sessionKey)
-          .then((result) => {
-            if (result.ok) {
-              if (live.current) setReportedCount((current) => Math.max(current, result.count));
-              return;
-            }
-            throw new Error('not recorded');
-          })
-          .catch(() => {
-            // A view that could not be reported is a number that does not move,
-            // not a video that fails to play. Try again a couple of times under
-            // the same session key, which the server will not count twice.
-            const delay = RETRY_DELAYS_MS[retry];
-            if (delay !== undefined) setTimeout(() => attempt(retry + 1), delay);
-          });
-      };
-      attempt(0);
+      // Sent at once, retried under the same key until it gets through, and
+      // the answer goes to every player of this video, mounted or not.
+      reportView(postId, sessionKey);
     },
     [enabled, postId],
   );

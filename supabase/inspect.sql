@@ -228,5 +228,14 @@ checks as (
                and exists (select 1 from pg_proc where proname = 'increment_counter')
               then 'Good.'
               else 'Migration 0015 adds them (additive). Until then hashtag pages and hashtag search read every visible post, and video views are counted by read-then-write.' end
+
+  union all
+  select 18,
+         'A view and its total in one step (0016)',
+         case when exists (select 1 from pg_proc where proname = 'record_video_view')
+              then 'installed' else 'not installed' end,
+         case when exists (select 1 from pg_proc where proname = 'record_video_view')
+              then 'Good.'
+              else 'Migration 0016 adds it (additive) and adds back views that were stored but never counted. inspect-views.sql says how many.' end
 )
 select check_name, result, verdict from checks order by ord;

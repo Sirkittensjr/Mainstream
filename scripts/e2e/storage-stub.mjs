@@ -69,6 +69,20 @@ async function readBody(req) {
   return Buffer.concat(chunks);
 }
 
+/** The type Storage records from an upload's name, near enough. */
+const TYPES = {
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  gif: 'image/gif',
+};
+const typeOf = (key) => TYPES[key.split('.').pop()?.toLowerCase() ?? ''] ?? 'application/octet-stream';
+
 const afterBucket = (pathname, prefix) => {
   const rest = pathname.slice(prefix.length);
   const slash = rest.indexOf('/');
@@ -272,25 +286,33 @@ const server = createServer(async (req, res) => {
       ? afterBucket(p, '/storage/v1/object/public/')
       : null;
 
-  if (req.method === 'GET' && readKey) {
+  if ((req.method === 'GET' || req.method === 'HEAD') && readKey) {
     const data = objects.get(readKey);
     if (!data) return json(res, 404, { message: 'Object not found' });
-    const range = /bytes=(\d+)-(\d+)/.exec(req.headers.range ?? '');
-    if (range) {
-      const from = Number(range[1]);
-      const to = Math.min(Number(range[2]), data.length - 1);
+    // As Storage serves a public object: its own type, ranges of every form a
+    // media element asks for (`bytes=0-` above all), and an hour's caching.
+    const headers = {
+      'content-type': typeOf(readKey),
+      'accept-ranges': 'bytes',
+      'cache-control': 'max-age=3600',
+    };
+    const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '');
+    if (range && (range[1] !== '' || range[2] !== '')) {
+      const from = range[1] === '' ? Math.max(0, data.length - Number(range[2])) : Number(range[1]);
+      const to = range[1] === '' || range[2] === '' ? data.length - 1 : Math.min(Number(range[2]), data.length - 1);
+      if (from > to || from >= data.length) {
+        return res.writeHead(416, { 'content-range': `bytes */${data.length}` }).end();
+      }
       const slice = data.subarray(from, to + 1);
-      return res
-        .writeHead(206, {
-          'content-type': 'application/octet-stream',
-          'content-range': `bytes ${from}-${to}/${data.length}`,
-          'content-length': String(slice.length),
-        })
-        .end(slice);
+      res.writeHead(206, {
+        ...headers,
+        'content-range': `bytes ${from}-${to}/${data.length}`,
+        'content-length': String(slice.length),
+      });
+      return req.method === 'HEAD' ? res.end() : res.end(slice);
     }
-    return res
-      .writeHead(200, { 'content-type': 'video/webm', 'content-length': String(data.length) })
-      .end(data);
+    res.writeHead(200, { ...headers, 'content-length': String(data.length) });
+    return req.method === 'HEAD' ? res.end() : res.end(data);
   }
 
   json(res, 404, { message: `no stub route for ${req.method} ${p}` });
