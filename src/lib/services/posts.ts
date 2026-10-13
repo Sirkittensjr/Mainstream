@@ -692,22 +692,47 @@ export async function postsByAuthor(
   return posts.filter((post) => !underReview(post));
 }
 
-export async function engagementFor(postIds: ID[]) {
+/**
+ * Likes and comments on every post, counted once and shared by every request.
+ *
+ * The feeds rank EVERY visible post on each request, and used to read the
+ * likes and comments of all of them to do it — on every visit to Home or
+ * Videos, for every visitor, with every post id spelled out in the request
+ * URL (a list that grows with the site until the URL is too long to send).
+ * Nothing here depends on who is asking, so it is a community aggregate: read
+ * once, a page at a time, and kept up to a minute (see community-cache.ts).
+ * Ranking a minute behind on likes changes nothing anybody can see; the
+ * numbers a card SHOWS are read fresh by hydratePosts.
+ */
+const engagementCounts = communityCache('engagement', async () => {
   const store = db();
+  const [likes, comments] = await Promise.all([store.query('likes'), store.query('comments')]);
+  const counts = new Map<ID, [likes: number, comments: number]>();
+  for (const like of likes) {
+    const entry = counts.get(like.post_id) ?? [0, 0];
+    entry[0] += 1;
+    counts.set(like.post_id, entry);
+  }
+  for (const comment of comments) {
+    if (comment.removed) continue;
+    const entry = counts.get(comment.post_id) ?? [0, 0];
+    entry[1] += 1;
+    counts.set(comment.post_id, entry);
+  }
+  return [...counts.entries()].map(([postId, [liked, commented]]) => [postId, liked, commented] as const);
+});
+
+export async function engagementFor(postIds: ID[]) {
   if (postIds.length === 0) {
     return { likes: new Map<ID, number>(), comments: new Map<ID, number>() };
   }
-  const [likes, comments] = await Promise.all([
-    store.query('likes', { in: { post_id: postIds } }),
-    store.query('comments', { in: { post_id: postIds } }),
-  ]);
-  const likeCount = new Map<ID, number>(postIds.map((id) => [id, 0]));
-  const commentCount = new Map<ID, number>(postIds.map((id) => [id, 0]));
-  for (const like of likes) likeCount.set(like.post_id, (likeCount.get(like.post_id) ?? 0) + 1);
-  for (const comment of comments) {
-    if (!comment.removed) {
-      commentCount.set(comment.post_id, (commentCount.get(comment.post_id) ?? 0) + 1);
-    }
+  const all = new Map((await engagementCounts()).map(([postId, liked, commented]) => [postId, [liked, commented]]));
+  const likeCount = new Map<ID, number>();
+  const commentCount = new Map<ID, number>();
+  for (const id of postIds) {
+    const [liked, commented] = all.get(id) ?? [0, 0];
+    likeCount.set(id, liked);
+    commentCount.set(id, commented);
   }
   return { likes: likeCount, comments: commentCount };
 }

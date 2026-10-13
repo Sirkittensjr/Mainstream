@@ -9,6 +9,7 @@ import { hasAdminVerification } from '@/lib/services/admin-step-up';
 import { liftExpiredSuspension } from '@/lib/services/moderation';
 import { suspensionOver } from '@/lib/moderation-rules';
 import { createAuthClient } from '@/lib/supabase/server';
+import { VERIFIED_USER_HEADER, readVerifiedUser } from '@/lib/supabase/verified-user';
 import type { User } from '@/lib/types';
 
 /**
@@ -32,9 +33,17 @@ export const getViewer = cache(async (): Promise<User | null> => {
 });
 
 async function authenticatedUserId(): Promise<string | null> {
+  const incoming = await headers();
+  // The middleware has just verified this request's session with Supabase and
+  // signed the result: asking Supabase again would be the same answer, a
+  // round trip later. Only the middleware can make a header that passes this;
+  // anything else falls through to the checks below, as it always did.
+  const verified = await readVerifiedUser(incoming.get(VERIFIED_USER_HEADER));
+  if (verified) return verified;
+
   // Native clients send the Supabase access token as a bearer header; the
   // website sends the cookies Supabase manages. Same tokens, same verification.
-  const authorization = (await headers()).get('authorization');
+  const authorization = incoming.get('authorization');
   if (authorization?.startsWith('Bearer ')) {
     const token = authorization.slice(7).trim();
     const url = supabaseUrl();

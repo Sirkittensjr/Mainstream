@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { headers } from 'next/headers';
 import { BottomNav, Sidebar, type NavUser } from '@/components/Nav';
 import { RightRail } from '@/components/RightRail';
 import { UnreadWatch } from '@/components/UnreadWatch';
@@ -7,7 +8,17 @@ import { unreadCount } from '@/lib/services/notifications';
 import { unreadMessageCount } from '@/lib/services/messages';
 import { getViewer, markActive } from '@/lib/session';
 
+/**
+ * A phone, by its own account: it can never be wide enough for the right-hand
+ * column (1280px and up). iPads send a desktop user agent and are left alone.
+ */
+function isPhone(request: Headers): boolean {
+  if (request.get('sec-ch-ua-mobile') === '?1') return true;
+  return /\b(iPhone|iPod)\b|Android.+Mobile|Windows Phone/.test(request.get('user-agent') ?? '');
+}
+
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  const phone = isPhone(await headers());
   const viewer = await getViewer();
   await markActive(viewer);
   const [unread, unreadMessages] = viewer
@@ -47,7 +58,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         )}
         {children}
       </div>
-      <RightRail viewer={viewer} />
+      {/* Desktop only (it is hidden below 1280px), so a phone is not made to
+          wait for — or download — a column it can never show: suggestions,
+          rankings and counts were being read for every page a phone opened. */}
+      {!phone && <RightRail viewer={viewer} />}
       <BottomNav user={navUser} />
       {/* Nothing rendered: it refreshes the route when the badges above go
           stale, so a message that arrives mid-read still announces itself. */}

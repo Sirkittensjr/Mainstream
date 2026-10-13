@@ -50,6 +50,8 @@ export interface AvatarProps {
   size?: keyof typeof SIZES;
   href?: string | false;
   ring?: boolean;
+  /** Next's `prefetch` for the profile link. */
+  prefetch?: boolean;
 }
 
 /**
@@ -63,6 +65,7 @@ export function Avatar({
   size = 'md',
   href,
   ring = false,
+  prefetch,
 }: AvatarProps) {
   const initials = (displayName || username).trim().slice(0, 2).toUpperCase();
   const gradient = GRADIENTS[hash(username) % GRADIENTS.length];
@@ -92,7 +95,11 @@ export function Avatar({
 
   if (href === false) return inner;
   return (
-    <Link href={href ?? `/u/${username}`} aria-label={`${displayName || username} profile`}>
+    <Link
+      href={href ?? `/u/${username}`}
+      prefetch={prefetch}
+      aria-label={`${displayName || username} profile`}
+    >
       {inner}
     </Link>
   );

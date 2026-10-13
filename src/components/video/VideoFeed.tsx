@@ -3,7 +3,7 @@ import { AdminBadge } from '@/components/AdminBadge';
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { likeAction } from '@/app/actions';
 import { formatCount } from '@/lib/format';
@@ -35,6 +35,22 @@ import {
 } from '@/components/Icons';
 
 /**
+ * Where the last video points by default. A constant, not a default written
+ * into the parameter list: that would be a new object on every render, and
+ * every slide would re-render with it.
+ */
+const BACK_TO_FEED = { href: '/home', label: 'That is everything — back to the feed' };
+
+/**
+ * The links laid over a clip — its author, hashtags, category — are not
+ * prefetched. Next fetches every link that scrolls into view, and in a feed
+ * that is three or four new requests to the server with every swipe, each
+ * competing with the video for a phone's connection. A tap still goes
+ * straight there; it just is not fetched before anybody asks.
+ */
+const NO_PREFETCH = false;
+
+/**
  * The full-screen video feed.
  *
  * Three rules shape this component, and everything else follows from them.
@@ -58,7 +74,7 @@ export function VideoFeed({
   viewerId,
   viewer = null,
   title = 'Videos',
-  end = { href: '/home', label: 'That is everything — back to the feed' },
+  end = BACK_TO_FEED,
   returnTo = '/videos',
 }: {
   items: PostCardData[];
@@ -158,12 +174,20 @@ export function VideoFeed({
     };
   }, [openFor, comments]);
 
-  // Stable, because a slide re-runs its playback effect when these change.
+  // Stable, because a slide re-runs its playback effect when these change —
+  // and because a slide only re-renders when one of its props does, so a
+  // swipe re-renders the two or three slides it actually changes rather than
+  // all thirty.
   const handleBlocked = useCallback(() => setBlocked(true), []);
   const handleUnmute = useCallback(() => {
     setBlocked(false);
     setWantsSound(true);
   }, []);
+  const openComments = useCallback((postId: string) => setOpenFor(postId), []);
+  const removeVideo = useCallback(
+    (postId: string) => setDeleted((current) => new Set(current).add(postId)),
+    [],
+  );
 
   return (
     <div className="relative bg-black lg:rounded-3xl lg:overflow-hidden">
@@ -198,24 +222,26 @@ export function VideoFeed({
           return (
             <Slide
               key={data.id}
-              attach={(node) => setSlide(index, node)}
+              attach={setSlide}
               index={index}
               data={data}
               media={media}
               viewerId={viewerId}
               // Three players at most: the one playing and its neighbours.
+              // Those three are also the only slides drawn in full — the
+              // rest are their poster until a swipe brings them close.
               mounted={Math.abs(index - active) <= 1}
               isActive={index === active}
               // Only the clip playing buffers ahead. The next one is allowed
-              // to read its header so it starts instantly; nothing else on
-              // the queue touches the network.
+              // to read its start so it plays the moment it is swiped to;
+              // nothing else on the queue touches the network.
               preload={index === active ? 'auto' : index === active + 1 ? 'metadata' : 'none'}
               muted={muted}
               commentCount={counts[data.id] ?? data.comments}
-              onOpenComments={() => setOpenFor(data.id)}
+              onOpenComments={openComments}
               onBlocked={handleBlocked}
               onUnmute={handleUnmute}
-              onDeleted={() => setDeleted((current) => new Set(current).add(data.id))}
+              onDeleted={removeVideo}
               last={index === shown.length - 1}
               end={end}
               returnTo={returnTo}
@@ -262,7 +288,7 @@ export function VideoFeed({
   );
 }
 
-function Slide({
+const Slide = memo(function Slide({
   attach,
   index,
   data,
@@ -281,7 +307,7 @@ function Slide({
   end,
   returnTo,
 }: {
-  attach: (node: HTMLElement | null) => void;
+  attach: (index: number, node: HTMLElement | null) => void;
   index: number;
   data: PostCardData;
   media: Media;
@@ -291,17 +317,18 @@ function Slide({
   preload: 'auto' | 'metadata' | 'none';
   muted: boolean;
   commentCount: number;
-  onOpenComments: () => void;
+  onOpenComments: (postId: string) => void;
   /** Autoplay with sound was refused, so everything from here plays muted. */
   onBlocked: () => void;
   onUnmute: () => void;
   /** Its author deleted it. */
-  onDeleted: () => void;
+  onDeleted: (postId: string) => void;
   last: boolean;
   end: { href: string; label: string };
   returnTo: string;
 }) {
   const video = useRef<HTMLVideoElement>(null);
+  const attachHere = useCallback((node: HTMLElement | null) => attach(index, node), [attach, index]);
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   /**
@@ -429,8 +456,9 @@ function Slide({
 
   return (
     <section
-      ref={attach}
+      ref={attachHere}
       data-index={index}
+      data-post-id={data.id}
       aria-label={`${data.author.displayName}: ${data.caption || 'video'}`}
       className="relative h-full w-full snap-start snap-always overflow-hidden bg-black"
     >
@@ -524,240 +552,255 @@ function Slide({
         </button>
       )}
 
-      {/* The whole frame is the play/pause control, the way it is in every
-          other video feed. It sits under the overlay so links still win. */}
-      <button
-        type="button"
-        onClick={togglePlay}
-        aria-label={playing ? 'Pause video' : 'Play video'}
-        className="absolute inset-0 z-10 flex items-center justify-center"
-      >
-        {!playing && (
-          <span className="rounded-full bg-black/45 p-5 backdrop-blur-sm">
-            <PlayIcon width={36} height={36} />
-          </span>
-        )}
-      </button>
-
-      {muted && isActive && (
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            onUnmute();
-          }}
-          className="absolute left-1/2 top-[22%] z-20 -translate-x-1/2 rounded-full bg-black/55 px-4 py-2 text-xs font-semibold backdrop-blur"
-        >
-          Tap for sound
-        </button>
-      )}
-
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex items-end gap-3 bg-gradient-to-t from-black/85 via-black/40 to-transparent px-4 pb-6 pt-16">
-        <div className="pointer-events-auto min-w-0 flex-1">
-          <div className="flex items-center gap-2.5">
-            <Avatar
-              username={data.author.username}
-              displayName={data.author.displayName}
-              src={data.author.avatarUrl}
-              size="sm"
-            />
-            <div className="min-w-0">
-              <span className="flex min-w-0 items-center gap-1.5">
-                <Link
-                  href={`/u/${data.author.username}`}
-                  className="truncate text-sm font-semibold leading-tight hover:underline"
-                >
-                  {data.author.displayName}
-                </Link>
-                {data.author.isAdmin && <AdminBadge />}
-              </span>
-              <p className="truncate text-[12px] text-white/55">
-                @{data.author.username} · {timeAgo(data.createdAt)}
-              </p>
-            </div>
-            {!isOwn && (
-              <FollowButton
-                userId={data.author.id}
-                initialFollowing={data.following}
-                signedIn={Boolean(viewerId)}
-              />
-            )}
-          </div>
-
-          {data.caption && (
-            // Tapping the caption opens it out, as it always has — apart from
-            // its hashtags, which open their own pages. The expand control is
-            // laid under the words rather than wrapped round them, because a
-            // link cannot live inside a button, and so a tap on a hashtag can
-            // only ever be the hashtag.
-            <div className="relative mt-2.5" data-video-caption>
-              <button
-                type="button"
-                onClick={() => setExpanded((value) => !value)}
-                aria-expanded={expanded}
-                aria-label={expanded ? 'Show less of the caption' : 'Show all of the caption'}
-                className="absolute inset-0"
-              />
-              <span
-                className={`pointer-events-none relative block whitespace-pre-wrap text-[14px] leading-snug text-white/90 ${
-                  expanded ? '' : 'line-clamp-2'
-                }`}
-              >
-                <HashtagText text={data.caption} />
-              </span>
-            </div>
-          )}
-
-          <div className="mt-2.5 flex flex-wrap items-center gap-2">
-            <Link
-              href={`/discover?category=${encodeURIComponent(data.category)}`}
-              className="chip bg-white/10 hover:bg-white/15"
-            >
-              {data.category}
-            </Link>
-            {data.reason && (
-              <span className="chip border-transparent bg-white/[0.06] text-white/45">
-                {data.reason}
-              </span>
-            )}
-            {/* The hashtags it was posted with, each one its hashtag's page. */}
-            <HashtagChips
-              tags={extraTags({ caption: data.caption, text_title: data.textTitle, tags: data.tags })}
-              className="bg-white/10 hover:bg-white/15"
-            />
-            {last && (
-              <Link href={end.href} className="chip bg-white/10 hover:bg-white/15">
-                {end.label}
-              </Link>
-            )}
-          </div>
-        </div>
-
-        <div className="pointer-events-auto flex shrink-0 flex-col items-center gap-3.5 pb-1">
+      {/* Everything you can touch is drawn for the slide on screen and its two
+          neighbours only. A slide further away is its poster (and anything
+          covering it) — thirty full sets of buttons, links and menus were most
+          of what a phone had to build and hydrate before the first clip could
+          start. Each slide keeps its own state either way: a like or an opened
+          warning is still there when you swipe back to it. */}
+      {mounted && (
+        <>
+          {/* The whole frame is the play/pause control, the way it is in every
+              other video feed. It sits under the overlay so links still win. */}
           <button
             type="button"
-            onClick={toggleLike}
-            aria-pressed={liked}
-            aria-label={liked ? 'Unlike' : 'Like'}
-            className={`flex flex-col items-center gap-1 text-[11px] font-semibold transition active:scale-95 ${
-              liked ? 'text-fay' : 'text-white'
-            }`}
+            onClick={togglePlay}
+            aria-label={playing ? 'Pause video' : 'Play video'}
+            className="absolute inset-0 z-10 flex items-center justify-center"
           >
-            <HeartIcon filled={liked} width={26} height={26} />
-            {formatCount(likes)}
-          </button>
-          <button
-            type="button"
-            onClick={(event) => {
-              // A control, not a tap on the video: the play/pause layer is
-              // underneath and must not hear this.
-              event.stopPropagation();
-              onOpenComments();
-            }}
-            aria-label="Comments"
-            className="flex flex-col items-center gap-1 text-[11px] font-semibold text-white"
-          >
-            <CommentIcon width={26} height={26} />
-            {formatCount(commentCount)}
-          </button>
-          <button
-            type="button"
-            onClick={share}
-            aria-label="Share"
-            className="flex flex-col items-center gap-1 text-[11px] font-semibold text-white"
-          >
-            <ShareIcon width={26} height={26} />
-            {copied ? 'Copied' : 'Share'}
-          </button>
-          {/* How many times this has been watched. Not a button — there is
-              nothing to do with it. */}
-          <span
-            className="flex flex-col items-center gap-1 text-[11px] font-semibold text-white/75"
-            data-video-views={watch.count}
-            role="img"
-            aria-label={`${watch.count.toLocaleString()} ${watch.count === 1 ? 'view' : 'views'}`}
-          >
-            <EyeIcon width={24} height={24} />
-            {formatCount(watch.count)}
-          </span>
-          <div className="flex flex-col items-center gap-1">
-            <RateButton
-              compact
-              targetType="post"
-              targetId={data.id}
-              rating={data.rating}
-              votes={data.ratingVotes}
-              myScore={data.myScore}
-              myReactions={data.myReactions}
-              signedIn={Boolean(viewerId)}
-              subject="this video"
-            />
-            {data.ratingVotes > 0 && (
-              <span className="text-[10px] text-white/45">{formatVotes(data.ratingVotes)}</span>
+            {!playing && (
+              <span className="rounded-full bg-black/45 p-5 backdrop-blur-sm">
+                <PlayIcon width={36} height={36} />
+              </span>
             )}
-          </div>
-          <div className="relative">
+          </button>
+
+          {muted && isActive && (
             <button
               type="button"
-              aria-label="More options"
-              onClick={() => setMenuOpen((open) => !open)}
-              className="rounded-full px-2 py-1 text-white/70 transition hover:text-white"
+              onClick={(event) => {
+                event.stopPropagation();
+                onUnmute();
+              }}
+              className="absolute left-1/2 top-[22%] z-20 -translate-x-1/2 rounded-full bg-black/55 px-4 py-2 text-xs font-semibold backdrop-blur"
             >
-              •••
+              Tap for sound
             </button>
-            {menuOpen && (
-              <>
+          )}
+
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex items-end gap-3 bg-gradient-to-t from-black/85 via-black/40 to-transparent px-4 pb-6 pt-16">
+            <div className="pointer-events-auto min-w-0 flex-1">
+              <div className="flex items-center gap-2.5">
+                <Avatar
+                  username={data.author.username}
+                  displayName={data.author.displayName}
+                  src={data.author.avatarUrl}
+                  size="sm"
+                  prefetch={NO_PREFETCH}
+                />
+                <div className="min-w-0">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <Link
+                      href={`/u/${data.author.username}`}
+                      prefetch={NO_PREFETCH}
+                      className="truncate text-sm font-semibold leading-tight hover:underline"
+                    >
+                      {data.author.displayName}
+                    </Link>
+                    {data.author.isAdmin && <AdminBadge />}
+                  </span>
+                  <p className="truncate text-[12px] text-white/55">
+                    @{data.author.username} · {timeAgo(data.createdAt)}
+                  </p>
+                </div>
+                {!isOwn && (
+                  <FollowButton
+                    userId={data.author.id}
+                    initialFollowing={data.following}
+                    signedIn={Boolean(viewerId)}
+                  />
+                )}
+              </div>
+
+              {data.caption && (
+                // Tapping the caption opens it out, as it always has — apart from
+                // its hashtags, which open their own pages. The expand control is
+                // laid under the words rather than wrapped round them, because a
+                // link cannot live inside a button, and so a tap on a hashtag can
+                // only ever be the hashtag.
+                <div className="relative mt-2.5" data-video-caption>
+                  <button
+                    type="button"
+                    onClick={() => setExpanded((value) => !value)}
+                    aria-expanded={expanded}
+                    aria-label={expanded ? 'Show less of the caption' : 'Show all of the caption'}
+                    className="absolute inset-0"
+                  />
+                  <span
+                    className={`pointer-events-none relative block whitespace-pre-wrap text-[14px] leading-snug text-white/90 ${
+                      expanded ? '' : 'line-clamp-2'
+                    }`}
+                  >
+                    <HashtagText text={data.caption} prefetch={NO_PREFETCH} />
+                  </span>
+                </div>
+              )}
+
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                <Link
+                  href={`/discover?category=${encodeURIComponent(data.category)}`}
+                  prefetch={NO_PREFETCH}
+                  className="chip bg-white/10 hover:bg-white/15"
+                >
+                  {data.category}
+                </Link>
+                {data.reason && (
+                  <span className="chip border-transparent bg-white/[0.06] text-white/45">
+                    {data.reason}
+                  </span>
+                )}
+                {/* The hashtags it was posted with, each one its hashtag's page. */}
+                <HashtagChips
+                  tags={extraTags({ caption: data.caption, text_title: data.textTitle, tags: data.tags })}
+                  className="bg-white/10 hover:bg-white/15"
+                  prefetch={NO_PREFETCH}
+                />
+                {last && (
+                  <Link href={end.href} prefetch={NO_PREFETCH} className="chip bg-white/10 hover:bg-white/15">
+                    {end.label}
+                  </Link>
+                )}
+              </div>
+            </div>
+
+            <div className="pointer-events-auto flex shrink-0 flex-col items-center gap-3.5 pb-1">
+              <button
+                type="button"
+                onClick={toggleLike}
+                aria-pressed={liked}
+                aria-label={liked ? 'Unlike' : 'Like'}
+                className={`flex flex-col items-center gap-1 text-[11px] font-semibold transition active:scale-95 ${
+                  liked ? 'text-fay' : 'text-white'
+                }`}
+              >
+                <HeartIcon filled={liked} width={26} height={26} />
+                {formatCount(likes)}
+              </button>
+              <button
+                type="button"
+                onClick={(event) => {
+                  // A control, not a tap on the video: the play/pause layer is
+                  // underneath and must not hear this.
+                  event.stopPropagation();
+                  onOpenComments(data.id);
+                }}
+                aria-label="Comments"
+                className="flex flex-col items-center gap-1 text-[11px] font-semibold text-white"
+              >
+                <CommentIcon width={26} height={26} />
+                {formatCount(commentCount)}
+              </button>
+              <button
+                type="button"
+                onClick={share}
+                aria-label="Share"
+                className="flex flex-col items-center gap-1 text-[11px] font-semibold text-white"
+              >
+                <ShareIcon width={26} height={26} />
+                {copied ? 'Copied' : 'Share'}
+              </button>
+              {/* How many times this has been watched. Not a button — there is
+                  nothing to do with it. */}
+              <span
+                className="flex flex-col items-center gap-1 text-[11px] font-semibold text-white/75"
+                data-video-views={watch.count}
+                role="img"
+                aria-label={`${watch.count.toLocaleString()} ${watch.count === 1 ? 'view' : 'views'}`}
+              >
+                <EyeIcon width={24} height={24} />
+                {formatCount(watch.count)}
+              </span>
+              <div className="flex flex-col items-center gap-1">
+                <RateButton
+                  compact
+                  targetType="post"
+                  targetId={data.id}
+                  rating={data.rating}
+                  votes={data.ratingVotes}
+                  myScore={data.myScore}
+                  myReactions={data.myReactions}
+                  signedIn={Boolean(viewerId)}
+                  subject="this video"
+                />
+                {data.ratingVotes > 0 && (
+                  <span className="text-[10px] text-white/45">{formatVotes(data.ratingVotes)}</span>
+                )}
+              </div>
+              <div className="relative">
                 <button
                   type="button"
-                  aria-hidden
-                  tabIndex={-1}
-                  className="fixed inset-0 z-30 cursor-default"
-                  onClick={() => setMenuOpen(false)}
-                />
-                <div className="absolute bottom-9 right-0 z-40 w-44 overflow-hidden rounded-2xl border border-white/10 bg-ink-850 py-1 shadow-xl">
-                  <Link
-                    href={`/post/${data.id}`}
-                    className="block px-4 py-2.5 text-left text-sm text-white/70 hover:bg-white/5"
-                  >
-                    Open post
-                  </Link>
-                  {!isOwn && viewerId && <ReportDialog targetType="post" targetId={data.id} />}
-                  {/* Administrators only, and only as a convenience: the server
-                      action re-checks the role whoever sends it. */}
-                  {viewerIsAdmin && !isOwn && !data.removed && (
-                    <AdminRemovePost
-                      postId={data.id}
-                      onRemoved={() => {
-                        setMenuOpen(false);
-                        onDeleted();
-                      }}
-                      onCancel={() => setMenuOpen(false)}
+                  aria-label="More options"
+                  onClick={() => setMenuOpen((open) => !open)}
+                  className="rounded-full px-2 py-1 text-white/70 transition hover:text-white"
+                >
+                  •••
+                </button>
+                {menuOpen && (
+                  <>
+                    <button
+                      type="button"
+                      aria-hidden
+                      tabIndex={-1}
+                      className="fixed inset-0 z-30 cursor-default"
+                      onClick={() => setMenuOpen(false)}
                     />
-                  )}
-                  {/* Your own video only reaches this feed from a link to it. */}
-                  {isOwn && !data.removed && (
-                    <DeletePost
-                      postId={data.id}
-                      onDeleted={() => {
-                        setMenuOpen(false);
-                        onDeleted();
-                      }}
-                      onCancel={() => setMenuOpen(false)}
-                    />
-                  )}
-                </div>
-              </>
-            )}
+                    <div className="absolute bottom-9 right-0 z-40 w-44 overflow-hidden rounded-2xl border border-white/10 bg-ink-850 py-1 shadow-xl">
+                      <Link
+                        href={`/post/${data.id}`}
+                        prefetch={NO_PREFETCH}
+                        className="block px-4 py-2.5 text-left text-sm text-white/70 hover:bg-white/5"
+                      >
+                        Open post
+                      </Link>
+                      {!isOwn && viewerId && <ReportDialog targetType="post" targetId={data.id} />}
+                      {/* Administrators only, and only as a convenience: the server
+                          action re-checks the role whoever sends it. */}
+                      {viewerIsAdmin && !isOwn && !data.removed && (
+                        <AdminRemovePost
+                          postId={data.id}
+                          onRemoved={() => {
+                            setMenuOpen(false);
+                            onDeleted(data.id);
+                          }}
+                          onCancel={() => setMenuOpen(false)}
+                        />
+                      )}
+                      {/* Your own video only reaches this feed from a link to it. */}
+                      {isOwn && !data.removed && (
+                        <DeletePost
+                          postId={data.id}
+                          onDeleted={() => {
+                            setMenuOpen(false);
+                            onDeleted(data.id);
+                          }}
+                          onCancel={() => setMenuOpen(false)}
+                        />
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 h-0.5 bg-white/15">
-        <div
-          className="h-full bg-white/70 transition-[width] duration-200"
-          style={{ width: `${Math.min(100, progress * 100)}%` }}
-        />
-      </div>
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 h-0.5 bg-white/15">
+            <div
+              className="h-full bg-white/70 transition-[width] duration-200"
+              style={{ width: `${Math.min(100, progress * 100)}%` }}
+            />
+          </div>
+        </>
+      )}
     </section>
   );
-}
+});

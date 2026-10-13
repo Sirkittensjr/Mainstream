@@ -33,16 +33,20 @@ export function HashtagLink({
   children,
   tone = 'dark',
   className = '',
+  prefetch,
 }: {
   /** The hashtag, in any capitalisation. The link goes to its one page. */
   tag: string;
   children: React.ReactNode;
   tone?: HashtagTone;
   className?: string;
+  /** Next's `prefetch`. False over a playing video, where the bandwidth is the video's. */
+  prefetch?: boolean;
 }) {
   return (
     <Link
       href={hashtagHref(tag)}
+      prefetch={prefetch}
       data-hashtag-link={tag.toLowerCase()}
       onClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
@@ -60,14 +64,22 @@ export function HashtagLink({
  * become links. What counts as a hashtag is lib/hashtags.ts's to say, so a
  * link here always goes to a page the hashtag is actually filed under.
  */
-export function HashtagText({ text, tone = 'dark' }: { text: string; tone?: HashtagTone }) {
+export function HashtagText({
+  text,
+  tone = 'dark',
+  prefetch,
+}: {
+  text: string;
+  tone?: HashtagTone;
+  prefetch?: boolean;
+}) {
   const parts = splitHashtags(text);
   if (!parts.some((part) => part.hashtag)) return <>{text}</>;
   return (
     <>
       {parts.map((part, index) =>
         part.hashtag ? (
-          <HashtagLink key={index} tag={part.hashtag.tag} tone={tone}>
+          <HashtagLink key={index} tag={part.hashtag.tag} tone={tone} prefetch={prefetch}>
             {part.text}
           </HashtagLink>
         ) : (
@@ -82,9 +94,11 @@ export function HashtagText({ text, tone = 'dark' }: { text: string; tone?: Hash
 export function HashtagChips({
   tags,
   className = '',
+  prefetch,
 }: {
   tags: { tag: string; display: string }[];
   className?: string;
+  prefetch?: boolean;
 }) {
   if (tags.length === 0) return null;
   return (
@@ -93,6 +107,7 @@ export function HashtagChips({
         <HashtagLink
           key={hashtag.tag}
           tag={hashtag.tag}
+          prefetch={prefetch}
           tone="plain"
           className={`chip font-medium hover:bg-white/10 hover:no-underline ${className}`}
         >

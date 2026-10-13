@@ -20,6 +20,7 @@ psql -d faytarra_test -f scripts/e2e/admin-checks.sql
 psql -d faytarra_test -f scripts/e2e/auto-review-checks.sql
 psql -d faytarra_test -f scripts/e2e/comment-checks.sql
 psql -d faytarra_test -f scripts/e2e/hashtag-checks.sql
+psql -d faytarra_test -f scripts/e2e/views-checks.sql
 ```
 
 The shim's `storage.buckets` carries `file_size_limit` and `allowed_mime_types`
@@ -90,6 +91,20 @@ are the check passing. It cleans up after itself.
 
 ```bash
 psql -d faytarra_test -f scripts/e2e/hashtag-checks.sql
+```
+
+`views-checks.sql` proves migration 0016 in the DATABASE: `record_video_view`
+stores a view and raises its post's total in one call, answers a second copy of
+the same playback session with the stored total and counts nothing, stores
+nothing for a post that does not exist — and when the total cannot be raised
+(a post already at the largest number the column holds), the view row is not
+stored either. That last one is the lost-view bug, as a check. Neither API role
+may call it or `increment_counter`; the service role may. Then it strands a
+view the old way and runs the migration twice: the total is repaired once,
+never lowered.
+
+```bash
+psql -d faytarra_test -f scripts/e2e/views-checks.sql
 ```
 
 ## 2. The app side — `gotrue-stub.mjs` + `auth-flow.mjs` + `social-flow.mjs`
@@ -1457,6 +1472,47 @@ it:
 | `/u/<handle>` | 9,963 | 133 |
 | `/notifications` | 9,801 | 4 |
 | all ten routes | 108,783 | 867 |
+
+### 17. A real PostgREST — `supabase-gateway.mjs`
+
+`postgrest-stub.mjs` speaks PostgREST's protocol over an in-memory dataset.
+`supabase-gateway.mjs` puts the REAL thing behind the same three paths a
+Supabase project serves — PostgREST against `supabase/schema.sql` on a real
+Postgres, with the GoTrue and Storage stubs — for what only a database does:
+unique indexes settling races, triggers, functions called over RPC, grants.
+`supabase-roles.sql` creates the roles and default privileges a project has
+before FayTarra's SQL runs; `postgrest.conf` is the PostgREST config. The
+gateway can add latency to every database and auth call
+(`GATEWAY_LATENCY_MS`, to stand in for the network between the app and
+Supabase) and counts them at `/__stats`. Setup is at the top of the file.
+
+### 18. Video views on a phone — `views-feed-iphone-flow.mjs`
+
+The full-screen feed scrolled the way somebody does on an iPhone (Chromium with
+iPhone 13 emulation and Safari's autoplay rule: muted may start on its own,
+sound may not until a tap), against the stand-in above. After every step it
+reads the count from the DATABASE and checks the eye shows that number:
+autoplay, a swipe on, a clip left after 0.7 s, a swipe back to a clip whose
+player was taken down, a refresh, the post page and the profile, the creator
+watching their own, a visitor, and every stored view row being in its total.
+
+```bash
+DATABASE_URL=postgres://…/faytarra_sb BASE_URL=http://localhost:3000 \
+  node scripts/e2e/views-feed-iphone-flow.mjs
+```
+
+### 19. How fast it is on a phone — `perf-mobile.mjs` + `supabase-perf-seed.mjs`
+
+`supabase-perf-seed.mjs` loads 60 accounts and 300 posts (100 of them
+phone-sized videos, each at its own address) into the stand-in;
+`perf-mobile.mjs` opens Home, Videos, a profile, Discover and a hashtag page as
+an iPhone with a 4× slower CPU on good 4G — signed out and signed in, median of
+three after a warm-up — and reports time to first byte, DOMContentLoaded, load,
+largest contentful paint, the database and auth requests behind each page, and
+for the Videos feed the time from opening it to the first clip moving, from a
+swipe to the next clip moving, and how much video was downloaded in the first
+ten seconds. Compare two builds on the same machine, one after the other: the
+numbers move with the machine as much as with the code.
 
 ### Which store each suite wants
 
