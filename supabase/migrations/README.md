@@ -15,8 +15,8 @@ has never been installed.
 
 | Row 1 says | Run |
 | --- | --- |
-| `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including every migration — `0016` included. |
-| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`, `0006`, `0007`, `0008`, `0009`, `0010`, `0011`, `0012`, `0013`, `0014`, `0015` and `0016`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
+| `0 of 9` — EMPTY PROJECT | `../schema.sql` only. It creates everything, already including every migration — `0017` included. |
+| `9 of 9` — ALL PRESENT | `0001`, `0002`, `0003`, then `0005`, `0006`, `0007`, `0008`, `0009`, `0010`, `0011`, `0012`, `0013`, `0014`, `0015`, `0016` and `0017`. **Do not run `schema.sql`** — you do not need it, and there is no reason to run 350 lines over a live database to get a few changes. |
 | anything between | Stop and ask. A half-installed schema needs looking at, not a migration. |
 
 If the storage bucket row shows `none`, create it in the dashboard
@@ -593,3 +593,65 @@ happened):
 drop function if exists public.record_video_view(uuid, uuid, uuid, text, text, timestamptz);
 ```
 
+
+## 0017_count_every_play.sql
+
+Every playback start counted, decided and stored by the database in one step —
+and the view storage itself, for a project that never ran `0010`. Needs nothing
+but the FayTarra schema (`posts`, `users`); stops before changing anything
+without them. Additive, and safe to run twice.
+
+**Why the eye stayed at 0.** View counting needs `posts.video_views` and the
+`video_views` table, which `0010` creates. On a database without them the app
+does not fail: it switches view counting off and answers every report "not
+counted (unavailable)", so every eye stays at 0 however often a video plays —
+with nothing to see but a warning in the browser console and
+`schema.missingTables` in `/api/health`. `0015` does not create that storage
+and `0016` refuses to run without it, so neither could fix it. This one does
+not depend on either. `/api/health` now has a `views` section that says
+whether plays are being counted, and [`../inspect-views.sql`](../inspect-views.sql)
+says which of these a database is missing.
+
+**What a view is now.** Every playback start, by anybody: the creator's own,
+a signed-out visitor's, a replay a moment later, the ten-thousandth. No
+minimum watching time, and no hourly cap. The one thing never counted twice is
+one playback session (the key the player sends), so a retried or duplicated
+report adds nothing. A ceiling no person can reach — the same viewer starting
+the same video 50 times in 10 seconds — refuses the rest of a burst like that.
+
+| Step | Statement | What it touches | Risk |
+| --- | --- | --- | --- |
+| 0 | Checks `posts` and `users` exist, and stops if not | Nothing — read only | **None** |
+| 1 | `add column if not exists posts.video_views` (default 0, never negative), `create table if not exists video_views` with its unique and lookup indexes, RLS on | Adds what `0010` adds, only where it is missing | None. A post that has a total keeps it; nothing is rewritten |
+| 2 | `create or replace function increment_counter(…)` | Re-creates `0015`'s counter, adding a refusal of amounts below 1 | None. Same signature and behaviour for every call the app makes |
+| 3 | `create or replace function record_video_play(…)` | Adds a function | None. Checks the post (exists, not removed, not under review, has a video), serialises one viewer's plays of one video, refuses a session already counted or a burst, then stores the play and adds exactly 1 — one transaction. It takes no table, column or amount from its caller |
+| 4 | `revoke` from `public`, `anon`, `authenticated` (both functions and `video_views`); `grant` to `service_role` | Permissions only | None. The public API key can neither count a play nor read who watched what |
+| 5 | Repair: raises `posts.video_views` to the number of stored view rows where it is lower | **Raises** totals on posts that lost views (the `0016` repair) | Low. Only ever raises; running it again changes nothing |
+
+Before running it, see what it will find (read only): run
+[`../inspect-views.sql`](../inspect-views.sql). Row 1 says whether the storage is
+there; on a database where it is, this shows what step 5 would add:
+
+```sql
+select count(*) as posts, coalesce(sum(c.n - p.video_views), 0) as views_to_add
+  from public.posts p
+  join (select post_id, count(*) as n from public.video_views group by post_id) c on c.post_id = p.id
+ where p.video_views < c.n;
+```
+
+**Order.** Either way round works. Applied before the code that uses it, the
+code already running starts counting (under its old rules) within half a minute,
+without a restart. Deployed before it, the new code says "unavailable" and
+`/api/health` names this file until it is applied, and then counts within half
+a minute; it switches to the one-step function within a minute after that.
+
+`scripts/e2e/play-count-checks.sql` proves all of it against Postgres: ten
+thousand plays by one viewer are ten thousand views, the burst ceiling, every
+refusal, the permissions, and that running it again changes no total.
+
+Rollback, if ever wanted (the storage and every count stay — they are views
+that happened):
+
+```sql
+drop function if exists public.record_video_play(uuid, uuid, uuid, text, text);
+```

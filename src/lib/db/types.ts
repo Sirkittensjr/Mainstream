@@ -33,6 +33,16 @@ export interface Schema {
   post_hashtags: PostHashtag;
 }
 
+/** What the database decided about one reported play. */
+export interface PlayOutcome {
+  /** Whether this call stored the play and added one to the total. */
+  counted: boolean;
+  /** What `posts.video_views` holds now; null when there is no such post. */
+  total: number | null;
+  /** Why it was not counted, in decideView's words. */
+  reason?: 'no-post' | 'not-a-video' | 'duplicate-session' | 'too-fast';
+}
+
 export type TableName = keyof Schema;
 export type Row<T extends TableName> = Schema[T];
 
@@ -125,6 +135,18 @@ export interface Driver {
    * the stored total. `total` is null when there is no such post.
    */
   recordView(view: VideoView): Promise<{ counted: boolean; total: number | null }>;
+  /**
+   * Counts one play of a video in ONE step, deciding it in the database: the
+   * post has to exist, be visible and carry a video; a playback session that is
+   * already stored counts nothing; a viewer starting the same video faster than
+   * a person can counts nothing; anything else stores the play and adds exactly
+   * one to `posts.video_views`. See record_video_play in migration 0017.
+   *
+   * Null when this database cannot decide it — the local store, or a Supabase
+   * project without migration 0017 — and the app then decides with the same
+   * rules (decideView) and stores it with `recordView`.
+   */
+  recordPlay(play: VideoView): Promise<PlayOutcome | null>;
   /** Wipe every table. Used by the seed script. */
   clear(): Promise<void>;
   /** Persist an uploaded file, returning a URL the app can render. */

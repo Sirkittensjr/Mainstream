@@ -287,6 +287,15 @@ class LocalDriver implements Driver {
     return { counted: true, total: current + 1 };
   }
 
+  /**
+   * The local store has no database to decide a play in one step, so the app
+   * decides it (decideView, one report at a time per viewer and video) and
+   * stores it with recordView — which is atomic here anyway.
+   */
+  async recordPlay() {
+    return null;
+  }
+
   async clear() {
     this.store = structuredClone(EMPTY);
     await this.flush();

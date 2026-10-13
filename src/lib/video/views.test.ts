@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  VIEW_COOLDOWN_MS,
-  VIEW_HOURLY_LIMIT,
+  PLAY_BURST_LIMIT,
+  PLAY_BURST_WINDOW_MS,
   type ViewDecision,
   createViewTracker,
   decideView,
   dedupeKey,
-  isFreshView,
+  isPostId,
   newSessionKey,
   playedSince,
   sanitiseSessionKey,
@@ -187,6 +187,30 @@ describe('a player counting its own viewings', () => {
     assert.equal(video.tracker.playing(0), true, 'played again after it ended');
   });
 
+  it('does not count a `playing` that arrives after the player was paused again', () => {
+    // A play() and pause() in the same instant — how the feed readies a player
+    // for sound on Safari — can still deliver `playing`. Nothing played.
+    const video = player();
+    video.tracker.play(0);
+    assert.equal(video.tracker.playing(0, true), false);
+    video.tracker.timeUpdate(0, true);
+    assert.deepEqual(video.reports, []);
+    // When it really plays, that is the view.
+    video.tracker.play(0);
+    assert.equal(video.tracker.playing(0, false), true);
+  });
+
+  it('counts a play that lasts a fraction of a second', () => {
+    const video = player(4);
+    video.tracker.play(0);
+    assert.equal(video.tracker.playing(0), true, 'reported the moment it starts');
+    video.tracker.timeUpdate(0.2, false);
+    video.tracker.timeUpdate(0.2, true);
+    video.tracker.restart(); // swiped away after a fifth of a second
+    video.tracker.play(0);
+    assert.equal(video.tracker.playing(0), true, 'and coming back is another');
+  });
+
   it('keeps one session key for one viewing', () => {
     const video = player();
     const before = video.tracker.sessionKey;
@@ -229,31 +253,14 @@ describe('playback session keys', () => {
   });
 });
 
-describe('the cooldown', () => {
-  const now = Date.UTC(2026, 9, 1, 12, 0, 0);
-
-  it('treats a first view as fresh', () => {
-    assert.equal(isFreshView(null, now), true);
-    assert.equal(isFreshView(undefined, now), true);
-  });
-
-  it('refuses a second view of the same video at the same instant', () => {
-    assert.equal(isFreshView(new Date(now - VIEW_COOLDOWN_MS / 2).toISOString(), now), false);
-  });
-
-  it('is shorter than a swipe away and back, so watching again straight after still counts', () => {
-    // Leaving a clip and coming back to it is two swipes and a fresh start of
-    // playback: comfortably over half a second, and a view each time.
-    assert.ok(VIEW_COOLDOWN_MS <= 500);
-    assert.equal(isFreshView(new Date(now - 600).toISOString(), now), true);
-  });
-
-  it('allows one once the cooldown has passed', () => {
-    assert.equal(isFreshView(new Date(now - VIEW_COOLDOWN_MS).toISOString(), now), true);
-  });
-
-  it('treats an unreadable timestamp as fresh rather than as a block', () => {
-    assert.equal(isFreshView('not a date', now), true);
+describe('post ids', () => {
+  it('accepts the UUIDs FayTarra makes and nothing else', () => {
+    assert.equal(isPostId('7b9ab000-0000-0000-0000-000000000001'), true);
+    assert.equal(isPostId(crypto.randomUUID()), true);
+    assert.equal(isPostId('7b9ab000-0000-0000-0000-00000000000'), false);
+    assert.equal(isPostId("1' or '1'='1"), false);
+    assert.equal(isPostId(''), false);
+    assert.equal(isPostId(null), false);
   });
 });
 
@@ -303,41 +310,46 @@ describe('the server-side decision', () => {
       dedupeKey: key,
       recent: [{ dedupe_key: key, created_at: new Date(Date.UTC(2026, 9, 1, 11, 0, 0)).toISOString() }],
     });
-    // Long past the cooldown, and still not a second view: it is the same
-    // playback session, which is what a remount or a scroll back produces.
+    // An hour on, and still not a second view: it is the same playback
+    // session — a retry, or two handlers reporting one start.
     assert.equal(decideView(decision), 'duplicate-session');
   });
 
-  it('refuses a fresh session key invented inside the cooldown', () => {
+  it('counts a new playback session straight after the last one', () => {
     const now = Date.UTC(2026, 9, 1, 12, 0, 0);
-    assert.equal(
-      decideView(
-        base({
-          now,
-          dedupeKey: dedupeKey('post', 'watcher', 'session-two'),
-          recent: [
-            {
-              dedupe_key: dedupeKey('post', 'watcher', 'session-one'),
-              created_at: new Date(now - VIEW_COOLDOWN_MS / 2).toISOString(),
-            },
-          ],
-        }),
-      ),
-      'cooldown',
-    );
+    // A replay, a loop coming round, a tap on play again: no gap required.
+    for (const gap of [0, 10, 250, 1_000, 60_000]) {
+      assert.equal(
+        decideView(
+          base({
+            now,
+            dedupeKey: dedupeKey('post', 'watcher', `session-${gap}`),
+            recent: [
+              {
+                dedupe_key: dedupeKey('post', 'watcher', 'session-one'),
+                created_at: new Date(now - gap).toISOString(),
+              },
+            ],
+          }),
+        ),
+        'count',
+        `${gap} ms after the last one`,
+      );
+    }
   });
 
-  it('counts watching the same video again later', () => {
+  it('counts a late retry that arrives after a newer play of the same video', () => {
     const now = Date.UTC(2026, 9, 1, 12, 0, 0);
+    // The first play's report was retried; the second play's got there first.
     assert.equal(
       decideView(
         base({
           now,
-          dedupeKey: dedupeKey('post', 'watcher', 'session-two'),
+          dedupeKey: dedupeKey('post', 'watcher', 'session-first'),
           recent: [
             {
-              dedupe_key: dedupeKey('post', 'watcher', 'session-one'),
-              created_at: new Date(now - VIEW_COOLDOWN_MS - 1).toISOString(),
+              dedupe_key: dedupeKey('post', 'watcher', 'session-second'),
+              created_at: new Date(now - 100).toISOString(),
             },
           ],
         }),
@@ -367,8 +379,8 @@ describe('the server-side decision', () => {
 
   it('counts two different people watching the same video', () => {
     const now = Date.UTC(2026, 9, 1, 12, 0, 0);
-    // Somebody else's view a second ago is not this person's cooldown: the
-    // recent rows handed in are this identity's own.
+    // The recent rows handed in are this identity's own: somebody else's
+    // plays are never in them.
     assert.equal(decideView(base({ now, identity: 'someone-else' })), 'count');
   });
 
@@ -384,23 +396,61 @@ describe('the server-side decision', () => {
     assert.equal(decideView(base({ sessionCounted: true })), 'duplicate-session');
   });
 
-  it('caps how many views one person can add to one video in an hour', () => {
+  it('has no hourly or daily cap: a thousand plays an hour all count', () => {
     const now = Date.UTC(2026, 9, 1, 12, 0, 0);
-    const recent = Array.from({ length: VIEW_HOURLY_LIMIT }, (_, i) => ({
+    // One play every 3.6 seconds for the past hour, newest first.
+    const recent = Array.from({ length: 1000 }, (_, i) => ({
       dedupe_key: dedupeKey('post', 'watcher', `old-${i}`),
-      created_at: new Date(now - VIEW_COOLDOWN_MS - i * 30_000).toISOString(),
+      created_at: new Date(now - 1_000 - i * 3_600).toISOString(),
     }));
     assert.equal(
       decideView(base({ now, dedupeKey: dedupeKey('post', 'watcher', 'new'), recent })),
-      'hourly-limit',
+      'count',
     );
-    // An hour on, the oldest have aged out and watching counts again.
+  });
+
+  it('refuses only a burst no person can produce, and only for that viewer and video', () => {
+    const now = Date.UTC(2026, 9, 1, 12, 0, 0);
+    const burst = (count: number, spread: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        dedupe_key: dedupeKey('post', 'watcher', `burst-${i}`),
+        created_at: new Date(now - (i * spread) / count).toISOString(),
+      }));
+    const next = dedupeKey('post', 'watcher', 'next');
+    assert.equal(
+      decideView(base({ now, dedupeKey: next, recent: burst(PLAY_BURST_LIMIT - 1, PLAY_BURST_WINDOW_MS - 1) })),
+      'count',
+    );
+    assert.equal(
+      decideView(base({ now, dedupeKey: next, recent: burst(PLAY_BURST_LIMIT, PLAY_BURST_WINDOW_MS - 1) })),
+      'too-fast',
+    );
+    // The window moves on: the same plays, a moment later, are history.
     assert.equal(
       decideView(
-        base({ now: now + 60 * 60 * 1000, dedupeKey: dedupeKey('post', 'watcher', 'new'), recent }),
+        base({ now: now + PLAY_BURST_WINDOW_MS, dedupeKey: next, recent: burst(PLAY_BURST_LIMIT, PLAY_BURST_WINDOW_MS - 1) }),
       ),
       'count',
     );
+    // Faster than any clip loops: a fifth of a second apart, on average.
+    assert.ok(PLAY_BURST_WINDOW_MS / PLAY_BURST_LIMIT <= 200);
+  });
+
+  it('counts ten thousand plays by one viewer as ten thousand views', () => {
+    // Played back to back, as fast as a one-second clip loops.
+    const start = Date.UTC(2026, 9, 1, 12, 0, 0);
+    const stored: { dedupe_key: string; created_at: string }[] = [];
+    let counted = 0;
+    for (let i = 0; i < 10_000; i += 1) {
+      const now = start + i * 1_000;
+      const key = dedupeKey('post', 'watcher', `play-${i}`);
+      const recent = stored.slice(-PLAY_BURST_LIMIT).reverse();
+      if (decideView(base({ now, dedupeKey: key, recent })) === 'count') {
+        counted += 1;
+        stored.push({ dedupe_key: key, created_at: new Date(now).toISOString() });
+      }
+    }
+    assert.equal(counted, 10_000);
   });
 
   it('counts nothing when there is no way to tell who watched', () => {

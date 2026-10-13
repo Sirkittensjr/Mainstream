@@ -370,11 +370,11 @@ begin
   end if;
 end $$;
 
--- Counters (0015) -----------------------------------------------------------
+-- Counters (0015, 0017) -----------------------------------------------------
 --
--- Only the counters named here can be moved, so the function cannot be turned
--- into a way to edit anything else. Nothing is granted to the API roles: the
--- app calls it with the service role.
+-- Only the counters named here can be moved, and only upwards, so the function
+-- cannot be turned into a way to edit anything else. Nothing is granted to the
+-- API roles: the app calls it with the service role.
 create or replace function public.increment_counter(
   target_table  text,
   target_id     uuid,
@@ -390,6 +390,10 @@ declare
 begin
   if not (target_table = 'posts' and target_column in ('video_views', 'views')) then
     raise exception 'increment_counter: %.% is not a counter', target_table, target_column
+      using errcode = '22023';
+  end if;
+  if amount is null or amount < 1 then
+    raise exception 'increment_counter: counters only go up (amount %)', amount
       using errcode = '22023';
   end if;
   execute format(
@@ -448,6 +452,102 @@ begin
 end $$;
 
 revoke all on function public.record_video_view(uuid, uuid, uuid, text, text, timestamptz) from public;
+
+-- Every play counted, decided and stored in one step (0017). The same rules as
+-- decideView in src/lib/video/views.ts: no-post, not-a-video, a playback
+-- session already counted (a retry), or one viewer starting one video 50 times
+-- in 10 seconds (no person can); anything else stores the play and adds
+-- exactly one to posts.video_views, through increment_counter, in the same
+-- transaction. It takes no table, column or amount from its caller.
+create or replace function public.record_video_play(
+  play_id          uuid,
+  target_post      uuid,
+  viewer           uuid,
+  viewer_identity  text,
+  play_key         text
+)
+returns table (counted boolean, total integer, reason text)
+language plpgsql
+set search_path = public, pg_catalog
+as $$
+declare
+  post_row  record;
+  is_video  boolean;
+  recent    integer;
+  stored    uuid;
+  new_total integer;
+begin
+  if target_post is null
+     or coalesce(length(viewer_identity), 0) not between 1 and 200
+     or coalesce(length(play_key), 0) not between 1 and 400 then
+    raise exception 'record_video_play: malformed play' using errcode = '22023';
+  end if;
+
+  select p.video_views, p.removed, p.media, to_jsonb(p) ->> 'review_state' as review_state
+    into post_row
+    from public.posts p
+   where p.id = target_post;
+
+  if not found or post_row.removed
+     or post_row.review_state in ('temporary_review', 'admin_hold') then
+    return query select false, null::integer, 'no-post'::text;
+    return;
+  end if;
+
+  -- A CASE, not an AND: jsonb_array_elements must never see anything but an array.
+  is_video := case
+    when jsonb_typeof(post_row.media) = 'array' then exists (
+      select 1 from jsonb_array_elements(post_row.media) m where m ->> 'kind' = 'video'
+    )
+    else false
+  end;
+  if not is_video then
+    return query select false, 0, 'not-a-video'::text;
+    return;
+  end if;
+
+  perform pg_advisory_xact_lock(
+    hashtextextended('video-play:' || target_post::text || ':' || viewer_identity, 0)
+  );
+
+  if exists (select 1 from public.video_views v where v.dedupe_key = play_key) then
+    return query select false, p.video_views, 'duplicate-session'::text
+      from public.posts p where p.id = target_post;
+    return;
+  end if;
+
+  select count(*) into recent
+    from (
+      select 1 from public.video_views v
+       where v.post_id = target_post
+         and v.identity = viewer_identity
+         and v.created_at > now() - interval '10 seconds'
+       limit 50
+    ) burst;
+  if recent >= 50 then
+    return query select false, p.video_views, 'too-fast'::text
+      from public.posts p where p.id = target_post;
+    return;
+  end if;
+
+  insert into public.video_views (id, post_id, viewer_id, identity, dedupe_key, created_at)
+  values (coalesce(play_id, gen_random_uuid()), target_post, viewer, viewer_identity, play_key, now())
+  on conflict (dedupe_key) do nothing
+  returning id into stored;
+
+  if stored is null then
+    return query select false, p.video_views, 'duplicate-session'::text
+      from public.posts p where p.id = target_post;
+    return;
+  end if;
+
+  -- The existing atomic counter, by exactly one. Same transaction as the
+  -- insert above: if this fails, so does that.
+  new_total := public.increment_counter('posts', target_post, 'video_views', 1);
+  return query select true, new_total, null::text;
+end $$;
+
+revoke all on function public.record_video_play(uuid, uuid, uuid, text, text) from public;
 
 -- Hashtags (0015) -----------------------------------------------------------
 -- One row per hashtag, keyed on its lowercased form so #Gaming, #gaming and
@@ -858,6 +958,9 @@ begin
       execute format(
         'revoke all on function public.record_video_view(uuid, uuid, uuid, text, text, timestamptz) from %I',
         api_role);
+      execute format(
+        'revoke all on function public.record_video_play(uuid, uuid, uuid, text, text) from %I',
+        api_role);
       execute format('revoke all on function public.sync_post_hashtags() from %I', api_role);
     end if;
   end loop;
@@ -867,6 +970,7 @@ begin
     grant execute on function public.increment_counter(text, uuid, text, integer) to service_role;
     grant execute on function public.record_video_view(uuid, uuid, uuid, text, text, timestamptz)
       to service_role;
+    grant execute on function public.record_video_play(uuid, uuid, uuid, text, text) to service_role;
   end if;
 end $$;
 

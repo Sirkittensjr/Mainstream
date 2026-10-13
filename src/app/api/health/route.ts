@@ -56,7 +56,9 @@ const ADDED_COLUMNS: { table: TableName; column: string; migration: string }[] =
   { table: 'posts', column: 'content_warning', migration: '0007' },
   { table: 'posts', column: 'review_state', migration: '0009' },
   { table: 'reports', column: 'cleared_at', migration: '0009' },
-  { table: 'posts', column: 'video_views', migration: '0010' },
+  // 0017 installs the view storage too (what 0010 adds), whatever the database
+  // already has, so it is the one file to run for views.
+  { table: 'posts', column: 'video_views', migration: '0017' },
   // Without these a Story or Big Message cannot keep its shape, and posting one
   // is refused rather than stored as a short message. See insert-post.ts.
   { table: 'posts', column: 'text_kind', migration: '0011' },
@@ -67,7 +69,7 @@ const ADDED_COLUMNS: { table: TableName; column: string; migration: string }[] =
 const MIGRATION_FOR_TABLE: Partial<Record<TableName, string>> = {
   messages: '0003',
   moderation_events: '0009',
-  video_views: '0010',
+  video_views: '0017',
   hashtags: '0015',
   post_hashtags: '0015',
 };
@@ -108,6 +110,64 @@ async function probeSchema(): Promise<{
   return { missingTables, missingColumns, migrations: [...migrations].sort() };
 }
 
+/** A post id no post can have: asking about it reads and writes nothing. */
+const NO_POST = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * Whether plays are being counted, and how — the answer to "why is the eye on
+ * 0" without reading a log.
+ *
+ *   counting  false when this database has nowhere to store views, which is
+ *             what makes every report come back "unavailable"
+ *   oneStep   whether record_video_play (migration 0017) decides and stores
+ *             each play in the database; without it the app does, in two
+ *             steps that are undone together
+ *
+ * The function is asked about a post that cannot exist, which it answers
+ * "no-post" without reading anybody's views or writing anything.
+ */
+async function probeViews(schema: { missingTables: string[]; missingColumns: string[] }) {
+  const storage =
+    !schema.missingTables.includes('video_views') && !schema.missingColumns.includes('posts.video_views');
+  if (!storage) {
+    return {
+      counting: false,
+      oneStep: false,
+      note:
+        'No view storage: every play is answered "unavailable" and every eye stays where it is. ' +
+        'Run supabase/migrations/0017_count_every_play.sql.',
+    };
+  }
+  try {
+    const outcome = await db().recordPlay({
+      id: NO_POST,
+      post_id: NO_POST,
+      viewer_id: null,
+      identity: 'health-check',
+      dedupe_key: 'health-check',
+      created_at: new Date().toISOString(),
+    });
+    const oneStep = outcome !== null;
+    return {
+      counting: true,
+      oneStep,
+      ...(oneStep || !supabaseConfigured()
+        ? {}
+        : {
+            note:
+              'Counting from the app in two steps. Run supabase/migrations/0017_count_every_play.sql ' +
+              'to count each play in one step in the database.',
+          }),
+    };
+  } catch (error) {
+    return {
+      counting: false,
+      oneStep: false,
+      note: error instanceof Error ? error.message : 'the view counter could not be reached',
+    };
+  }
+}
+
 /**
  * Which build is answering.
  *
@@ -134,6 +194,10 @@ export async function GET() {
   const schema = probe.reachable
     ? await probeSchema()
     : { missingTables: [], missingColumns: [], migrations: [] };
+
+  const views = probe.reachable
+    ? await probeViews(schema)
+    : { counting: false, oneStep: false };
 
   const ready = missing.length === 0 && durable && probe.reachable;
 
@@ -182,6 +246,7 @@ export async function GET() {
             }
           : {}),
       },
+      views,
       // Confirmation and password-reset emails link back to this.
       siteUrl:
         process.env.NEXT_PUBLIC_SITE_URL ||
