@@ -85,30 +85,70 @@ afterEach(() => {
   delete (globalThis as { localStorage?: unknown }).localStorage;
 });
 
-describe('a play is shown at once and reported at once', () => {
-  it('moves the eye before any answer, then shows the stored total', async () => {
+/** Every number the eye shows for POST, starting with what it shows now. */
+function eye(rendered: () => number) {
+  const shown = [viewsShown(POST, rendered())];
+  watchViews(POST, () => {
+    const now = viewsShown(POST, rendered());
+    if (now !== shown[shown.length - 1]) shown.push(now);
+  });
+  return shown;
+}
+
+describe('a play is reported at once, and the eye shows only what is stored', () => {
+  it('sends at once and moves the eye to the stored total when it is answered', async () => {
     const sent = server([{ status: 200, body: { ok: true, count: 8, counted: true } }]);
     let told = 0;
     watchViews(POST, () => (told += 1));
 
     reportView(POST, 'session-aaaaaaaa');
-    assert.equal(viewsShown(POST, 7), 8, 'the play is on the eye straight away');
     assert.equal(sent.length, 1, 'sent without waiting for anything');
     assert.equal(sent[0].url, `/api/v1/posts/${POST}/views`);
     assert.equal(sent[0].keepalive, true, 'finished even if the page goes away');
+    assert.equal(viewsShown(POST, 7), 7, 'nothing is shown that the database has not stored');
 
     await settle();
-    assert.equal(viewsShown(POST, 7), 8, "the server's number, with the play in it — not 9");
-    assert.ok(told >= 2, 'whoever shows it was told both times');
+    assert.equal(viewsShown(POST, 7), 8, "the server's number, with the play in it");
+    assert.equal(told, 1, 'whoever shows it was told once');
     assert.deepEqual(owed(storage), [], 'answered: owed nothing');
   });
 
-  it('goes back to the stored number when the play was not counted', async () => {
-    server([{ status: 200, body: { ok: true, count: 7, counted: false, reason: 'too-fast' } }]);
-    reportView(POST, 'session-bbbbbbbb');
-    assert.equal(viewsShown(POST, 7), 8);
+  // The live symptom: the eye went 0 → 1 the moment the video started, then
+  // back to 0 when the server answered that it had not stored the play.
+  it('never shows 0 → 1 → 0: a play the server did not store is never on the eye', async () => {
+    server([{ status: 200, body: { ok: true, count: 0, counted: false, reason: 'unavailable' } }]);
+    const shown = eye(() => 0);
+    reportView(POST, 'session-unavail1');
     await settle();
-    assert.equal(viewsShown(POST, 7), 7, 'the eye shows what is stored');
+    assert.deepEqual(shown, [0], 'the eye stayed at the stored 0 throughout');
+  });
+
+  it('goes 0 → 1 when the play is stored, and stays 1 through stale and fresh renders', async () => {
+    server([{ status: 200, body: { ok: true, count: 1, counted: true } }]);
+    let rendered = 0;
+    const shown = eye(() => rendered);
+    reportView(POST, 'session-stored01');
+    assert.deepEqual(shown, [0], 'not before the server says it is stored');
+    await settle();
+    assert.deepEqual(shown, [0, 1]);
+
+    // A background refresh or a remount hands back the page from before the
+    // play; then a fresh one with the stored total.
+    rendered = 0;
+    assert.equal(viewsShown(POST, rendered), 1, 'a stale render does not pull it back to 0');
+    noteViews(POST, rendered);
+    assert.equal(viewsShown(POST, rendered), 1);
+    rendered = 1;
+    assert.equal(viewsShown(POST, rendered), 1);
+    assert.deepEqual(shown, [0, 1], 'and nothing else was ever shown');
+  });
+
+  it('stays at the stored number when the play was not counted', async () => {
+    server([{ status: 200, body: { ok: true, count: 7, counted: false, reason: 'too-fast' } }]);
+    const shown = eye(() => 7);
+    reportView(POST, 'session-bbbbbbbb');
+    await settle();
+    assert.deepEqual(shown, [7], 'the eye shows what is stored, and never more');
   });
 
   it('shows a newer total from elsewhere, and never a lower one', () => {
@@ -119,14 +159,33 @@ describe('a play is shown at once and reported at once', () => {
     assert.equal(viewsShown(POST, 20), 20, 'a fresher render wins');
   });
 
+  it('applies answers that arrive out of order without going down', async () => {
+    let release: (() => void) | undefined;
+    const answers = [
+      // The first play's answer is held back until after the second's.
+      () => new Promise<Response>((resolve) => {
+        release = () => resolve(new Response(JSON.stringify({ ok: true, count: 1, counted: true })));
+      }),
+      async () => new Response(JSON.stringify({ ok: true, count: 2, counted: true })),
+    ];
+    mock.method(globalThis, 'fetch', async () => answers.shift()!());
+    const shown = eye(() => 0);
+    reportView(POST, 'session-order001');
+    reportView(POST, 'session-order002');
+    await settle();
+    release?.();
+    await settle();
+    assert.deepEqual(shown, [0, 2], 'the late answer for 1 did not pull 2 back down');
+  });
+
   it('reports one playback session once, however many times it is handed in', async () => {
     const sent = server([{ status: 200, body: { ok: true, count: 1, counted: true } }]);
     reportView(POST, 'session-cccccccc');
     reportView(POST, 'session-cccccccc');
     reportView(POST, 'session-cccccccc');
     assert.equal(sent.length, 1);
-    assert.equal(viewsShown(POST, 0), 1, 'and the eye went up once');
     await settle();
+    assert.equal(viewsShown(POST, 0), 1, 'and the eye went up once');
   });
 
   it('reports every new playback session: three plays, three reports', async () => {
@@ -136,7 +195,6 @@ describe('a play is shown at once and reported at once', () => {
       { status: 200, body: { ok: true, count: 3, counted: true } },
     ]);
     for (const key of ['session-1xxxxxxx', 'session-2xxxxxxx', 'session-3xxxxxxx']) reportView(POST, key);
-    assert.equal(viewsShown(POST, 0), 3);
     await settle();
     assert.equal(sent.length, 3);
     assert.equal(viewsShown(POST, 0), 3);
@@ -149,7 +207,7 @@ describe('a report that does not get through', () => {
     reportView(POST, 'session-dddddddd');
     await settle();
     assert.equal(sent.length, 1);
-    assert.equal(viewsShown(POST, 4), 5, 'still shown while it is retried');
+    assert.equal(viewsShown(POST, 4), 4, 'not shown while it is not stored');
 
     mock.timers.tick(RETRY_DELAYS_MS[0]);
     await settle();
@@ -171,7 +229,7 @@ describe('a report that does not get through', () => {
       await settle();
     }
     assert.equal(sent.length, 1 + RETRY_DELAYS_MS.length);
-    assert.equal(viewsShown(POST, 4), 4, 'no longer shown: the eye says what is stored');
+    assert.equal(viewsShown(POST, 4), 4, 'never shown: the eye says what is stored');
     assert.deepEqual(owed(storage).map((each) => each.k), ['session-eeeeeeee'], 'kept for later');
 
     // The next page, once the network is back.

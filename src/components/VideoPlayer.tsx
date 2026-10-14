@@ -28,7 +28,6 @@ export function VideoPlayer({
   autoPlayMuted = false,
   postId,
   views = 0,
-  onViewCount,
 }: {
   media: Media;
   className?: string;
@@ -41,8 +40,6 @@ export function VideoPlayer({
   postId?: string;
   /** The count the server rendered, so the first report has somewhere to start. */
   views?: number;
-  /** Told the new total whenever the server returns one. */
-  onViewCount?: (count: number) => void;
 }) {
   // Only a video post is watched, and only a real post can be. Everything else
   // the player does — rendering, loading, seeking — is not a view and this hook
@@ -53,13 +50,6 @@ export function VideoPlayer({
     duration: media.duration,
     initialCount: views,
   });
-  // Through a ref so a caller that re-creates its callback every render does
-  // not turn this into a loop, and so nothing is announced during render.
-  const notify = useRef(onViewCount);
-  notify.current = onViewCount;
-  useEffect(() => {
-    notify.current?.(watch.count);
-  }, [watch.count]);
   /**
    * Scrolled away and back is a new viewing, as it is in the Videos feed: once
    * this player has left the screen while stopped, pressing play on it again

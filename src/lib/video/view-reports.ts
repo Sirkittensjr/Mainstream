@@ -47,16 +47,19 @@ export const RETRY_DELAYS_MS = [1_000, 3_000, 8_000];
  * A number only ever moves up here, and it is shared by every player on the
  * page, so a count learned in the feed is not undone by a stale copy of the
  * same post — a page the router kept from before the view, a card rendered
- * from a cache — and two players of one video agree.
+ * from a cache, a card that was unmounted and mounted again — and two players
+ * of one video agree.
+ *
+ * Only totals the database has stored ever go in: what a page was rendered
+ * with, and what the server answers a report with, which it reads back after
+ * the play is committed. The eye used to show a play the moment it started,
+ * ahead of that answer, and take it off again if the answer said it had not
+ * been stored. On a server that could not store views — every report answered
+ * "unavailable" — that was a 1 that went back to 0 a moment later, on every
+ * play. A number that was never stored is never shown now: the eye goes up
+ * when the server says the play is in the total, and does not come down.
  */
 const confirmed = new Map<string, number>();
-/**
- * Plays reported and not yet answered, per video. Each is shown at once — the
- * eye goes up the moment playback starts — and taken off again when the
- * server's answer arrives, which by then carries the play in its total (or,
- * if it was not counted, says so: the number shown is the stored one again).
- */
-const unanswered = new Map<string, number>();
 const listeners = new Map<string, Set<() => void>>();
 
 function changed(postId: string): void {
@@ -70,12 +73,10 @@ export function latestViews(postId: string): number {
 
 /**
  * What the eye should show: the stored total — the newer of what the page was
- * rendered with and what the server has said since — plus the plays it has
- * not answered yet.
+ * rendered with and what the server has said since.
  */
 export function viewsShown(postId: string, rendered: number): number {
-  const stored = Math.max(Number.isFinite(rendered) && rendered > 0 ? rendered : 0, confirmed.get(postId) ?? 0);
-  return stored + (unanswered.get(postId) ?? 0);
+  return Math.max(Number.isFinite(rendered) && rendered > 0 ? rendered : 0, confirmed.get(postId) ?? 0);
 }
 
 /** Records a total for a video, if it is newer, and tells whoever is showing it. */
@@ -83,13 +84,6 @@ export function noteViews(postId: string, count: number): void {
   if (!postId || !Number.isFinite(count) || count < 0) return;
   if (count <= (confirmed.get(postId) ?? -1)) return;
   confirmed.set(postId, count);
-  changed(postId);
-}
-
-function bump(postId: string, by: 1 | -1): void {
-  const next = Math.max(0, (unanswered.get(postId) ?? 0) + by);
-  if (next === 0) unanswered.delete(postId);
-  else unanswered.set(postId, next);
   changed(postId);
 }
 
@@ -221,16 +215,14 @@ const sending = new Set<string>();
 
 /**
  * Sends one report, retrying on failure, and passes on the total the server
- * answers with. `shown` is whether this play is being shown on the eye ahead
- * of the answer, and so has to be taken off when the answer comes.
+ * answers with.
  */
-function deliver(postId: string, sessionKey: string, shown: boolean): void {
+function deliver(postId: string, sessionKey: string): void {
   const id = `${postId} ${sessionKey}`;
   if (sending.has(id)) return;
   sending.add(id);
   const finish = () => {
     sending.delete(id);
-    if (shown) bump(postId, -1);
   };
   const attempt = (retry: number) => {
     sendView(postId, sessionKey)
@@ -263,16 +255,16 @@ function deliver(postId: string, sessionKey: string, shown: boolean): void {
 /**
  * Reports one playback session of one video.
  *
- * The eye goes up at once; the report is sent at once, without waiting for
- * anything, and retried under the same key until it is answered.
+ * Sent at once, without waiting for anything, and retried under the same key
+ * until it is answered. The eye moves when the answer comes: the total in it
+ * is read after the play is stored, so it already includes this play.
  */
 export function reportView(postId: string, sessionKey: string): void {
   // One report per playback session: the tracker never sends a key twice, and
-  // if anything ever did, the eye would not go up twice for it either.
+  // if anything ever did, it would be sent once.
   if (!postId || !sessionKey || sending.has(`${postId} ${sessionKey}`)) return;
-  bump(postId, 1);
   owe(postId, sessionKey);
-  deliver(postId, sessionKey, true);
+  deliver(postId, sessionKey);
 }
 
 let lastFlush = 0;
@@ -286,7 +278,7 @@ export function flushOwedViews(now: number = Date.now()): void {
   lastFlush = now;
   const list = readOwed();
   writeOwed(list);
-  for (const item of list) deliver(item.p, item.k, false);
+  for (const item of list) deliver(item.p, item.k);
 }
 
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
@@ -301,7 +293,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
 /** For tests: forget everything this page knows. */
 export function resetViewReportsForTests(): void {
   confirmed.clear();
-  unanswered.clear();
   listeners.clear();
   sending.clear();
   lastFlush = 0;
