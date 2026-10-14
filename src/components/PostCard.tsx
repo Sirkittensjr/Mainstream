@@ -10,6 +10,7 @@ import { isVectorImage } from '@/lib/image';
 import { formatVotes } from '@/lib/ratings';
 import { timeAgo } from '@/lib/time';
 import { VideoPlayer } from './VideoPlayer';
+import { useViewCount } from './video/useVideoView';
 import { AdminBadge } from './AdminBadge';
 import type { Media, Reaction } from '@/lib/types';
 import { Avatar } from './Avatar';
@@ -101,17 +102,6 @@ export function PostCard({
     caption: data.caption,
     media: data.media,
   });
-  /**
-   * The watch count, which the server rendered and the player updates.
-   *
-   * Only a video post has one. It is a different number from `views`, which
-   * counts the post page being opened and has always been shown here. Whichever
-   * is newer wins: a refresh hands this card a fresh `data.videoViews`, and the
-   * player hands it what it shows — a play the moment it starts, then the
-   * total the server answered with.
-   */
-  const [reportedViews, setReportedViews] = useState(0);
-  const videoViews = Math.max(data.videoViews, reportedViews);
   /** Tags the post carries that its words do not already show as #hashtags. */
   const tagChips = extraTags({ caption: data.caption, text_title: data.textTitle, tags: data.tags });
   const [, startTransition] = useTransition();
@@ -119,6 +109,15 @@ export function PostCard({
   const isOwn = viewerId === data.author.id;
   const viewerIsAdmin = useViewerIsAdmin();
   const isVideo = data.media.some((item) => item.kind === 'video');
+  /**
+   * The watch count: what the server rendered, or the newer total the server
+   * has answered a play of this video with since — read from the one store
+   * every player on the page shares, so remounting this card cannot show an
+   * older number. Only a video post has one. It is a different number from
+   * `views`, which counts the post page being opened and has always been
+   * shown here.
+   */
+  const videoViews = useViewCount(data.id, data.videoViews, isVideo);
 
   function toggleLike() {
     if (!viewerId) {
@@ -259,11 +258,7 @@ export function PostCard({
           postId={data.id}
           author={data.author.username}
           warned={data.contentWarning === true}
-          // What the SERVER rendered, never the number on the eye: that one
-          // includes a play the server has not answered yet, and handing it
-          // back to the player as a stored total would count that play twice.
           videoViews={data.videoViews}
-          onVideoViews={setReportedViews}
           full={full}
         />
       )}
@@ -417,7 +412,6 @@ function MediaStrip({
   author,
   warned,
   videoViews = 0,
-  onVideoViews,
   full = false,
 }: {
   media: Media[];
@@ -427,7 +421,6 @@ function MediaStrip({
   warned: boolean;
   /** The watch count as the server rendered it, handed to the player. */
   videoViews?: number;
-  onVideoViews?: (count: number) => void;
   /** The post's own page: photos are the original files, not resized copies. */
   full?: boolean;
 }) {
@@ -469,7 +462,6 @@ function MediaStrip({
                 // counted as watched without a deliberate press of play.
                 postId={postId}
                 views={videoViews}
-                onViewCount={onVideoViews}
               />
             ) : (
               <PostPhoto

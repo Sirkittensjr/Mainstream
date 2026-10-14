@@ -1543,7 +1543,7 @@ shows that number.
   anywhere on it (simulated: headless Chromium allows sound regardless).
 - **Autoplay with sound allowed** — the creator's own play, with sound.
 - **Every other place a video plays** — the post page, Home, a profile, a
-  hashtag page; the eye moving as playback starts; replays, seeks, scrolling
+  hashtag page; the eye moving once each play is stored; replays, seeks, scrolling
   away and back; signed out; a refresh.
 - **Delivery** — an answer lost on the way back, a failed attempt, a page closed
   with its report unanswered, ten concurrent copies of one report, and a flood.
@@ -1554,6 +1554,36 @@ shows that number.
 DATABASE_URL=postgres://…/faytarra_sb BASE_URL=http://localhost:3000 \
 SUPABASE_URL=http://127.0.0.1:54321 SUPABASE_ANON_KEY=… \
   node scripts/e2e/views-sound-flow.mjs
+```
+
+### 18c. The eye never goes back — `views-eye-flow.mjs`
+
+The live symptom it guards: open a video and the eye went 0 → 1 → 0. Against
+the same stand-in, with migration 0017 applied, it records every value every
+eye takes on every page, with the time, and sets each against the plays the
+database had stored by that moment (`video_views.created_at`):
+
+- **Never ahead** — no eye shows more than the database held when it was shown.
+- **Never back** — on one page, an eye never shows less than it already has for
+  that video.
+- **Settles on it** — after each step the eye equals a fresh read of the
+  database, directly and through `/api/v1/posts/<id>`; and the database holds
+  exactly one view per playback start the pages saw.
+
+Steps: opening a video in the Videos tab (0 → 1, and still 1 after a real
+background refresh — UnreadWatch's `router.refresh()`, set off by a follow
+notification); pause and resume, duplicate `playing` events, rewind and play,
+scrolling away and back; out to Home and back, a full reload, the post page
+(played to the end and again) and the Home card; then view storage missing,
+as on the live site — `public.video_views` is renamed for the step, every play
+is answered "unavailable", and the eye must stay at 0 — and storage coming
+back without a restart, when the next play takes the eye 0 → 1 to stay. The
+rename needs a `DATABASE_URL` that owns the table; it is put back however the
+flow ends.
+
+```bash
+DATABASE_URL=postgres://…/faytarra_sb BASE_URL=http://localhost:3000 \
+  node scripts/e2e/views-eye-flow.mjs
 ```
 
 ### 19. How fast it is on a phone — `perf-mobile.mjs` + `supabase-perf-seed.mjs`

@@ -26,10 +26,9 @@ import { noteViews, reportView, viewsShown, watchViews } from '@/lib/video/view-
  *   `playing` while paused    a play() and pause() in one moment (how the feed
  *                             readies a player for sound): no playback, no view
  *
- * The count this returns is the server's — what the page was rendered with,
- * or a total the server has answered since — plus, for the moment between a
- * play starting and the server answering, that play (see
- * lib/video/view-reports.ts). The eye moves when playback does.
+ * The count this returns is the server's: what the page was rendered with, or
+ * a total the server has answered since (see useViewCount). It never includes
+ * a play the database has not stored.
  */
 export function useVideoView({
   postId,
@@ -44,17 +43,7 @@ export function useVideoView({
   /** What the server rendered. The starting point, and never overwritten by a guess. */
   initialCount: number;
 }) {
-  // Whichever is newer: what the page was rendered with — a navigation or a
-  // refresh brings a fresh one — or the newest total any player on this page
-  // has been told for this video. A stale render can never pull it back down.
-  const count = useSyncExternalStore(
-    useCallback((listener: () => void) => watchViews(postId, listener), [postId]),
-    () => viewsShown(postId, initialCount),
-    () => initialCount,
-  );
-  useEffect(() => {
-    if (enabled) noteViews(postId, initialCount);
-  }, [enabled, postId, initialCount]);
+  const count = useViewCount(postId, initialCount, enabled);
 
   const tracker = useRef<ViewTracker | null>(null);
   tracker.current ??= createViewTracker({ duration });
@@ -105,4 +94,25 @@ export function useVideoView({
   const restart = useCallback(() => tracker.current?.restart(), []);
 
   return { count, onPlay, onPlaying, onTimeUpdate, onEnded, onSeeked, restart };
+}
+
+/**
+ * The number on a video's eye.
+ *
+ * Whichever is newer: what the page was rendered with — a navigation or a
+ * refresh brings a fresh one — or the newest total the server has answered any
+ * player on this page with for this video. Both are totals the database holds.
+ * A stale render — a page the router kept, a card mounted again — can never
+ * pull it back down, and nothing that has not been stored can push it up.
+ */
+export function useViewCount(postId: string, rendered: number, enabled = true): number {
+  const count = useSyncExternalStore(
+    useCallback((listener: () => void) => watchViews(postId, listener), [postId]),
+    () => (enabled ? viewsShown(postId, rendered) : rendered),
+    () => rendered,
+  );
+  useEffect(() => {
+    if (enabled) noteViews(postId, rendered);
+  }, [enabled, postId, rendered]);
+  return count;
 }
