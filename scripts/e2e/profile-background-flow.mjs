@@ -71,10 +71,16 @@ const browser = await chromium.launch(CHROMIUM ? { executablePath: CHROMIUM } : 
 async function context(options = {}) {
   const ctx = await browser.newContext({ baseURL: BASE, viewport: { width: 1440, height: 900 }, ...options });
   ctx.images = [];
+  ctx.errors = [];
   ctx.on('response', (response) => {
     if (response.url().includes('/_next/image?')) {
       ctx.images.push({ url: response.url(), status: response.status(), type: response.headers()['content-type'] ?? '' });
     }
+  });
+  // What a person opening the browser console would see: a refused picture
+  // shows up there as a failed resource.
+  ctx.on('console', (message) => {
+    if (message.type() === 'error') ctx.errors.push(`${message.text()} ${message.location()?.url ?? ''}`.trim());
   });
   return ctx;
 }
@@ -336,6 +342,8 @@ try {
     photoShown('a guest, new photo', await backdrop(gp), newCover);
   }
   noRefusals('everybody, throughout', { images: [...A.ctx.images, ...B.ctx.images, ...guest.images] });
+  const consoleErrors = [...A.ctx.errors, ...B.ctx.errors, ...guest.errors].filter((e) => /_next\/image|Failed to load resource/.test(e));
+  check('no failed image in anybody\'s browser console', consoleErrors.length === 0, [...new Set(consoleErrors)].join(' | ').slice(0, 400));
   await guest.close();
 } catch (error) {
   failures += 1;

@@ -15,7 +15,6 @@ import { describe, it } from 'node:test';
 import { ImageOptimizerCache } from 'next/dist/server/image-optimizer';
 import { imageConfigDefault } from 'next/dist/shared/lib/image-config';
 import nextConfig from '../../next.config.mjs';
-import { IMAGE_QUALITY } from './image';
 
 const allowed: number[] = nextConfig.images?.qualities ?? [];
 const images = { ...imageConfigDefault, ...nextConfig.images };
@@ -34,15 +33,9 @@ function optimiserAnswer(url: string, quality: number): string {
 const STORED = 'https://abcdefgh.supabase.co/storage/v1/object/public/faytarra-media/media/u/cover.jpg';
 
 describe('image qualities', () => {
-  it('IMAGE_QUALITY is exactly the list next.config.mjs allows', () => {
-    assert.deepEqual(
-      [...new Set(Object.values(IMAGE_QUALITY))].sort((a, b) => a - b),
-      [...allowed].sort((a, b) => a - b),
-    );
-  });
-
-  it("the optimiser serves every IMAGE_QUALITY, for a picture in the project's bucket", () => {
-    for (const quality of Object.values(IMAGE_QUALITY)) {
+  it("the optimiser serves every allowed quality, for a picture in the project's bucket", () => {
+    assert.ok(allowed.length > 0, 'next.config.mjs lists images.qualities');
+    for (const quality of allowed) {
       assert.equal(optimiserAnswer(STORED, quality), 'ok', `quality ${quality}`);
     }
   });
@@ -63,13 +56,11 @@ describe('image qualities', () => {
     };
     walk(root);
 
-    /** The number an expression stands for: a literal, IMAGE_QUALITY.x, or a const in the same file. */
+    /** The number an expression stands for: a literal, or a const in the same file. */
     const resolve = (expression: string, source: string, depth = 0): number | undefined => {
       const text = expression.trim();
       if (/^\d+$/.test(text)) return Number(text);
-      const named = /^IMAGE_QUALITY\.(\w+)$/.exec(text);
-      if (named) return (IMAGE_QUALITY as Record<string, number>)[named[1]];
-      const local = depth < 3 && new RegExp(`const ${text}\\s*=\\s*([^;]+);`).exec(source);
+      const local = depth < 3 && /^\w+$/.test(text) && new RegExp(`const ${text}\\s*=\\s*([^;]+);`).exec(source);
       return local ? resolve(local[1], source, depth + 1) : undefined;
     };
 
@@ -89,7 +80,7 @@ describe('image qualities', () => {
     for (const { file, expression, value } of asked) {
       assert.ok(
         value !== undefined && allowed.includes(value),
-        `${file}: quality={${expression}} is ${value ?? 'not a known number'}; next.config.mjs allows ${allowed.join(', ')}`,
+        `${file}: quality={${expression}} is ${value ?? 'not a number this test can read'}; next.config.mjs allows ${allowed.join(', ')}`,
       );
     }
   });

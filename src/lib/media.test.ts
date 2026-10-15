@@ -1,13 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import {
-  isOwnMediaUrl,
-  mediaKindForUrl,
-  profileCoverUrl,
-  sanitiseAvatarUrl,
-  sanitiseMedia,
-  shelfFor,
-} from './media';
+import { isOwnMediaUrl, mediaKindForUrl, sanitiseAvatarUrl, sanitiseMedia, shelfFor } from './media';
 
 const PROJECT = 'https://abcdefgh.supabase.co';
 const BUCKET = `${PROJECT}/storage/v1/object/public/faytarra-media/`;
@@ -99,7 +92,13 @@ describe('which media URLs are allowed on a post', () => {
   });
 
   // A background photo already saved has to keep showing: whatever shape of
-  // address a profile holds today is read back exactly as it was written.
+  // address a profile holds today is read back exactly as it was written. The
+  // rule is the profile page's: one of our own uploads, and a picture.
+  const profileCoverUrl = (saved: unknown) => {
+    const url = sanitiseAvatarUrl(saved);
+    return url && mediaKindForUrl(url) === 'image' ? url : null;
+  };
+
   it('shows every background photo a profile can already have saved, unchanged', () => {
     for (const saved of [
       `${BUCKET}media/3fcc2824-5179-4eab-b1be-ab6baf2a9dae/e09cf42d.jpg`,

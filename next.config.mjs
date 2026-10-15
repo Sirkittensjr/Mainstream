@@ -53,9 +53,6 @@ const nextConfig = {
     // 75 is Next's default and what every other picture uses. Post photos in a
     // list ask for 90: their resized copies are the photo most people see, and
     // 75 visibly softens it. (The original file is never re-encoded.)
-    // Any other quality is refused with a 400 and the picture never loads, so
-    // components use IMAGE_QUALITY (src/lib/image.ts) rather than a number;
-    // src/lib/image.test.ts keeps the two in step.
     qualities: [75, 90],
   },
 };

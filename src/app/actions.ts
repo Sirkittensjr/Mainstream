@@ -6,7 +6,7 @@ import { redirect, RedirectType } from 'next/navigation';
 import { CATEGORIES, type Category } from '@/lib/types';
 import { bigStyleOf, normaliseTextPost, TEXT_KIND_COPY, textKindOf } from '@/lib/text-posts';
 import { isTextPostNotStorable } from '@/lib/services/insert-post';
-import { profileCoverUrl, sanitiseAvatarUrl, sanitiseMedia } from '@/lib/media';
+import { mediaKindForUrl, sanitiseAvatarUrl, sanitiseMedia } from '@/lib/media';
 import { PROFILE_DEFAULT, isProfileBackgroundKey, isProfileColorKey } from '@/lib/profile-theme';
 import { checkLimit } from '@/lib/services/rate-limit';
 import { MEDIA_REUSE_ERROR, mediaFiles, mediaReuseProblem } from '@/lib/services/media-reuse';
@@ -551,8 +551,8 @@ export async function updateProfileColoursAction(background: string, box: string
  */
 export async function updateProfileCoverAction(url: string | null) {
   const viewer = await requireViewer('/settings');
-  const cover = url === null ? null : profileCoverUrl(url);
-  if (url !== null && !cover) {
+  const cover = url === null ? null : sanitiseAvatarUrl(url);
+  if (url !== null && (!cover || mediaKindForUrl(cover) !== 'image')) {
     return { ok: false as const, error: 'That is not a picture uploaded here.' };
   }
   if (cover && cover !== viewer.profile_cover_url) {

@@ -28,6 +28,12 @@ let store: ReturnType<typeof import('@/lib/db').db>;
 let users: typeof import('./users');
 let media: typeof import('@/lib/media');
 
+/** What the profile page shows for a saved background (src/app/(app)/u/[username]/page.tsx). */
+const shown = (saved: string | null | undefined) => {
+  const url = media.sanitiseAvatarUrl(saved);
+  return url && media.mediaKindForUrl(url) === 'image' ? url : null;
+};
+
 const EXISTING = '/api/media/existing-cover.jpg';
 
 function person(username: string, appearance: Record<string, string | null>) {
@@ -76,7 +82,7 @@ describe('profile background photos', () => {
     assert.equal(user?.profile_cover_url, EXISTING);
     assert.equal(user?.profile_bg, 'fay-aurora');
     assert.equal(user?.profile_box, 'blue');
-    assert.equal(media.profileCoverUrl(user?.profile_cover_url), EXISTING);
+    assert.equal(shown(user?.profile_cover_url), EXISTING);
   });
 
   it('saving a new photo replaces the photo and nothing else', async () => {
@@ -101,6 +107,6 @@ describe('profile background photos', () => {
   it('removing the photo goes back to the colours, which are kept', async () => {
     assert.deepEqual(await users.updateProfileCover(ada.id, null), { ok: true });
     assert.deepEqual(await appearance(ada.id), { cover: null, bg: 'red', box: 'black' });
-    assert.equal(media.profileCoverUrl((await users.getUserByUsername('ada'))?.profile_cover_url), null);
+    assert.equal(shown((await users.getUserByUsername('ada'))?.profile_cover_url), null);
   });
 });
