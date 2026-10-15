@@ -6,7 +6,7 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { likeAction } from '@/app/actions';
 import { formatCount } from '@/lib/format';
-import { isVectorImage } from '@/lib/image';
+import { IMAGE_QUALITY, isVectorImage } from '@/lib/image';
 import { formatVotes } from '@/lib/ratings';
 import { timeAgo } from '@/lib/time';
 import { VideoPlayer } from './VideoPlayer';
@@ -510,7 +510,7 @@ const UNKNOWN_SIZE = { width: 1080, height: 1350 };
  * 75, which visibly softens a photo; at 90 the copy is indistinguishable at the
  * size it is shown. The stored original is never touched either way.
  */
-const LIST_PHOTO_QUALITY = 90;
+const LIST_PHOTO_QUALITY = IMAGE_QUALITY.photo;
 
 /**
  * One photo, whole.

@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import { isOwnMediaUrl, mediaKindForUrl, sanitiseAvatarUrl, sanitiseMedia, shelfFor } from './media';
+import {
+  isOwnMediaUrl,
+  mediaKindForUrl,
+  profileCoverUrl,
+  sanitiseAvatarUrl,
+  sanitiseMedia,
+  shelfFor,
+} from './media';
 
 const PROJECT = 'https://abcdefgh.supabase.co';
 const BUCKET = `${PROJECT}/storage/v1/object/public/faytarra-media/`;
@@ -89,6 +96,35 @@ describe('which media URLs are allowed on a post', () => {
     assert.equal(sanitiseAvatarUrl(`${BUCKET}media/u/a.png`), `${BUCKET}media/u/a.png`);
     assert.equal(sanitiseAvatarUrl(`${BUCKET}pending/u/a.png`), null);
     assert.equal(sanitiseAvatarUrl('https://evil.example/a.png'), null);
+  });
+
+  // A background photo already saved has to keep showing: whatever shape of
+  // address a profile holds today is read back exactly as it was written.
+  it('shows every background photo a profile can already have saved, unchanged', () => {
+    for (const saved of [
+      `${BUCKET}media/3fcc2824-5179-4eab-b1be-ab6baf2a9dae/e09cf42d.jpg`,
+      `${BUCKET}media/u/cover.webp`,
+      `${BUCKET}media/u/cover.JPEG`,
+      `${BUCKET}0d1c2b3a.png`, // from before uploads had folders: the bucket root
+      '/api/media/cover.gif', // the local store
+    ]) {
+      assert.equal(profileCoverUrl(saved), saved, saved);
+    }
+  });
+
+  it('never shows a background photo that is not a picture FayTarra stored', () => {
+    assert.equal(profileCoverUrl(null), null);
+    assert.equal(profileCoverUrl(undefined), null);
+    assert.equal(profileCoverUrl(''), null);
+    assert.equal(profileCoverUrl(42), null);
+    assert.equal(profileCoverUrl(`${BUCKET}pending/u/cover.jpg`), null, 'not checked yet');
+    assert.equal(profileCoverUrl(`${BUCKET}media/u/clip.mp4`), null, 'a video');
+    assert.equal(profileCoverUrl('https://evil.example/cover.jpg'), null, 'somebody else’s server');
+    assert.equal(
+      profileCoverUrl('https://otherproject.supabase.co/storage/v1/object/public/faytarra-media/media/u/a.jpg'),
+      null,
+      'another project’s bucket',
+    );
   });
 });
 

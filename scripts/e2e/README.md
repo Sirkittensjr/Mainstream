@@ -970,6 +970,56 @@ OUTBOX=/tmp/fay-outbox.jsonl CHROMIUM_PATH=/opt/pw-browsers/chromium \
   node scripts/e2e/profile-appearance-flow.mjs
 ```
 
+### 4h-2. Background photos that actually load — `profile-background-flow.mjs`
+
+A background photo counts only when the optimiser answered its request 200 with
+an image and the browser decoded it. Checking that the `<img>` is there is not
+enough: when `ProfileBackdrop` asked `/_next/image` for quality 70 and
+`next.config.mjs` allowed only 75 and 90, every request got 400 `"q" parameter
+(quality) of 70 is not allowed`, every profile's photo was a broken image, and
+section 4h kept passing.
+
+It starts from backgrounds saved BEFORE the check — written straight to the
+database and the bucket as production holds them, one under `media/<owner id>/`
+and one from before uploads had folders (the bucket root), each with its own
+gradient or colour and box colour — and shows them to the owner, another
+account and a guest, after a refresh, after signing out and back in, and on a
+phone. Then it checks that looking rewrote nothing, and uploads and saves a new
+photo through Settings, which all three must see too.
+
+It runs against the Supabase stand-in (section 17) with the bucket served over
+**HTTPS**, as a real project's is: `images.remotePatterns` only lets the
+optimiser fetch `https://` pictures, so behind plain http every bucket picture
+is refused for a reason production never has. `https-front.mjs` puts TLS in
+front of the gateway with a throwaway certificate authority, trusted by the app
+server (`NODE_EXTRA_CA_CERTS`) and by Chromium (its NSS database):
+
+```bash
+D=/tmp/fay-tls; mkdir -p $D && cd $D
+openssl req -x509 -newkey rsa:2048 -nodes -keyout ca.key -out ca.pem -days 30 -subj "/CN=FayTarra test CA"
+openssl req -newkey rsa:2048 -nodes -keyout server.key -out server.csr -subj "/CN=127.0.0.1"
+printf "subjectAltName=IP:127.0.0.1,DNS:localhost\nextendedKeyUsage=serverAuth\n" > ext.cnf
+openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -CAcreateserial -out server.pem -days 30 -extfile ext.cnf
+mkdir -p ~/.pki/nssdb && certutil -d sql:$HOME/.pki/nssdb -N --empty-password
+certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n fay-test-ca -i ca.pem
+cd -
+
+TLS_DIR=/tmp/fay-tls node scripts/e2e/https-front.mjs &      # https://127.0.0.1:54443 -> gateway
+NEXT_PUBLIC_SUPABASE_URL=https://127.0.0.1:54443 npm run build
+(cd .next/standalone && NODE_EXTRA_CA_CERTS=/tmp/fay-tls/ca.pem \
+  SUPABASE_SERVICE_ROLE_KEY=$(node scripts/e2e/supabase-gateway.mjs --service-key) node server.js &)
+
+BASE_URL=http://localhost:3000 DATABASE_URL=postgres://…/faytarra_sb \
+SUPABASE_URL=https://127.0.0.1:54443 \
+SUPABASE_SERVICE_KEY=$(node scripts/e2e/supabase-gateway.mjs --service-key) \
+NODE_EXTRA_CA_CERTS=/tmp/fay-tls/ca.pem CHROMIUM_PATH=/opt/pw-browsers/chromium \
+  node scripts/e2e/profile-background-flow.mjs
+```
+
+`src/lib/image.test.ts` is the fast half of the same guard: it runs Next's own
+`/_next/image` validation with this project's `next.config.mjs`, and fails if
+any `quality` in the app is one the optimiser refuses.
+
 ### 4f. The finished video, frame by frame — `render-output-flow.mjs`
 
 Renders real projects through the real `renderClips` (bundled with esbuild straight

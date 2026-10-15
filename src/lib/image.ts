@@ -15,3 +15,21 @@ export function isVectorImage(url: string): boolean {
   const path = url.split('?')[0].toLowerCase();
   return path.endsWith('.svg') || path.startsWith('/api/cover/');
 }
+
+/**
+ * Every quality the optimiser may be asked for.
+ *
+ * next.config.mjs allows exactly these in `images.qualities`, and Next answers
+ * a request for any other with 400 `"q" parameter (quality) of N is not
+ * allowed` — the picture never loads, nothing is logged on the server, and the
+ * page looks as if the image were simply missing. That is how every profile's
+ * background photo went blank: ProfileBackdrop asked for 70 after the list
+ * became 75 and 90. Use one of these rather than a number; image.test.ts
+ * checks this list against next.config.mjs and every `quality` in the app.
+ */
+export const IMAGE_QUALITY = {
+  /** Next's own default: every picture without a reason to differ. */
+  standard: 75,
+  /** Post photos in a list: their resized copy is the photo most people see. */
+  photo: 90,
+} as const;

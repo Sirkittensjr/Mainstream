@@ -1,5 +1,5 @@
 import Image from 'next/image';
-import { isVectorImage } from '@/lib/image';
+import { IMAGE_QUALITY, isVectorImage } from '@/lib/image';
 import type { ProfileColor } from '@/lib/profile-theme';
 
 /**
@@ -43,7 +43,7 @@ export function ProfileBackdrop({
             fill
             priority
             sizes="100vw"
-            quality={70}
+            quality={IMAGE_QUALITY.standard}
             unoptimized={isVectorImage(photo)}
             className="object-cover"
             data-profile-backdrop-photo

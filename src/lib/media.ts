@@ -298,6 +298,17 @@ export function sanitiseAvatarUrl(input: unknown): string | null {
 }
 
 /**
+ * A profile's background photo: one of our own uploads, and a picture rather
+ * than a video — or null, and the profile shows its colour instead. The same
+ * rule when it is saved and every time it is shown, since the row can be
+ * written through the API too.
+ */
+export function profileCoverUrl(input: unknown): string | null {
+  const url = sanitiseAvatarUrl(input);
+  return url && mediaKindForUrl(url) === 'image' ? url : null;
+}
+
+/**
  * The video a post leads with, if it has one.
  *
  * A post can carry a mix of pictures and clips; the Videos feed plays the

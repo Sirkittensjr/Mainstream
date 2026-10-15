@@ -20,7 +20,7 @@ import { formatVotes, topReactions } from '@/lib/ratings';
 import { PencilIcon, PlusIcon } from '@/components/Icons';
 import { ProfileBackdrop } from '@/components/ProfileBackdrop';
 import { CreatePostMenu } from '@/components/CreatePostMenu';
-import { mediaKindForUrl, sanitiseAvatarUrl } from '@/lib/media';
+import { profileCoverUrl } from '@/lib/media';
 import { ProfileShelves } from '@/components/ProfileShelves';
 import { HashtagText } from '@/components/HashtagText';
 import {
@@ -142,8 +142,7 @@ export default async function ProfilePage({
   // The owner's background photo, if it is still a picture FayTarra stored.
   // Checked here as well as when it was saved: the row can be written through
   // the API too, and a profile is never pointed at anybody else's server.
-  const storedCover = sanitiseAvatarUrl(user.profile_cover_url);
-  const cover = storedCover && mediaKindForUrl(storedCover) === 'image' ? storedCover : null;
+  const cover = profileCoverUrl(user.profile_cover_url);
 
   // The owner's colours, or null when they have not picked any. Only custom
   // properties come out of this — the layout below is the same either way.
