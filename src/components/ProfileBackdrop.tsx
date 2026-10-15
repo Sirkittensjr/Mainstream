@@ -43,7 +43,10 @@ export function ProfileBackdrop({
             fill
             priority
             sizes="100vw"
-            quality={70}
+            // Must be one of `images.qualities` in next.config.mjs (75, 90):
+            // the optimiser refuses any other with a 400 and the photo never
+            // loads. 70 did exactly that to every profile's background.
+            quality={75}
             unoptimized={isVectorImage(photo)}
             className="object-cover"
             data-profile-backdrop-photo

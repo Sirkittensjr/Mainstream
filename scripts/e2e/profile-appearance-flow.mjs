@@ -70,8 +70,20 @@ const picture = (page, colours) =>
     return c.toDataURL('image/jpeg', 0.9).split(',')[1];
   }, colours);
 
-const backdrop = (page) =>
-  page.evaluate(() => {
+/**
+ * What the profile is painted on. A photo is waited for until the browser has
+ * finished with it, and `loaded` says whether it actually arrived: an <img>
+ * whose request the optimiser refused is still in the page, with a src, and
+ * looks like a photo to every other check here.
+ */
+const backdrop = async (page) => {
+  await page
+    .waitForFunction(() => {
+      const img = document.querySelector('[data-profile-backdrop-photo]');
+      return !img || (img.complete && img.currentSrc !== '');
+    }, null, { timeout: 15000 })
+    .catch(() => undefined);
+  return page.evaluate(() => {
     const el = document.querySelector('[data-profile-backdrop]');
     if (!el) return { kind: 'none' };
     const r = el.getBoundingClientRect();
@@ -84,8 +96,10 @@ const backdrop = (page) =>
       image: style.backgroundImage,
       src: photo?.currentSrc ?? null,
       width: photo ? Number(new URL(photo.currentSrc).searchParams.get('w')) : null,
+      loaded: photo ? photo.complete && photo.naturalWidth > 0 : false,
     };
   });
+};
 
 const header = (page) =>
   page.evaluate(() => {
@@ -273,6 +287,7 @@ async function run() {
   await page.goto(me, { waitUntil: 'networkidle' });
   bd = await backdrop(page);
   check('the photo fills the background', bd.kind === 'photo' && Boolean(bd.src), bd.src ?? '');
+  check('and it loaded — the optimiser served it', bd.loaded, bd.src ?? '');
   check('behind the whole page', bd.covers);
   check(
     'sent resized for the screen, never the original',
@@ -283,12 +298,14 @@ async function run() {
   check('the picture is still there, above it', h.hasAvatar && h.avatar === 144);
 
   await B.page.goto(me, { waitUntil: 'networkidle' });
-  check('another account sees the photo', (await backdrop(B.page)).kind === 'photo');
+  const seenByB = await backdrop(B.page);
+  check('another account sees the photo', seenByB.kind === 'photo' && seenByB.loaded, seenByB.src ?? '');
   check('and gets no Edit profile', (await B.page.locator('[data-edit-profile]').count()) === 0);
   const guest = await browser.newContext({ baseURL: BASE, viewport: { width: 1440, height: 900 } });
   const gp = await guest.newPage();
   await gp.goto(me, { waitUntil: 'networkidle' });
-  check('a guest sees it too — it is public', (await backdrop(gp)).kind === 'photo');
+  const seenByGuest = await backdrop(gp);
+  check('a guest sees it too — it is public', seenByGuest.kind === 'photo' && seenByGuest.loaded, seenByGuest.src ?? '');
   check('with no Edit profile', (await gp.locator('[data-edit-profile]').count()) === 0);
   await guest.close();
 
@@ -317,7 +334,7 @@ async function run() {
   const pp = await phone.newPage();
   await pp.goto(me, { waitUntil: 'networkidle' });
   const pbd = await backdrop(pp);
-  check('phone: the photo fills the background', pbd.kind === 'photo' && pbd.covers);
+  check('phone: the photo fills the background', pbd.kind === 'photo' && pbd.covers && pbd.loaded, pbd.src ?? '');
   check('phone: at a phone-sized width', pbd.width > 0 && pbd.width <= 1300, `w=${pbd.width}`);
   const ph = await header(pp);
   check('phone: the picture is 96px, as before', ph.avatar === 96, `${ph.avatar}px`);
